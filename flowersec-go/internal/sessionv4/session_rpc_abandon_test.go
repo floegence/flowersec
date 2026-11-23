@@ -7,10 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 func TestUnaryAbandonBeforePublicationKeepsOriginalStart(t *testing.T) {
@@ -297,20 +296,9 @@ func TestUnaryAbandonRetainsAcceptedStopProviderTail(t *testing.T) {
 	if progressed, err := f.publisher.Step(context.Background()); err != nil || progressed {
 		t.Fatal(progressed, err)
 	}
-	// Provider exit permits cleanup, but the original Environment coordinator
-	// can still hold a result visit. Join that real tail within the fixture's
-	// deadline instead of requiring one synchronous pass to refund it.
-	ctx := resultTestContext(t)
-	for {
-		r.AdvanceCalls()
-		call.advanceResult()
-		if call.ResultStatus().CleanupComplete {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("actual provider exit did not finish original cleanup", ctx.Err())
-		case <-time.After(time.Millisecond):
-		}
+	r.AdvanceCalls()
+	call.advanceResult()
+	if !call.ResultStatus().CleanupComplete {
+		t.Fatal("actual provider exit did not finish original cleanup")
 	}
 }

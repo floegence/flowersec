@@ -1,7 +1,3 @@
-import { brotliWorkerSource } from "../generated/brotliWorker.js";
-import { decodeBrotliBody, type BrotliDecoder } from "./brotliBody.js";
-import { normalizePath } from "./policy.js";
-
 export type ProxyServiceWorkerPassthroughOptions = Readonly<{
   paths?: readonly string[];
   prefixes?: readonly string[];
@@ -20,10 +16,7 @@ export type ProxyServiceWorkerInjectHTMLOptions = Readonly<{
 export type ProxyServiceWorkerScriptOptions = Readonly<{
   sameOriginOnly?: boolean;
   maxRequestBodyBytes?: number;
-  maxEncodedBodyBytes?: number;
-  maxResponseChunkBytes?: number;
   maxInjectHTMLBytes?: number;
-  maxDecodedBodyBytes?: number;
   responseMetadataTimeoutMs?: number;
   responseBodyInactivityTimeoutMs?: number;
   passthrough?: ProxyServiceWorkerPassthroughOptions;
@@ -41,10 +34,7 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
 type ServiceWorkerConfig = Readonly<{
   sameOriginOnly: boolean;
   maxRequestBodyBytes: number;
-  maxEncodedBodyBytes: number;
-  maxResponseChunkBytes: number;
   maxInjectHTMLBytes: number;
-  maxDecodedBodyBytes: number;
   responseMetadataTimeoutMs: number;
   responseBodyInactivityTimeoutMs: number;
   passthroughPaths: readonly string[];
@@ -90,25 +80,11 @@ function token(name: string, value: string | undefined, fallback = ""): string {
   return result;
 }
 
-function paths(name: string, values: readonly string[] | undefined): readonly string[] {
-  const result: string[] = [];
-  for (const raw of values ?? []) {
-    const value = normalizePath(raw);
-    if (value.includes("?")) throw new TypeError(`${name} must not include a query`);
-    if (!result.includes(value)) result.push(value);
-  }
-  return Object.freeze(result);
-}
-
-function pathPrefix(name: string, value: string | undefined): string {
-  if (value === undefined || value === "") return "";
-  const normalized = normalizePath(value);
-  if (normalized.includes("?")) throw new TypeError(`${name} must not include a query`);
-  return normalized;
-}
-
 function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWorkerConfig {
-  const proxyPathPrefix = pathPrefix("proxyPathPrefix", options.proxyPathPrefix);
+  const proxyPathPrefix = token("proxyPathPrefix", options.proxyPathPrefix, "");
+  if (proxyPathPrefix !== "" && (!proxyPathPrefix.startsWith("/") || proxyPathPrefix.startsWith("//"))) {
+    throw new TypeError("proxyPathPrefix must be an origin-relative prefix");
+  }
   const inject = options.injectHTML;
   if (inject !== undefined) {
     const mode = inject.mode ?? "inline_module";
@@ -122,158 +98,35 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
   return Object.freeze({
     sameOriginOnly: options.sameOriginOnly ?? true,
     maxRequestBodyBytes: bounded("maxRequestBodyBytes", options.maxRequestBodyBytes, 64 * 1024 * 1024, 256 * 1024 * 1024),
-    maxEncodedBodyBytes: bounded("maxEncodedBodyBytes", options.maxEncodedBodyBytes, 64 * 1024 * 1024, 256 * 1024 * 1024),
-    maxResponseChunkBytes: bounded("maxResponseChunkBytes", options.maxResponseChunkBytes, 256 * 1024, 4 * 1024 * 1024),
-    maxDecodedBodyBytes: bounded("maxDecodedBodyBytes", options.maxDecodedBodyBytes, 64 * 1024 * 1024, 256 * 1024 * 1024),
     maxInjectHTMLBytes: bounded("maxInjectHTMLBytes", options.maxInjectHTMLBytes, 8 * 1024 * 1024, 32 * 1024 * 1024),
     responseMetadataTimeoutMs: bounded("responseMetadataTimeoutMs", options.responseMetadataTimeoutMs, 10_000, 300_000),
     responseBodyInactivityTimeoutMs: optionalBounded("responseBodyInactivityTimeoutMs", options.responseBodyInactivityTimeoutMs, 300_000),
-    passthroughPaths: paths("passthrough.paths", options.passthrough?.paths),
-    passthroughPrefixes: paths("passthrough.prefixes", options.passthrough?.prefixes),
+    passthroughPaths: strings("passthrough.paths", options.passthrough?.paths),
+    passthroughPrefixes: strings("passthrough.prefixes", options.passthrough?.prefixes),
     proxyPathPrefix,
     stripProxyPathPrefix: options.stripProxyPathPrefix ?? false,
     injectHTML: inject === undefined ? null : Object.freeze({
       ...inject,
       mode: inject.mode ?? "inline_module",
-      excludePathPrefixes: paths("injectHTML.excludePathPrefixes", inject.excludePathPrefixes),
+      excludePathPrefixes: strings("injectHTML.excludePathPrefixes", inject.excludePathPrefixes),
     }),
     forwardFetchMessageTypes: strings("forwardFetchMessageTypes", options.forwardFetchMessageTypes),
     windowTarget: options.windowTarget ?? "registered_runtime",
     windowClientMessageType: token("windowClientMessageType", options.windowClientMessageType, "flowersec-proxy:fetch"),
     runtimeRegistrationToken: token("runtimeRegistrationToken", options.runtimeRegistrationToken),
-    runtimeClientPathPrefix: pathPrefix("runtimeClientPathPrefix", options.runtimeClientPathPrefix),
+    runtimeClientPathPrefix: token("runtimeClientPathPrefix", options.runtimeClientPathPrefix),
     conflictHints: strings("conflictHints.keepScriptPathSuffixes", options.conflictHints?.keepScriptPathSuffixes),
   });
 }
 
-function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () => BrotliDecoder, brotliBody: typeof decodeBrotliBody): void {
+function serviceWorkerMain(config: ServiceWorkerConfig): void {
   const worker = self as any;
-  let runtimeClientId = "", runtimeClaim = "";
-  let runtimeClaimSequence = 0;
-  let publicationSequence = 0, publicationOwnerSequence = 0, publicationGeneration = 0;
-  let publicationContext = "", publicationClosed = false, publicationBound = false, publicationOwnerID = "";
-  let publicationOwnerClaim = "", publicationOwnerClaimSequence = 0;
-  const publicationTails = new Set<() => void>();
-  let publicationObserver: MessagePort | undefined;
-  const observeCleanup = (): void => {
-    try { publicationObserver?.postMessage({ type: "flowersec-proxy:publication-cleanup", sequence: publicationOwnerSequence,
-      context: publicationContext, pending_callbacks: publicationTails.size }); } catch { /* The host may have closed its observer. */ }
-  };
-  const addPublicationTail = (stop: () => void): void => { publicationTails.add(stop); observeCleanup(); };
-  const removePublicationTail = (stop: () => void): void => { publicationTails.delete(stop); observeCleanup(); };
-  const checkPublication = (generation: number): void => {
-    if (publicationBound && (publicationClosed || generation !== publicationGeneration)) throw new Error("surface_publication_fenced");
-  };
+  let runtimeClientId = "";
 
-  const pathMatchesPrefix = (path: string, prefix: string) => {
-    const pathname = path.split("?", 1)[0] ?? path;
-    if (prefix === "/") return pathname.startsWith("/");
-    if (prefix.endsWith("/")) return pathname.startsWith(prefix);
-    return pathname === prefix || pathname.startsWith(`${prefix}/`);
-  };
-  const pathMatches = (path: string, values: readonly string[]) => values.some((value) => pathMatchesPrefix(path, value));
-  const failureResponse = (message: string, status: number): Response => new Response(message, { status,
-    ...(publicationBound ? { headers: { "cache-control": "no-store, no-transform" } } : {}) });
+  const pathMatches = (path: string, values: readonly string[]) => values.some((value) => path.startsWith(value));
   const safeMessage = (error: unknown) => error instanceof Error && error.name === "AbortError"
     ? "proxy request canceled"
     : "proxy request failed";
-  const readRequestBody = async (request: Request, limit: number, ownerSignal?: AbortSignal): Promise<ArrayBuffer | undefined> => {
-    const requestSignal = ownerSignal === undefined ? request.signal : AbortSignal.any([request.signal, ownerSignal]);
-    const source = request.body;
-    const declaredHeader = request.headers.get("content-length");
-    let declaredLength: number | undefined;
-    if (declaredHeader !== null) {
-      if (!/^(?:0|[1-9][0-9]*)$/u.test(declaredHeader)) throw new TypeError("invalid proxy request content length");
-      try {
-        const value = BigInt(declaredHeader);
-        if (value > BigInt(limit) || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError("proxy request body exceeds limit");
-        declaredLength = Number(value);
-      } catch (error) {
-        if (error instanceof RangeError) throw error;
-        throw new TypeError("invalid proxy request content length");
-      }
-    }
-    if (source === null) {
-      if (declaredLength !== undefined && declaredLength !== 0) throw new TypeError("proxy request body length mismatch");
-      return undefined;
-    }
-    if (source === undefined) {
-      // Do not fall back to Request.arrayBuffer(): that API can allocate an
-      // unbounded temporary before the limit check. A body-bearing request
-      // must expose a readable stream so this owner can enforce the cap.
-      if (declaredLength === 0) return undefined;
-      throw new TypeError("proxy request body unavailable");
-    }
-    const reader = source.getReader();
-    // Reserve only the declared size (when available), or one small initial
-    // slab. Growing on demand keeps a tiny upload from owning the default
-    // 64 MiB budget while retaining a hard upper bound.
-    let bytes = new Uint8Array(Math.min(limit, declaredLength ?? 16 * 1024));
-    let total = 0;
-    let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
-    let released = false;
-    let cancelRequested = false;
-    let naturalEOF = false;
-    let abortHandler: (() => void) | undefined;
-    const abortError = () => new DOMException("proxy request canceled", "AbortError");
-    const abort = new Promise<never>((_, reject) => {
-      abortHandler = () => {
-        // Reject before canceling: cancel can synchronously settle a pending
-        // read with done=true, which must not become a successful natural EOF.
-        reject(abortError());
-        cancel();
-      };
-      requestSignal.addEventListener("abort", abortHandler, { once: true });
-    });
-    const release = () => {
-      if (released) return;
-      released = true;
-      try { reader.releaseLock(); } catch { /* a provider may release it first */ }
-      removePublicationTail(physicalRead);
-    };
-    const cancel = () => {
-      if (!cancelRequested) {
-        cancelRequested = true;
-        const cancellation = reader.cancel();
-        void Promise.allSettled(pendingRead === undefined ? [cancellation] : [cancellation, pendingRead]).then(release);
-      }
-    };
-    const physicalRead = () => cancel(); addPublicationTail(physicalRead);
-    try {
-      for (;;) {
-        if (requestSignal.aborted) throw abortError();
-        pendingRead = reader.read();
-        const next = await Promise.race([pendingRead, abort]) as ReadableStreamReadResult<Uint8Array>;
-        // The signal or publication fence may win after read resolves but
-        // before this continuation runs. Cancellation retains its own physical
-        // tail even when the read has already returned done=true.
-        if (requestSignal.aborted || cancelRequested) throw abortError();
-        pendingRead = undefined;
-        if (next.done) { naturalEOF = true; break; }
-        const chunk = next.value;
-        if (!(chunk instanceof Uint8Array)) throw new TypeError("proxy request body is not bytes");
-        if (chunk.byteLength > limit - total) throw new RangeError("proxy request body exceeds limit");
-        const required = total + chunk.byteLength;
-        if (required > bytes.byteLength) {
-          let capacity = Math.max(bytes.byteLength * 2, 16 * 1024, required);
-          capacity = Math.min(limit, capacity);
-          const grown = new Uint8Array(capacity);
-          grown.set(bytes.subarray(0, total));
-          bytes = grown;
-        }
-        bytes.set(chunk, total);
-        total = required;
-      }
-      if (declaredLength !== undefined && total !== declaredLength) throw new TypeError("proxy request body length mismatch");
-      return total === 0 ? undefined : bytes.slice(0, total).buffer;
-    } finally {
-      if (abortHandler !== undefined) requestSignal.removeEventListener("abort", abortHandler);
-      // Only natural EOF has no underlying cancellation left to join. Once
-      // cancel is requested, its read+cancel join alone removes physicalRead.
-      if (naturalEOF && !cancelRequested) release();
-      else cancel();
-    }
-  };
 
   worker.addEventListener("install", (event: any) => event.waitUntil(worker.skipWaiting()));
   worker.addEventListener("activate", (event: any) => event.waitUntil(worker.clients.claim()));
@@ -281,37 +134,6 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
   worker.addEventListener("message", (event: any) => {
     const data = event.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") return;
-    if (data.type === "flowersec-proxy:publication-control") {
-      const source = event.source, port = event.ports[0];
-      const ownerID = typeof data.owner_id === "string" ? data.owner_id : "";
-      const ownerEpoch = typeof data.owner_epoch === "number" ? data.owner_epoch : NaN;
-      const ownerClaim = typeof data.owner_claim === "string" ? data.owner_claim : "";
-      const sameOwner = publicationBound && ownerID === publicationOwnerID && ownerClaim === publicationOwnerClaim &&
-        runtimeClaim !== "" && ownerClaim === runtimeClaim && runtimeClaimSequence === publicationOwnerClaimSequence;
-      const replacingOwner = publicationBound && ownerID !== "" && Number.isSafeInteger(ownerEpoch) && ownerEpoch >= 1 && ownerClaim !== "" &&
-        ownerClaim === runtimeClaim && runtimeClaimSequence > publicationOwnerClaimSequence && publicationTails.size === 0 &&
-        !sameOwner;
-      const valid = config.runtimeRegistrationToken !== "" && data.token === config.runtimeRegistrationToken &&
-        source?.id === runtimeClientId && ownerID !== "" && Number.isSafeInteger(ownerEpoch) && ownerEpoch >= 1 && ownerClaim !== "" && ownerClaim === runtimeClaim &&
-        Number.isSafeInteger(data.sequence) && (replacingOwner ? Number(data.sequence) >= 1 : Number(data.sequence) > publicationOwnerSequence) &&
-        typeof data.context === "string" && (data.context === "" || /^[A-Za-z0-9_-]{43}$/u.test(data.context)) &&
-        (data.action === "fence" || data.action === "install") &&
-        (!publicationBound || sameOwner || replacingOwner);
-      if (valid) {
-        publicationSequence = Math.max(publicationSequence + 1, Number(data.sequence));
-        publicationOwnerSequence = Number(data.sequence); publicationOwnerID = ownerID;
-        publicationOwnerClaim = ownerClaim; publicationOwnerClaimSequence = runtimeClaimSequence;
-        publicationGeneration++; publicationBound = true;
-        publicationClosed = true;
-        for (const stop of [...publicationTails]) { try { stop(); } catch { /* Continue sealing every original owner. */ } }
-        publicationContext = String(data.context);
-        if (data.action === "install") publicationClosed = false;
-      }
-      if (valid) { publicationObserver?.close(); publicationObserver = port; }
-      port?.postMessage({ type: "flowersec-proxy:publication-ack", ok: valid, action: data.action,
-        context: data.context, sequence: data.sequence, pending_callbacks: publicationTails.size });
-      if (!valid) port?.close(); return;
-    }
     if (data.type === "flowersec-proxy:register-runtime") {
       const port = event.ports[0];
       const source = event.source as any;
@@ -319,47 +141,16 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
       if (config.runtimeRegistrationToken !== "") ok = ok && data.token === config.runtimeRegistrationToken;
       if (ok && config.runtimeClientPathPrefix !== "") {
         try {
-          ok = pathMatchesPrefix(new URL(source!.url).pathname, config.runtimeClientPathPrefix);
+          ok = new URL(source!.url).pathname.startsWith(config.runtimeClientPathPrefix);
         } catch {
           ok = false;
         }
       }
-      const requestedOwnerID = typeof data.owner_id === "string" ? data.owner_id : "";
-      const requestedOwnerEpoch = typeof data.owner_epoch === "number" ? data.owner_epoch : NaN;
-      const ownerRegistration = requestedOwnerID !== "" || Number.isSafeInteger(requestedOwnerEpoch);
-      // A reused worker may move to a new document client only after the
-      // previous publication is fenced and every physical tail has drained.
-      // A delayed registration from the old document still carries the old
-      // owner association and cannot rotate the worker claim.
-      if (ok && publicationBound && runtimeClientId !== source!.id &&
-        !(publicationClosed && publicationTails.size === 0 &&
-          (!ownerRegistration || requestedOwnerID !== publicationOwnerID))) ok = false;
-      if (ownerRegistration) {
-        ok = ok && requestedOwnerID !== "" && Number.isSafeInteger(requestedOwnerEpoch) && requestedOwnerEpoch >= 1;
-        if (ok && publicationBound) {
-          ok = publicationClosed && publicationTails.size === 0
-            ? true
-            : requestedOwnerID === publicationOwnerID;
-        }
-      }
-      if (ok) {
-        const rotateClaim = !publicationBound || (ownerRegistration && publicationClosed && publicationTails.size === 0) || runtimeClientId !== source!.id;
-        if (rotateClaim) {
-          if (runtimeClaimSequence >= Number.MAX_SAFE_INTEGER) ok = false;
-          else {
-            runtimeClientId = source!.id;
-            runtimeClaimSequence++;
-            const bytes = new Uint8Array(16);
-            globalThis.crypto.getRandomValues(bytes);
-            runtimeClaim = `${runtimeClaimSequence}.${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
-          }
-        }
-      }
-      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok, ...(ok ? { owner_claim: runtimeClaim } : {}) });
+      if (ok) runtimeClientId = source!.id;
+      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok });
       port?.close();
       return;
     }
-    if (data.type === config.windowClientMessageType || data.type === "flowersec-proxy:fetch") return;
     if (!config.forwardFetchMessageTypes.includes(String(data.type ?? ""))) return;
     event.waitUntil((async () => {
       const target = runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
@@ -369,7 +160,6 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
 
   worker.addEventListener("fetch", (event: any) => {
     event.respondWith((async () => {
-      const capturedGeneration = publicationGeneration, capturedContext = publicationContext, capturedRuntime = runtimeClientId;
       const request = event.request;
       const url = new URL(request.url);
       if (config.sameOriginOnly && url.origin !== worker.location.origin) return await fetch(request);
@@ -377,54 +167,37 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
         return await fetch(request);
       }
 
-      const query = url.href.slice(url.origin.length + url.pathname.length);
-      let path = url.pathname + query;
+      let path = url.pathname + url.search;
       if (config.proxyPathPrefix !== "") {
-        if (!pathMatchesPrefix(url.pathname, config.proxyPathPrefix)) return await fetch(request);
+        if (!url.pathname.startsWith(config.proxyPathPrefix)) return await fetch(request);
         if (config.stripProxyPathPrefix) {
           const stripped = url.pathname.slice(config.proxyPathPrefix.length);
-          path = (stripped.startsWith("/") ? stripped : `/${stripped}`) + query;
+          path = (stripped.startsWith("/") ? stripped : `/${stripped}`) + url.search;
         }
       }
 
-      if (publicationBound && publicationClosed) return failureResponse("proxy runtime unavailable", 503);
-      checkPublication(capturedGeneration);
-      if (publicationTails.size >= 128) return failureResponse("proxy capacity unavailable", 503);
-      const admission = new AbortController(), admissionSeal = () => admission.abort();
-      addPublicationTail(admissionSeal);
-      try {
       const source = event.clientId === "" ? null : await worker.clients.get(event.clientId);
       const target = config.windowTarget === "request_client"
         ? source
         : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
       if (target === null) {
         if (config.windowTarget === "registered_runtime") runtimeClientId = "";
-        return failureResponse("proxy runtime unavailable", 503);
+        return new Response("proxy runtime unavailable", { status: 503 });
       }
 
       let body: ArrayBuffer | undefined;
-      if (request.signal.aborted) return failureResponse("proxy request canceled", 499);
+      if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
       if (request.method !== "GET" && request.method !== "HEAD") {
-        try {
-          body = await readRequestBody(request, config.maxRequestBodyBytes, admission.signal);
-        } catch (error) {
-          if (error instanceof RangeError) return failureResponse("proxy request too large", 413);
-          if (request.signal.aborted || error instanceof DOMException && error.name === "AbortError") return failureResponse("proxy request canceled", 499);
-          return failureResponse("proxy request body unavailable", 400);
-        }
+        const requestBody = await request.clone().arrayBuffer() as ArrayBuffer;
+        if (requestBody.byteLength > config.maxRequestBodyBytes) return new Response("proxy request too large", { status: 413 });
+        body = requestBody;
       }
-      checkPublication(capturedGeneration);
-      if (capturedRuntime !== runtimeClientId || capturedContext !== publicationContext) throw new Error("surface_publication_fenced");
-      if (publicationTails.size >= 128) return failureResponse("proxy capacity unavailable", 503);
       const channel = new MessageChannel();
       const response = await new Promise<Response>((resolve) => {
         let metadata: Readonly<{ status: number; headers: Headers }> | null = null;
-        let controller: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | null = null;
+        let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
         let finished = false;
-        let outputStop: (() => void) | undefined;
         let remoteAbortSent = false;
-        let responseCreditOutstanding = false;
-        let encodedBodyBytes = 0;
         let bodyInactivityTimer: ReturnType<typeof setTimeout> | undefined;
         const abortRemote = () => {
           if (remoteAbortSent) return;
@@ -437,29 +210,16 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
           clearInterval(runtimeWatchdog);
           request.signal.removeEventListener("abort", requestAborted);
           channel.port1.close();
-          if (outputStop === undefined) removePublicationTail(stopPublication);
         };
         const finishError = (status: number, message: string, cancelRemote = false) => {
           if (finished) return;
           finished = true;
           if (cancelRemote) abortRemote();
           if (controller !== null) controller.error(new Error(message));
-          else resolve(new Response(message, { status, headers: { "cache-control": "no-store, no-transform" } }));
+          else resolve(new Response(message, { status }));
           cleanup();
         };
-        const stopPublication = () => { outputStop?.(); finishError(503, "surface publication fenced", true); };
-        addPublicationTail(stopPublication);
         const requestAborted = () => finishError(499, "proxy request canceled", true);
-        const sendResponseCredit = () => {
-          if (finished || controller === null || responseCreditOutstanding) return;
-          responseCreditOutstanding = true;
-          try {
-            channel.port1.postMessage({ type: "flowersec-proxy:response_credit" });
-          } catch {
-            responseCreditOutstanding = false;
-            finishError(502, "proxy response channel failed", true);
-          }
-        };
         const armBodyInactivityTimer = () => {
           clearTimeout(bodyInactivityTimer);
           if (config.responseBodyInactivityTimeoutMs === 0) return;
@@ -483,57 +243,21 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
         channel.port1.onmessage = (message) => {
           const value = message.data as Record<string, unknown> | null;
           if (value === null || typeof value !== "object" || finished) return;
-          if (publicationBound && (publicationClosed || capturedGeneration !== publicationGeneration)) return stopPublication();
           if (value.type === "flowersec-proxy:response_meta") {
-            if (!Number.isInteger(value.status) || (value.status as number) < 200 || (value.status as number) > 599 || metadata !== null) return finishError(502, "invalid proxy response", true);
+            if (!Number.isInteger(value.status) || metadata !== null) return finishError(502, "invalid proxy response");
             const headers = new Headers();
-            try {
-              if (!Array.isArray(value.headers)) throw new TypeError("invalid response headers");
-              for (const entry of value.headers) {
-                if (!entry || typeof entry.name !== "string" || typeof entry.value !== "string") throw new TypeError("invalid response header");
-                headers.append(entry.name, entry.value);
-              }
-            } catch { return finishError(502, "invalid proxy response headers", true); }
-            const nullBody = request.method === "HEAD" || [204, 205, 304].includes(value.status as number);
-            const encodedLength = headers.get("content-length");
-            if (encodedLength !== null) {
-              if (!/^(?:0|[1-9][0-9]*)$/u.test(encodedLength)) return finishError(502, "invalid proxy content length", true);
-              try {
-                if (!nullBody && BigInt(encodedLength) > BigInt(config.maxEncodedBodyBytes)) return finishError(502, "proxy encoded body exceeds limit", true);
-              } catch { return finishError(502, "invalid proxy content length", true); }
-            }
-            const decoders: (DecompressionStream | "br")[] = [];
-            if (!nullBody) {
-              const coding = headers.get("content-encoding");
-              const formats = coding === null ? [] : coding.split(",").map(value => value.trim().toLowerCase());
-              if (formats.length > 4) return finishError(502, "proxy content coding chain exceeds limit", true);
-              try {
-                for (const format of formats.reverse()) {
-                  if (format === "identity") continue;
-                  if (!["gzip", "deflate", "br"].includes(format)) throw new TypeError("unsupported content coding");
-                  decoders.push(format === "br" ? "br" : new DecompressionStream(format as CompressionFormat));
-                }
-              } catch { return finishError(502, "unsupported proxy content coding", true); }
+            if (Array.isArray(value.headers)) for (const entry of value.headers) {
+              if (entry && typeof entry.name === "string" && typeof entry.value === "string") headers.append(entry.name, entry.value);
             }
             metadata = { status: value.status as number, headers };
             clearTimeout(metadataTimer);
-            if (nullBody) {
-              // HEAD/204/205/304 have no body. Do not create a decoder,
-              // stream or credit window for an impossible payload.
-              finished = true;
-              checkPublication(capturedGeneration);
-              resolve(new Response(null, { status: metadata.status, headers: metadata.headers }));
-              abortRemote();
-              cleanup();
-              return;
-            }
             armBodyInactivityTimer();
-            const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+            const stream = new ReadableStream<Uint8Array>({
               start(valueController) {
                 controller = valueController;
-                sendResponseCredit();
+                channel.port1.postMessage({ type: "flowersec-proxy:response_credit" });
               },
-              pull() { sendResponseCredit(); },
+              pull() { channel.port1.postMessage({ type: "flowersec-proxy:response_credit" }); },
               cancel() {
                 if (finished) return;
                 finished = true;
@@ -541,86 +265,23 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
                 cleanup();
               },
             });
-            let decoded: ReadableStream<Uint8Array<ArrayBuffer>> = stream;
-            for (const decoder of decoders) {
-              if (decoder === "br") {
-                decoded = brotliBody(decoded, config.maxDecodedBodyBytes, createBrotliDecoder);
-                continue;
-              }
-              let total = 0;
-              decoded = decoded.pipeThrough(decoder).pipeThrough(new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
-                transform(chunk, output) {
-                  total += chunk.byteLength;
-                  if (total > config.maxDecodedBodyBytes) throw new RangeError("proxy decoded body exceeds limit");
-                  output.enqueue(chunk);
-                },
-              }));
-            }
-            let presentedBytes = 0;
-            decoded = decoded.pipeThrough(new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
-              transform(chunk, output) {
-                presentedBytes += chunk.byteLength;
-                if (presentedBytes > config.maxDecodedBodyBytes) throw new RangeError("proxy decoded body exceeds limit");
-                output.enqueue(chunk);
-              },
-            }));
-            // Synthetic Response does not decode. This is the sole final
-            // presentation boundary; origin representation metadata stays intact.
-            const presented = decoded.getReader();
-            let output: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined;
-            let outputClosed = false;
-            const releaseOutput = () => { removePublicationTail(stopPublication); try { presented.releaseLock(); } catch { /* already released */ } };
-            outputStop = () => {
-              if (outputClosed) return; outputClosed = true;
-              output?.error(new Error("surface_publication_fenced"));
-              void presented.cancel().then(releaseOutput, releaseOutput);
-            };
-            const guarded = new ReadableStream<Uint8Array<ArrayBuffer>>({
-              start(controller) { output = controller; },
-              async pull(controller) {
-                try {
-                  checkPublication(capturedGeneration);
-                  const physicalRead = () => {}; addPublicationTail(physicalRead);
-                  let next: ReadableStreamReadResult<Uint8Array<ArrayBuffer>>;
-                  try { next = await presented.read(); } finally { removePublicationTail(physicalRead); }
-                  checkPublication(capturedGeneration);
-                  if (next.done) { outputClosed = true; controller.close(); releaseOutput(); }
-                  else controller.enqueue(next.value);
-                } catch (error) { if (!outputClosed) { outputClosed = true; controller.error(error); } await presented.cancel().catch(() => undefined); releaseOutput(); }
-              },
-              async cancel() { outputClosed = true; await presented.cancel().catch(() => undefined); releaseOutput(); },
-            });
-            checkPublication(capturedGeneration);
-            resolve(new Response(guarded, { status: metadata.status, headers: metadata.headers }));
+            resolve(new Response(stream, { status: metadata.status, headers: metadata.headers }));
             return;
           }
           if (value.type === "flowersec-proxy:response_chunk") {
-            if (controller === null || !(value.data instanceof ArrayBuffer)) return finishError(502, "invalid proxy response", true);
-            const chunk = new Uint8Array(value.data);
-            if (chunk.byteLength > config.maxResponseChunkBytes) return finishError(502, "proxy response chunk exceeds limit", true);
-            if (chunk.byteLength > config.maxEncodedBodyBytes - encodedBodyBytes) return finishError(502, "proxy encoded body exceeds limit", true);
-            encodedBodyBytes += chunk.byteLength;
-            // A chunk consumes the outstanding credit. A pull after enqueue
-            // may immediately issue the next single credit if demand remains.
-            responseCreditOutstanding = false;
-            try { controller.enqueue(chunk); }
-            catch { return finishError(502, "proxy response body failed", true); }
+            if (controller === null || !(value.data instanceof ArrayBuffer)) return finishError(502, "invalid proxy response");
+            controller.enqueue(new Uint8Array(value.data));
             armBodyInactivityTimer();
-            if ((controller.desiredSize ?? 0) > 0) sendResponseCredit();
             return;
           }
           if (value.type === "flowersec-proxy:response_end") {
-            if (metadata === null || controller === null) return finishError(502, "proxy response missing metadata", true);
             finished = true;
             controller?.close();
             cleanup();
             return;
           }
           if (value.type === "flowersec-proxy:response_error") {
-            const status = Number.isInteger(value.status) && (value.status as number) >= 400 && (value.status as number) <= 599
-              ? value.status as number
-              : 502;
-            finishError(status, typeof value.message === "string" ? value.message : "proxy request failed", true);
+            finishError(Number.isInteger(value.status) ? value.status as number : 502, typeof value.message === "string" ? value.message : "proxy request failed");
           }
         };
         channel.port1.onmessageerror = () => finishError(502, "proxy request failed", true);
@@ -632,8 +293,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
               id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               method: request.method,
               path,
-              headers, credentials: request.credentials, request_origin: url.origin,
-              ...(publicationBound && capturedContext !== "" ? { association_context: capturedContext, association_generation: capturedGeneration } : {}),
+              headers,
               response_flow_control: "chunk_credit_v2",
               ...(body === undefined ? {} : { body }),
             },
@@ -646,25 +306,11 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
 
       const injection = config.injectHTML;
       if (injection === null || pathMatches(url.pathname, injection.excludePathPrefixes ?? [])) return response;
-      if (request.method !== "GET" || response.status !== 200 || [...request.headers.keys()].some(name => name === "range" || name.startsWith("if-")) || (response.headers.get("cache-control") ?? "").split(",").some(value => value.trim().toLowerCase() === "no-transform")) return response;
       if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("text/html")) return response;
-      const htmlReader = response.body!.getReader();
-      const htmlBytes = new Uint8Array(config.maxInjectHTMLBytes);
-      let size = 0;
-      try {
-        for (;;) {
-          const next = await htmlReader.read();
-          if (next.done) break;
-          if (next.value.byteLength > config.maxInjectHTMLBytes - size) {
-            await htmlReader.cancel();
-            return failureResponse("proxy HTML response too large", 502);
-          }
-          htmlBytes.set(next.value, size);
-          size += next.value.byteLength;
-        }
-      } finally { htmlReader.releaseLock(); }
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength > config.maxInjectHTMLBytes) return new Response("proxy HTML response too large", { status: 502 });
       const decoder = new TextDecoder();
-      let html = decoder.decode(htmlBytes.subarray(0, size));
+      let html = decoder.decode(bytes);
       const runtimeGlobal = injection.runtimeGlobal ?? "__flowersecProxyRuntime";
       let markup: string;
       if ((injection.mode ?? "inline_module") === "inline_module") {
@@ -676,16 +322,15 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
       const location = html.search(/<\/head\s*>/iu);
       html = location >= 0 ? `${html.slice(0, location)}${markup}${html.slice(location)}` : `${markup}${html}`;
       const headers = new Headers(response.headers);
-      for (const name of ["content-encoding", "content-length", "etag", "last-modified", "content-digest", "repr-digest", "digest", "content-md5", "content-range", "accept-ranges"]) headers.delete(name);
+      headers.delete("content-length");
+      if (injection.stripValidatorHeaders !== false) { headers.delete("etag"); headers.delete("last-modified"); }
       if (injection.setNoStore !== false) headers.set("cache-control", "no-store");
-      checkPublication(capturedGeneration);
       return new Response(html, { status: response.status, statusText: response.statusText, headers });
-      } finally { removePublicationTail(admissionSeal); }
-    })().catch((error) => failureResponse(safeMessage(error), 502)));
+    })().catch((error) => new Response(safeMessage(error), { status: 502 })));
   });
 }
 
 export function createProxyServiceWorkerScript(options: ProxyServiceWorkerScriptOptions = {}): string {
   const config = normalizeOptions(options);
-  return `// Generated by @floegence/flowersec-core/proxy v2\n(${serviceWorkerMain.toString()})(${JSON.stringify(config)}, ${brotliWorkerSource}, ${decodeBrotliBody.toString()});\n`;
+  return `// Generated by @floegence/flowersec-core/proxy v2\n(${serviceWorkerMain.toString()})(${JSON.stringify(config)});\n`;
 }

@@ -239,8 +239,8 @@ require_exact_keys(release_workflow, ["name", true, "env", "permissions", "concu
   require_exact_value(workflow["env"], expected_env, "workflow #{workflow["name"].inspect} environment")
 end
 require_exact_value(ci_workflow[true], {
-  "push" => { "branches" => ["main"] },
-  "pull_request" => { "branches" => ["main"] },
+  "push" => { "branches" => ["main", "release/5.x"] },
+  "pull_request" => { "branches" => ["main", "release/5.x"] },
 }, "hosted CI triggers")
 require_exact_value(codeql_workflow[true], {
   "workflow_dispatch" => {},
@@ -529,7 +529,11 @@ validate_step_contracts(ci_steps, [
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     "with" => { "node-version" => node_version },
   } },
-  { name: "Check toolchain declarations", keys: ["name", "run"], values: { "run" => "node scripts/check-toolchain-policy.mjs\nnode scripts/check-go-toolchain-policy.mjs\n" } },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => { "go-version-file" => "tools/releasenotes/go.mod", "cache" => false },
+  } },
+  { name: "Check toolchain declarations", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go\nnode scripts/check-toolchain-policy.mjs\nnode scripts/check-go-toolchain-policy.mjs\n" } },
   { name: "Check release workflow policy", keys: ["name", "run"], run_sha256: "ca5a81f1c6229ace59783918c84158923cedda3a99d4135a5e95fd812242a47d" },
 ], "the hosted CI repository job")
 validate_step_contracts(dependency_review_steps, [
@@ -548,7 +552,7 @@ validate_step_contracts(codeql_steps, [
     "if" => "matrix.language == 'go'",
     "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
     "with" => {
-      "go-version-file" => "flowersec-go/go.mod",
+      "go-version-file" => "tools/releasenotes/go.mod",
       "cache" => true,
       "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
     },
@@ -637,10 +641,10 @@ validate_step_contracts(release_steps, [
     "id" => "vars",
     "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
   }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
-  { name: "Verify tagged commit is the remote main tip", keys: ["name", "env", "run"], values: {
-    "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
-  }, run_sha256: "fde53f3b411588de1c60537f11fe018f101ba30239366219cc5e00901905e2e3" },
-  { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
+  { name: "Verify release source authority", keys: ["name", "env", "run"], values: {
+    "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}", "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" },
+  }, run_sha256: "7615f668fb55c65eef07ae86e874a65005194afe120dde8d708dd2d7e5c02de3" },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "tools/releasenotes/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "with" => { "node-version" => node_version, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
   { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust" } },
@@ -672,6 +676,7 @@ validate_step_contracts(release_steps, [
     "body_path" => "release-notes.md",
     "tag_name" => "${{ steps.vars.outputs.tag }}",
     "overwrite_files" => true,
+    "make_latest" => "${{ startsWith(steps.vars.outputs.version, '5.') && 'false' || 'legacy' }}",
   } } },
   { name: "Verify GitHub Release asset readback", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
@@ -719,7 +724,8 @@ validate_step_contracts(release_steps, [
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
   }, run_sha256: "08a1887fb1341f8fa63aed008e674f0c08c41fd448af7b39f5791b24dd0d59e6" },
-  { name: "Promote GHCR latest tag", keys: ["name", "env", "run"], values: {
+  { name: "Promote GHCR latest tag", keys: ["name", "if", "env", "run"], values: {
+    "if" => "${{ !startsWith(steps.vars.outputs.version, '5.') }}",
     "env" => {
       "IMAGE_DIGEST" => "${{ steps.runtime-image.outputs.digest || steps.runtime-state.outputs.digest }}",
       "IMAGE_REPOSITORY" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime",
@@ -731,7 +737,7 @@ validate_step_contracts(release_steps, [
       "IMAGE_REPOSITORY" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime",
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
-  }, run_sha256: "573f56d36d2b88264cb35524ec4c464c1e0e4f77ab4367ac577cd737c0d81cb1" },
+  }, run_sha256: "dc004482f1c87e1c90b1700291a60a264dd08840bd3491e5f16e23f876e7256e" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
@@ -766,10 +772,6 @@ validate_step_contracts(npm_recovery_steps, [
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     "with" => { "node-version" => node_version, "registry-url" => "https://registry.npmjs.org" },
   } },
-  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" },
-  } },
   { name: "Setup cosign", keys: ["name", "uses", "with"], values: {
     "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
     "with" => { "cosign-release" => "v3.0.6" },
@@ -777,18 +779,19 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "04872606b162f39435d3e165e78df2cee26b0f9d20fa250be8863ba13a9ee954" },
+  } }, run_sha256: "ce80d4deb0ff5d085c2e930416c0283fa8b0a5e5e2e3e5a93b5b02fcc3f1d75d" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "bdef41e39dae7c3a34309601b5748f750fc9393059499fc3dcad66744277474e" },
-  { name: "Verify tagged commit is the remote main tip", keys: ["name", "run"], run_sha256: "085e2c0ab2555351dc8594b384cb6f691543ecf003c08d20c1c19bb453867ae4" },
+  { name: "Verify release source authority", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" }, "run" => 'bash scripts/verify-release-main.sh "$RELEASE_VERSION"' } },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "tools/releasenotes/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     "with" => { "node-version" => node_version },
   } },
-  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node rust" } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },
   { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "66070c8554794b49acd86aa2f9e6177b2857685c1adf85c71a0e2f1f1a485fa4" },
@@ -797,7 +800,7 @@ validate_step_contracts(rust_steps, [
   { name: "Wait for native transport registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "55c8d909b7748b4ed9596feb4556a426d474b5355c9321075b74b456554bb93d" },
   { name: "Check whether Flowersec Rust SDK version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "sdk-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "ae85f352899c7320d14552667db2783903626215ff2565c5822d0e0bd73cdddc" },
   { name: "Authenticate Flowersec Rust SDK publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "id" => "sdk-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
-  { name: "Publish Flowersec Rust SDK", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.sdk-auth.outputs.token }}" } }, run_sha256: "60dd4249b474b21155ca88ba4bb4f0672076bc7b84fe2227c604eb938a69990a" },
+  { name: "Publish Flowersec Rust SDK", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.sdk-auth.outputs.token }}" } }, run_sha256: "bc6859b18b5f7fbcbcaf9f94d455ee7b2ab58b59424c055964dade4781cc1c53" },
   { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "5d0dee062187ebcd7c435a23d84b5e8c4992ebd9a70f6b6b2b50f2cff26f140b" },
 ], "the Rust recovery workflow publish job")
 
@@ -828,7 +831,7 @@ release_publication_steps = {
   "Build and push runtime image by digest" => "steps.runtime-state.outputs.exists == 'false'",
   "Sign new GHCR runtime digest" => "steps.runtime-state.outputs.exists == 'false'",
   "Publish immutable GHCR version tag" => "steps.runtime-state.outputs.exists == 'false'",
-  "Promote GHCR latest tag" => nil,
+  "Promote GHCR latest tag" => "${{ !startsWith(steps.vars.outputs.version, '5.') }}",
 }
 release_publication_steps.each do |name, condition|
   step, index = require_named_step(release_steps, name, "the unified release workflow")
@@ -852,7 +855,7 @@ require_condition_value(runtime_build, "steps.runtime-state.outputs.exists == 'f
 require_condition_value(runtime_sign, "steps.runtime-state.outputs.exists == 'false'", "the new GHCR runtime digest signing step")
 require_unconditional(runtime_verify, "the GHCR runtime digest verification")
 require_condition_value(runtime_publish, "steps.runtime-state.outputs.exists == 'false'", "the immutable GHCR version-tag publication")
-require_unconditional(runtime_latest, "the GHCR latest-tag promotion")
+require_condition_value(runtime_latest, "${{ !startsWith(steps.vars.outputs.version, '5.') }}", "the GHCR latest-tag promotion")
 require_unconditional(runtime_readback, "the GHCR runtime tag readback")
 require_condition(
   runtime_state_index < runtime_build_index && runtime_build_index < runtime_sign_index &&

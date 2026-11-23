@@ -6,30 +6,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 type admissionIntegrationFixture struct {
-	*authorityFixture
-	prepared *PreparedCarrier
-	provider *preparedTestProvider
+	root                 *resourcev4.Root
+	environment, preauth resourcev4.Reference
+	owner                resourcev4.OwnerKey
+	scope                SessionResourceScope
+	trust                *sessionAdmissionTrustFixture
+	config               SessionAdmissionConfig
+	prepared             *PreparedCarrier
+	provider             *preparedTestProvider
 }
 
 func admissionIntegration(t *testing.T, ctx context.Context, sources ...string) *admissionIntegrationFixture {
 	t.Helper()
-	source := "live_authority"
-	if len(sources) > 0 {
-		source = sources[0]
-	}
-	return admissionIntegrationProfile(t, ctx, source, "transport")
-}
-
-func admissionIntegrationProfile(t *testing.T, ctx context.Context, source, application string) *admissionIntegrationFixture {
-	t.Helper()
-	f := &admissionIntegrationFixture{authorityFixture: &authorityFixture{}}
+	f := &admissionIntegrationFixture{}
 	limit := resourcev4.Vector{}
 	for i := range limit {
 		limit[i] = 1 << 30
@@ -46,7 +42,11 @@ func admissionIntegrationProfile(t *testing.T, ctx context.Context, source, appl
 		t.Fatal(err)
 	}
 	t.Cleanup(f.environment.Release)
-	f.trust = newSessionAdmissionTrustProfile(t, f.root, f.environment, f.owner, source, application)
+	source := "live_authority"
+	if len(sources) > 0 {
+		source = sources[0]
+	}
+	f.trust = newSessionAdmissionTrustFixture(t, f.root, f.environment, f.owner, source)
 	f.scope = corePlanTestScope(t, f.root, limit, 1)
 	f.preauth, err = f.root.Reserve(admissionResourceKey(f.owner, 200), resourcev4.Vector{resourcev4.SDKBytes: 4 << 20, resourcev4.Items: 1})
 	if err != nil {

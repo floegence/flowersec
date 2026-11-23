@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "type_id": 8101,
+  "payloads": [
+    {
+      "id": "object_unicode_unknown",
+      "json": "{\"state\":\"notification accepted 通知\",\"unknown\":{\"ignored\":true}}",
+      "decoder": "state_object",
+      "expected_value": "notification accepted 通知",
+      "outcome": "success"
+    },
+    {
+      "id": "array",
+      "json": "[\"notification\",\"通知\"]",
+      "decoder": "string_array",
+      "outcome": "success"
+    },
+    {
+      "id": "scalar",
+      "json": "\"notification\"",
+      "decoder": "string",
+      "expected_value": "notification",
+      "outcome": "success"
+    },
+    {
+      "id": "decode_failure",
+      "json": "{\"state\":42}",
+      "decoder": "state_object",
+      "outcome": "decode_failure"
+    }
+  ],
+  "subscription_scenarios": [
+    "duplicate_subscriptions_receive_independently",
+    "cancel_is_idempotent",
+    "handler_failure_is_isolated",
+    "session_close_terminates_subscriptions"
+  ],
+  "transport_contract_version": 5,
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

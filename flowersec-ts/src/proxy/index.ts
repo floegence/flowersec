@@ -1,4 +1,3 @@
-export * from "../facade.js";
 export { PROXY_RUNTIME_SCOPE, assertProxyRuntimeScope } from "./scope.js";
 export { createProxyRuntime, ensureServiceWorkerRuntimeRegistered } from "./runtime.js";
 export type { EnsureServiceWorkerRuntimeRegisteredOptions } from "./runtime.js";
@@ -54,12 +53,9 @@ export type {
   ProxyRuntimeHTTPScope,
   ProxyRuntimeLimits,
   ProxyRuntimeOptions,
+  ProxyRequestInit,
   ProxyRuntimePathPolicy,
   ProxyRuntimeScopeLimits,
   ProxyRuntimeScope,
   ProxyRuntimeServiceWorkerScope,
 } from "./types.js";
-
-export { createProxySurface } from "./surface.js";
-export type { ProxySurface, ProxySurfaceOptions } from "./surface.js";
-export type { ProxySurfaceMode, ProxySessionBinding, ProxySurfaceRequestPolicy, ProxyPublicationOwner, ProxyClearResult } from "./types.js";

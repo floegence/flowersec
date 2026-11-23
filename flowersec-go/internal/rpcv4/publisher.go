@@ -7,9 +7,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var ErrSerialExhausted = errors.New("rpcv4: channel serial exhausted")
@@ -22,37 +22,6 @@ type BatchSink interface {
 	TryAccept(context.Context, [][]byte) (uint64, error)
 	Published(uint64) (bool, error)
 	Wake() <-chan struct{}
-}
-
-// AuthorizedRequestBatchSink belongs to the original SDK channel writer.
-// CheckRequestAcceptance runs before the caller's publication gate. Copying
-// then remains inside that gate without recursively entering authorization.
-// The Publisher calls TryAcceptAuthorizedRequest only during stepRequest.
-type AuthorizedRequestBatchSink interface {
-	CheckRequestAcceptance(context.Context) error
-	TryAcceptAuthorizedRequest(context.Context, [][]byte) (uint64, error)
-}
-
-// AuthorizedResultReadBatchSink is the original result reader's finite copy
-// attachment. Its caller holds the result authorization gate while the bytes
-// are copied, so the sink must not reacquire endpoint or lease authority.
-type AuthorizedResultReadBatchSink interface {
-	CheckRequestAcceptance(context.Context) error
-	TryAcceptAuthorizedResponse(context.Context, [][]byte, *Publication) (uint64, error)
-}
-
-// BatchPublicationSink orders ordinary response/SDK publication outside the
-// Network gate, then copies under that original authorization gate without
-// recursively acquiring Engine or endpoint locks.
-type BatchPublicationSink interface {
-	WithBatchPublication(context.Context, func() error) error
-	TryAcceptAuthorizedResponse(context.Context, [][]byte, *Publication) (uint64, error)
-}
-
-// ResponseBatchSink attaches the original response observation atomically to
-// the final fragment. The sink records provider handoff before physical cleanup.
-type ResponseBatchSink interface {
-	TryAcceptResponse(context.Context, [][]byte, *Publication) (uint64, error)
 }
 
 const (
@@ -112,15 +81,6 @@ type Publication struct {
 	mu                                            sync.Mutex
 	progress                                      PublicationProgress
 	requestTracked, requestActive, requestPending bool
-	settled                                       chan struct{}
-	waiters                                       uint8
-	deadline                                      *timev4.Deadline
-}
-
-// ObserveResponseHandoff is called only by the original internal carrier owner
-// after the exact response tail has been accepted by its provider.
-func (p *Publication) ObserveResponseHandoff() {
-	p.update(true, true, true, true, "")
 }
 
 func (p *Publication) Progress() PublicationProgress {
@@ -129,53 +89,7 @@ func (p *Publication) Progress() PublicationProgress {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.expireLocked()
 	return p.progress
-}
-
-// Wait observes this publication's original terminal decision. Canceling an
-// observer never changes the publication or the publisher's fixed deadline.
-func (p *Publication) Wait(ctx context.Context) (PublicationProgress, error) {
-	return p.WaitOwner(ctx, nil)
-}
-
-// WaitOwner shares the original bounded observation slots. Closing a borrowed
-// maintenance capability ends only its wait, never the publication decision.
-func (p *Publication) WaitOwner(ctx context.Context, ownerClosed <-chan struct{}) (PublicationProgress, error) {
-	if p == nil || ctx == nil {
-		return p.Progress(), ErrConfiguration
-	}
-	p.mu.Lock()
-	p.expireLocked()
-	if p.progress.Terminal {
-		progress := p.progress
-		p.mu.Unlock()
-		return progress, nil
-	}
-	if p.waiters == 4 {
-		progress := p.progress
-		p.mu.Unlock()
-		return progress, ErrCapacity
-	}
-	p.waiters++
-	defer func() {
-		p.mu.Lock()
-		p.waiters--
-		p.mu.Unlock()
-	}()
-	if p.settled == nil {
-		p.settled = make(chan struct{})
-	}
-	settled := p.settled
-	p.mu.Unlock()
-	select {
-	case <-settled:
-		return p.Progress(), nil
-	case <-ownerClosed:
-		return p.Progress(), ErrClosed
-	case <-ctx.Done():
-		return p.Progress(), ctx.Err()
-	}
 }
 
 // RequestCleanupComplete observes only the original ordinary request's
@@ -214,7 +128,6 @@ func (p *Publication) update(header, message, flushed, terminal bool, reason str
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.expireLocked()
 	if p.progress.Terminal {
 		return
 	}
@@ -223,25 +136,6 @@ func (p *Publication) update(header, message, flushed, terminal bool, reason str
 	p.progress.Flushed = flushed
 	p.progress.Terminal = terminal
 	p.progress.Reason = reason
-	if terminal {
-		p.deadline = nil
-	}
-	if terminal && p.settled != nil {
-		close(p.settled)
-	}
-}
-
-func (p *Publication) expireLocked() {
-	if p.progress.Terminal || p.deadline == nil {
-		return
-	}
-	if errors.Is(p.deadline.Check(), timev4.ErrExpired) {
-		p.progress.Terminal, p.progress.Reason = true, "deadline"
-		p.deadline = nil
-		if p.settled != nil {
-			close(p.settled)
-		}
-	}
 }
 
 type Publisher struct {
@@ -385,34 +279,6 @@ func (p *Publisher) unlinkLocked(t Ticket) {
 	m.nextReady = -1
 }
 func (p *Publisher) Wake() <-chan struct{} { return p.wake }
-
-// DrainIfIdle seals completed traffic under the original Session network gate.
-// Reserved, unstarted positions cannot submit new requests after Session Drain;
-// every started request, retained response and publisher tail must still finish.
-// seal must be the SDK's bounded local send-queue transition, without I/O or
-// application callbacks, following the normal network-to-queue lock order.
-func (p *Publisher) DrainIfIdle(seal func() bool) bool {
-	n := p.network
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if p.closed || p.retired || p.batchPending || p.pendingPublication != nil || p.pendingRequestCleanup != nil {
-		return false
-	}
-	for direction := range n.slots {
-		for i := range n.slots[direction] {
-			s := &n.slots[direction][i]
-			if s.state != networkFree && s.state != networkReserved {
-				return false
-			}
-		}
-	}
-	for _, head := range p.head {
-		if head >= 0 {
-			return false
-		}
-	}
-	return seal()
-}
 func (p *Publisher) notifyLocked() {
 	select {
 	case p.wake <- struct{}{}:
@@ -639,11 +505,6 @@ func (p *Publisher) smallReplyLocked(t Ticket, s *networkSlot, code string) erro
 	}
 	m.header = h
 	m.headerBytes = uint16(length)
-	reason := "response_superseded"
-	if code == "deadline_exceeded" {
-		reason = "deadline"
-	}
-	s.responsePublication.update(false, false, false, true, reason)
 	s.message = m
 	s.message.payload = s.message.small[:len(payload)]
 	p.enqueueLocked(t, p.lane(s, t.direction))
@@ -689,7 +550,6 @@ func (p *Publisher) stopResponseLocked(t Ticket) error {
 	}
 	p.unlinkLocked(t)
 	m.abort = true
-	s.responsePublication.update(true, false, false, true, "response_aborted")
 	m.publication.update(true, false, false, true, "response_aborted")
 	m.releaseSource()
 	p.enqueueLocked(t, p.lane(s, t.direction))
@@ -765,15 +625,6 @@ func (p *Publisher) Step(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	t, s := n.indexed(p.head[lane])
-	if t.direction == incoming && s.message.publication != nil {
-		progress := s.message.publication.Progress()
-		if progress.Terminal && progress.Reason == "deadline" && !s.message.abort && !s.message.sdk {
-			if err := p.stopResponseLocked(t); err != nil {
-				return false, err
-			}
-			return true, nil
-		}
-	}
 	if guard := s.message.requestGuard; guard != nil && !s.message.abort && !s.message.stop {
 		h, publication := s.message.header, s.message.publication
 		n.mu.Unlock()
@@ -784,25 +635,6 @@ func (p *Publisher) Step(ctx context.Context) (bool, error) {
 		n.mu.Unlock()
 		locked = false
 		return p.stepResultRead(ctx, t, read)
-	}
-	if sink, ok := p.sink.(BatchPublicationSink); ok {
-		n.mu.Unlock()
-		locked = false
-		var progress bool
-		err := sink.WithBatchPublication(ctx, func() error {
-			n.mu.Lock()
-			defer n.mu.Unlock()
-			if err := p.liveLocked(); err != nil {
-				return err
-			}
-			current, err := n.slotLocked(t)
-			if err != nil || p.batchPending || !current.message.queued || current.message.publisher != p {
-				return nil
-			}
-			progress, err = p.stepLocked(ctx, t, current, int(current.message.lane), current.message.payload)
-			return err
-		})
-		return progress, err
 	}
 	return p.stepLocked(ctx, t, s, lane, s.message.payload)
 }
@@ -846,29 +678,7 @@ func (p *Publisher) stepLocked(ctx context.Context, t Ticket, s *networkSlot, la
 		return false, err
 	}
 	p.views[0] = p.buffer[:length]
-	var tail uint64
-	lastResponse := t.direction == incoming && m.publication != nil && !m.sdk &&
-		(f.Kind == protocolv4.RPCBegin && m.header.Fields().PayloadBytes == 0 ||
-			f.Kind == protocolv4.RPCData && m.next+uint32(len(f.Payload)) == m.header.Fields().PayloadBytes)
-	if sink, ok := p.sink.(AuthorizedRequestBatchSink); ok && m.requestGuard != nil && !m.abort && !m.stop {
-		tail, err = sink.TryAcceptAuthorizedRequest(ctx, p.views[:])
-	} else if sink, ok := p.sink.(AuthorizedResultReadBatchSink); ok && m.readSource != nil {
-		var publication *Publication
-		if lastResponse {
-			publication = m.publication
-		}
-		tail, err = sink.TryAcceptAuthorizedResponse(ctx, p.views[:], publication)
-	} else if sink, ok := p.sink.(BatchPublicationSink); ok {
-		var publication *Publication
-		if lastResponse {
-			publication = m.publication
-		}
-		tail, err = sink.TryAcceptAuthorizedResponse(ctx, p.views[:], publication)
-	} else if sink, ok := p.sink.(ResponseBatchSink); ok && lastResponse {
-		tail, err = sink.TryAcceptResponse(ctx, p.views[:], m.publication)
-	} else {
-		tail, err = p.sink.TryAccept(ctx, p.views[:])
-	}
+	tail, err := p.sink.TryAccept(ctx, p.views[:])
 	p.views[0] = nil
 	if err != nil {
 		return false, err
@@ -925,7 +735,6 @@ func (p *Publisher) stepLocked(ctx context.Context, t Ticket, s *networkSlot, la
 		m.querySource = ContractQueryJob{}
 		m.queryRequest = ContractQueryCall{}
 		if t.direction == incoming {
-			s.responsePublication = nil
 			s.observation.lose("response_complete", true)
 			n.releaseLocked(t, s)
 		}
@@ -973,7 +782,6 @@ func (p *Publisher) Close() {
 			s := &n.slots[d][i]
 			if s.path.Channel == p.channel {
 				s.observation.lose("owner_unavailable", false)
-				s.responsePublication.update(false, false, false, true, "owner_unavailable")
 			}
 			if s.message.publisher == p {
 				s.message.publication.update(false, false, false, true, "owner_unavailable")

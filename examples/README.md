@@ -29,6 +29,19 @@ implement this contract; production services register equivalent application
 handlers. Application code does not need to know how a relay forwards encrypted
 data.
 
+For a Tunnel with distinct client and server ingress addresses, see
+[static WebSocket ingress](tunnel-ingress/README.md).
+
+In the capacity workload, each endpoint also calls application method `7004`
+with `{"namespace":"flowersec.parity","type_ids":[7001,7002,7003,7005]}`.
+The handler looks up each requested method in its active registrations, checks
+the caller's access and returns `{"contracts":[...]}` in request order. Each
+entry is the complete declaration encoded in standard padded Base64. An unknown
+or unauthorized method fails the call. The caller checks the count and compares
+each decoded entry with the corresponding bytes in [the parity declarations](parity-contracts.json).
+This lookup belongs to the example application; connecting or calling a known
+method does not require it.
+
 See the [API contract](../docs/API_CONTRACT.md) for shared behavior and the
-[transport binding](../docs/TRANSPORT_V4_BINDING.md) for connection
+[transport wire contract](../docs/TRANSPORT_V5_WIRE.md) for connection
 details.

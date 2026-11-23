@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // ApplicationWorkClass is fixed by trusted local registration. Peer metadata,
@@ -28,11 +28,6 @@ const (
 // restriction on arbitrary application allocation. Payload/codec/input owners
 // have their own original full reservations and are never folded into it.
 type ApplicationExecutorConfig struct {
-	Profile           ApplicationResourceProfile
-	DisableManagement bool
-	// Diagnostics explicitly admits the fixed 2-running/4-ready diagnostic
-	// service. Disabled sinks require no callback service.
-	Diagnostics                           bool
 	Running, ResidentRunning              uint32
 	Ready, ResidentReady                  uint32
 	CompletionRunning, CompletionReserved uint32
@@ -54,7 +49,6 @@ type applicationTaskSlot struct {
 	result    *ApplicationTask
 	backing   resourcev4.Reference
 	task      resourcev4.Reference
-	service   resourcev4.Reference
 }
 
 // ApplicationExecutor is the one root-scoped ordinary execution gate shared by
@@ -65,20 +59,16 @@ type applicationTaskSlot struct {
 // reservation/running capacity in this same root executor. Management, diagnostics
 // and protocol maintenance never borrow the ordinary or Completion positions.
 type ApplicationExecutor struct {
-	management                         *managementLane
 	availability                       chan struct{}
 	ready                              []applicationReadySlot
 	readyCount, residentReady          uint32
 	readyGroups, readyGroupTails       [2]*applicationGroup
 	queueClass                         ApplicationWorkClass
 	queries                            *sdkQueryLane
-	diagnostics                        *diagnosticLane
 	completions                        []completionSlot
 	completionCount, completionRunning uint32
 	completionClaims                   uint32
 	completionOrder                    uint64
-	completionReady                    [4]int
-	completionReadyCount               uint32
 	mu                                 sync.Mutex
 	config                             ApplicationExecutorConfig
 	reservation                        resourcev4.Reference
@@ -100,9 +90,6 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 	}
 	if config.Running == 0 || config.ResidentRunning >= config.Running || config.RuntimeBytes == 0 || config.RuntimeBytesPerTask == 0 || config.RuntimeBytesPerTask > math.MaxUint64-metadata {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
-	}
-	if config.Profile != ApplicationProfileCustom {
-		return applicationProfileCharge(config)
 	}
 	fixed, slot := uint64(unsafe.Sizeof(ApplicationExecutor{})), uint64(unsafe.Sizeof(applicationTaskSlot{}))
 	if config.RuntimeBytes > math.MaxUint64-fixed {
@@ -131,23 +118,7 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	charge, err = charge.Add(query)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	diagnostic, err := diagnosticLaneCharge(config)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	charge, err = charge.Add(diagnostic)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	management, err := managementLaneCharge(config)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	return charge.Add(management)
+	return charge.Add(query)
 }
 
 // TaskCharge is acquired by the original invocation's complete admission in
@@ -155,11 +126,6 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 // these actual task/stack resources must not be counted twice in its metadata.
 // An unstarted permit holds the same complete charge before OPEN acceptance.
 func (e *ApplicationExecutor) TaskCharge() resourcev4.Vector {
-	if e.config.Profile != ApplicationProfileCustom {
-		// Running stacks and bounded handles belong to the original shared
-		// service; this per-invocation reference owns the actual task lifetime.
-		return resourcev4.Vector{resourcev4.Items: 2}
-	}
 	return resourcev4.Vector{resourcev4.SDKBytes: e.config.RuntimeBytesPerTask + max(uint64(unsafe.Sizeof(ApplicationPermit{})), uint64(unsafe.Sizeof(QueuedApplicationTask{}))) + uint64(unsafe.Sizeof(ApplicationTask{})), resourcev4.Items: 2, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}
 }
 
@@ -197,15 +163,6 @@ func NewApplicationExecutor(config ApplicationExecutorConfig, reservation resour
 		return nil, err
 	}
 	e := &ApplicationExecutor{availability: make(chan struct{}), config: config, reservation: owned, slots: make([]applicationTaskSlot, int(config.Running)), ready: make([]applicationReadySlot, config.Ready), completions: make([]completionSlot, config.CompletionReserved), done: make(chan struct{})}
-	// The fixed lane is admitted with the executor, while its two goroutines
-	// start lazily at the first management call. This keeps an unused executor
-	// immediately reclaimable without creating idle worker tails.
-	if !config.DisableManagement {
-		e.management = &managementLane{wake: make(chan struct{}, 2), stop: make(chan struct{})}
-	}
-	if config.Diagnostics {
-		e.diagnostics = &diagnosticLane{closing: make(chan struct{})}
-	}
 	if config.QueryOwners != 0 {
 		e.queries = &sdkQueryLane{slots: make([]sdkQuerySlot, config.QueryOwners), wake: make(chan struct{}, 1), sourceWake: make(chan struct{}, 1), worker: true, lastGroup: -1}
 		go e.runSDKQueries()
@@ -219,15 +176,11 @@ func NewApplicationExecutor(config ApplicationExecutorConfig, reservation resour
 // or timeout. The caller must provide its original invocation authorization gate
 // inside work: this executor grants resources, never protocol/business authority.
 func (e *ApplicationExecutor) TrySubmit(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work func()) (*ApplicationTask, error) {
-	return e.trySubmitInGroup(nil, class, taskReservation, backing, work)
-}
-
-func (e *ApplicationExecutor) trySubmitInGroup(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work func()) (*ApplicationTask, error) {
 	if work == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	e.mu.Lock()
-	permit, err := e.acquireGroupLocked(group, class, taskReservation, backing, false)
+	permit, err := e.acquireLocked(class, taskReservation, backing, false)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -245,12 +198,12 @@ func (e *ApplicationExecutor) trySubmitInGroup(group *applicationGroup, class Ap
 // finite SDK join. callbackExited proves all application defers have returned;
 // the public task Done remains closed only after that join and slot release.
 // join is internal cleanup and must never enter application code or wait on it.
-func (e *ApplicationExecutor) trySubmitJoined(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work, join func()) (<-chan struct{}, error) {
+func (e *ApplicationExecutor) trySubmitJoined(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work, join func()) (<-chan struct{}, error) {
 	if work == nil || join == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	e.mu.Lock()
-	permit, err := e.acquireGroupLocked(group, class, taskReservation, backing, false)
+	permit, err := e.acquireLocked(class, taskReservation, backing, false)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -323,57 +276,6 @@ func (e *ApplicationExecutor) TryAcquireWithBackingBorrow(class ApplicationWorkC
 	return e.acquireLocked(class, taskReservation, backingBorrow, true)
 }
 
-// The original Session group retains actual try-now work after its stream
-// terminates, just as it retains queued work. Dormant ready descriptors are
-// still excluded from activeWork.
-func (e *ApplicationExecutor) tryAcquireInGroup(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference) (*ApplicationPermit, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.acquireGroupLocked(group, class, taskReservation, backing, false)
-}
-
-// A synchronous stage borrows its caller's execution slot, but still retains
-// the target Session's actual work through callback exit.
-func (e *ApplicationExecutor) retainSynchronousWork(group *applicationGroup) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if group == nil {
-		return nil
-	}
-	if group.executor != e || group.closed {
-		return resourcev4.ErrClosed
-	}
-	group.active++
-	group.activeWork.Add(1)
-	return nil
-}
-
-func (e *ApplicationExecutor) releaseSynchronousWork(group *applicationGroup) {
-	if group == nil {
-		return
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	group.activeWork.Add(^uint64(0))
-	e.releaseApplicationGroupLocked(group)
-}
-
-func (e *ApplicationExecutor) acquireGroupLocked(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, moveBorrow bool) (*ApplicationPermit, error) {
-	if group != nil && (group.executor != e || group.closed) {
-		return nil, resourcev4.ErrClosed
-	}
-	permit, err := e.acquireLocked(class, taskReservation, backing, moveBorrow)
-	if err != nil {
-		return nil, err
-	}
-	if group != nil {
-		e.slots[permit.index].group = group
-		group.active++
-		group.activeWork.Add(1)
-	}
-	return permit, nil
-}
-
 func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, moveBorrow bool) (*ApplicationPermit, error) {
 	if class > ApplicationResident || taskReservation == backing {
 		return nil, cryptov4.ErrConfiguration
@@ -400,17 +302,8 @@ func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskRese
 	if err != nil {
 		return nil, err
 	}
-	var service resourcev4.Reference
-	if e.config.Profile != ApplicationProfileCustom {
-		service, err = e.reservation.BorrowApplicationService(backing)
-		if err != nil {
-			borrow.Release()
-			return nil, err
-		}
-	}
 	task, err := taskReservation.Take(e.TaskCharge())
 	if err != nil {
-		service.Release()
 		borrow.Release()
 		return nil, err
 	}
@@ -420,7 +313,7 @@ func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskRese
 	}
 	permit := &ApplicationPermit{index: index}
 	result := &ApplicationTask{done: make(chan struct{})}
-	e.slots[index] = applicationTaskSlot{active: true, class: class, permit: permit, result: result, backing: borrow, task: task, service: service}
+	e.slots[index] = applicationTaskSlot{active: true, class: class, permit: permit, result: result, backing: borrow, task: task}
 	e.running++
 	if class == ApplicationResident {
 		e.resident++
@@ -528,10 +421,6 @@ func (e *ApplicationExecutor) releaseLocked(index int) {
 	}
 	s.backing.Release()
 	s.task.Release()
-	s.service.Release()
-	if s.group != nil {
-		s.group.activeWork.Add(^uint64(0))
-	}
 	e.releaseApplicationGroupLocked(s.group)
 	*s = applicationTaskSlot{}
 	e.running--
@@ -559,8 +448,6 @@ func (e *ApplicationExecutor) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.closed = true
-	e.closeManagementLocked()
-	e.closeDiagnosticsLocked()
 	e.notifyAvailabilityLocked()
 	for i := range e.ready {
 		if e.ready[i].handle != nil && !e.ready[i].cleanup {
@@ -571,8 +458,6 @@ func (e *ApplicationExecutor) Close() {
 		for i := range e.queries.slots {
 			if e.queries.slots[i].registration != nil {
 				e.queries.slots[i].closing = true
-			} else {
-				e.releaseIdleSDKQueryProtectionLocked(i)
 			}
 		}
 		e.wakeSDKQueriesLocked()
@@ -586,14 +471,13 @@ func (e *ApplicationExecutor) Close() {
 }
 
 func (e *ApplicationExecutor) cleanupLocked() {
-	if !e.closed || e.cleaned || e.running != 0 || e.readyCount != 0 || e.completionCount != 0 || e.management != nil && e.management.workers != 0 || e.diagnostics != nil && (e.diagnostics.ready != 0 || e.diagnostics.running != 0) || e.queries != nil && (e.queries.worker || e.queries.count != 0) {
+	if !e.closed || e.cleaned || e.running != 0 || e.readyCount != 0 || e.completionCount != 0 || e.queries != nil && (e.queries.worker || e.queries.count != 0) {
 		return
 	}
 	e.cleaned = true
 	e.slots = nil
 	e.ready = nil
 	e.completions = nil
-	e.diagnostics = nil
 	if e.queries != nil {
 		e.queries.slots = nil
 	}
@@ -609,40 +493,18 @@ func (e *ApplicationExecutor) Done() <-chan struct{} { return e.done }
 // Running counts occupied positions, including preadmitted unstarted permits.
 // Those permits consume the same resident bound and strict short-work floor.
 type ApplicationExecutorSnapshot struct {
-	DiagnosticReady, DiagnosticRunning                                 uint32
-	QueryOwners, QueryReady, QueryRunning                              uint32
-	QueryFailed                                                        bool
-	CompletionReserved, CompletionRunning, CompletionClaims            uint32
-	CompletionReady, CompletionEligible                                uint32
-	Running, ResidentRunning                                           uint32
-	Ready, ResidentReady                                               uint32
-	Closed, CleanupComplete                                            bool
-	Profile                                                            ApplicationResourceProfile
-	OrdinaryServiceBytes, ResidentServiceBytes, CompletionServiceBytes uint64
+	QueryOwners, QueryReady, QueryRunning                   uint32
+	QueryFailed                                             bool
+	CompletionReserved, CompletionRunning, CompletionClaims uint32
+	Running, ResidentRunning                                uint32
+	Ready, ResidentReady                                    uint32
+	Closed, CleanupComplete                                 bool
 }
 
 func (e *ApplicationExecutor) Snapshot() ApplicationExecutorSnapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.snapshotLocked()
-}
-
-func (e *ApplicationExecutor) snapshotLocked() ApplicationExecutorSnapshot {
 	s := ApplicationExecutorSnapshot{CompletionClaims: e.completionClaims, CompletionReserved: e.completionCount, CompletionRunning: e.completionRunning, Running: e.running, ResidentRunning: e.resident, Ready: e.readyCount, ResidentReady: e.residentReady, Closed: e.closed, CleanupComplete: e.cleaned}
-	s.CompletionReady = e.completionReadyCount
-	for i := range e.completions {
-		if slot := &e.completions[i]; slot.active && slot.submitted && !slot.running {
-			s.CompletionEligible++
-		}
-	}
-	s.Profile = e.config.Profile
-	s.OrdinaryServiceBytes, s.ResidentServiceBytes, _ = e.config.profileServiceBytes()
-	if e.config.Profile != ApplicationProfileCustom {
-		s.CompletionServiceBytes = 256 * 1024
-	}
-	if d := e.diagnostics; d != nil {
-		s.DiagnosticReady, s.DiagnosticRunning = d.ready, d.running
-	}
 	if q := e.queries; q != nil {
 		s.QueryOwners, s.QueryReady, s.QueryRunning, s.QueryFailed = q.count, uint32(q.readyCount), q.running, q.failed
 	}

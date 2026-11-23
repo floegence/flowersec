@@ -38,6 +38,31 @@ pub(crate) struct SendStream {
 }
 
 impl SendStream {
+    pub(crate) async fn write_reliable_prefix(&mut self, bytes: &[u8]) -> Result<(), WriteError> {
+        {
+            let conn = self.conn.state.lock("SendStream::write_reliable_prefix");
+            if self.is_0rtt || !conn.inner.supports_reliable_reset() {
+                return Err(WriteError::ClosedStream);
+            }
+        }
+        poll_fn(|cx| self.execute_poll(cx, |stream| stream.write_reliable_prefix(bytes))).await?;
+        Ok(())
+    }
+    pub(crate) fn reset_at(
+        &mut self,
+        error_code: VarInt,
+        reliable_offset: u64,
+    ) -> Result<(), ClosedStream> {
+        let mut conn = self.conn.state.lock("SendStream::reset_at");
+        if self.is_0rtt || !conn.inner.supports_reliable_reset() {
+            return Err(crate::quic_proto::ClosedStream::new());
+        }
+        conn.inner
+            .send_stream(self.stream)
+            .reset_at(error_code, reliable_offset)?;
+        conn.wake();
+        Ok(())
+    }
     pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
@@ -211,64 +236,6 @@ impl SendStream {
         conn.inner.send_stream(self.stream).reset(error_code)?;
         conn.wake();
         Ok(())
-    }
-
-    /// Keep custody of a prefix until both its bytes and RESET_STREAM_AT are acknowledged.
-    pub(crate) fn reset_at(
-        &mut self,
-        error_code: VarInt,
-        reliable_offset: u64,
-    ) -> Result<(), ClosedStream> {
-        let mut conn = self.conn.state.lock("SendStream::reset_at");
-        if self.is_0rtt || !conn.inner.supports_reliable_reset() {
-            return Err(crate::quic_proto::ClosedStream::new());
-        }
-        conn.inner
-            .send_stream(self.stream)
-            .reset_at(error_code, reliable_offset)?;
-        conn.wake();
-        Ok(())
-    }
-
-    pub(crate) async fn write_reliable_prefix(&mut self, bytes: &[u8]) -> Result<(), WriteError> {
-        {
-            let conn = self.conn.state.lock("SendStream::write_reliable_prefix");
-            if self.is_0rtt || !conn.inner.supports_reliable_reset() {
-                return Err(WriteError::ClosedStream);
-            }
-        }
-        poll_fn(|cx| self.execute_poll(cx, |stream| stream.write_reliable_prefix(bytes))).await?;
-        Ok(())
-    }
-
-    pub(crate) fn set_reliable_prefix(&mut self, reliable: u64) -> Result<(), ClosedStream> {
-        let mut conn = self.conn.state.lock("SendStream::set_reliable_prefix");
-        if !conn.inner.supports_reliable_reset() {
-            return Err(ClosedStream::new());
-        }
-        conn.inner
-            .send_stream(self.stream)
-            .set_reliable_prefix(reliable)
-    }
-
-    /// Physical retirement, including reliable prefix custody after local reset.
-    pub(crate) fn terminated(&self) -> impl Future<Output = ()> + Send + Sync + 'static {
-        let original = self.conn.clone();
-        let stream = self.stream;
-        async move {
-            loop {
-                let notify;
-                {
-                    let mut conn = original.state.lock("SendStream::terminated");
-                    if conn.error.is_some() || conn.inner.send_stream(stream).is_closed() {
-                        return;
-                    }
-                    notify = conn.stopped.entry(stream).or_default().clone();
-                    notify.notified()
-                }
-                .await;
-            }
-        }
     }
 
     /// Set the priority of the send stream

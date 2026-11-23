@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-swift",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/05540034737bbbe556f25fde9a5d29813e0c91e1482bd35dab9b11c746e7c030",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf",
   "creationInfo": {
-    "created": "2026-09-17T15:04:20Z",
+    "created": "2026-11-21T00:00:00Z",
     "creators": [
       "Tool: flowersec-source-inventory-1"
     ]
@@ -13,19 +13,19 @@
   "packages": [
     {
       "name": "Flowersec",
-      "SPDXID": "SPDXRef-Package-f99aef41828606de54ea",
-      "versionInfo": "6.1.0",
+      "SPDXID": "SPDXRef-Package-2184bb866ed9827e64de",
+      "versionInfo": "7.0.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 05540034737bbbe556f25fde9a5d29813e0c91e1482bd35dab9b11c746e7c030",
+      "comment": "Flowersec source inventory SHA-256: 9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/Flowersec@6.1.0"
+          "referenceLocator": "pkg:swift/Flowersec@7.0.0"
         }
       ]
     },
@@ -99,8 +99,8 @@
     },
     {
       "name": "swift-nio",
-      "SPDXID": "SPDXRef-Package-0e36490fc5abd00c9d2f",
-      "versionInfo": "2.103.0",
+      "SPDXID": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "versionInfo": "2.101.3",
       "downloadLocation": "https://github.com/apple/swift-nio.git",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -110,14 +110,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/swift-nio@2.103.0"
+          "referenceLocator": "pkg:swift/swift-nio@2.101.3"
         }
       ]
     },
     {
       "name": "swift-nio-ssl",
-      "SPDXID": "SPDXRef-Package-b9d96d6f3379df4d9bd4",
-      "versionInfo": "2.37.5",
+      "SPDXID": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
+      "versionInfo": "2.37.2",
       "downloadLocation": "https://github.com/apple/swift-nio-ssl.git",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -127,24 +127,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/swift-nio-ssl@2.37.5"
-        }
-      ]
-    },
-    {
-      "name": "swift-sodium",
-      "SPDXID": "SPDXRef-Package-500b4cf3c4a3ee8dfaa0",
-      "versionInfo": "0.11.0",
-      "downloadLocation": "https://github.com/jedisct1/swift-sodium.git",
-      "filesAnalyzed": false,
-      "licenseConcluded": "ISC",
-      "licenseDeclared": "ISC",
-      "copyrightText": "NOASSERTION",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:swift/swift-sodium@0.11.0"
+          "referenceLocator": "pkg:swift/swift-nio-ssl@2.37.2"
         }
       ]
     },
@@ -170,27 +153,22 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-f99aef41828606de54ea"
+      "relatedSpdxElement": "SPDXRef-Package-2184bb866ed9827e64de"
     },
     {
-      "spdxElementId": "SPDXRef-Package-f99aef41828606de54ea",
+      "spdxElementId": "SPDXRef-Package-2184bb866ed9827e64de",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-419502d17340d5451b1c"
     },
     {
-      "spdxElementId": "SPDXRef-Package-f99aef41828606de54ea",
+      "spdxElementId": "SPDXRef-Package-2184bb866ed9827e64de",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-b9d96d6f3379df4d9bd4"
+      "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
     },
     {
-      "spdxElementId": "SPDXRef-Package-f99aef41828606de54ea",
+      "spdxElementId": "SPDXRef-Package-2184bb866ed9827e64de",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-0e36490fc5abd00c9d2f"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-f99aef41828606de54ea",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-500b4cf3c4a3ee8dfaa0"
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
     },
     {
       "spdxElementId": "SPDXRef-Package-419502d17340d5451b1c",
@@ -198,22 +176,22 @@
       "relatedSpdxElement": "SPDXRef-Package-1141aad31780b67cd845"
     },
     {
-      "spdxElementId": "SPDXRef-Package-b9d96d6f3379df4d9bd4",
+      "spdxElementId": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-0e36490fc5abd00c9d2f"
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-eb2ed1954ef203d42537"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-9f49307d34bc574d280e"
     }

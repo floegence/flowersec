@@ -1,0 +1,826 @@
+import { X509Certificate, createHash } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHTTPSServer, get as httpsGet } from "node:https";
+import { connect as connectTCP } from "node:net";
+import { Duplex } from "node:stream";
+import { createConnectionPathAgent, type NodeConnectionPath } from "../node/connectionPath.js";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer as createTLSServer } from "node:tls";
+
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+
+import {
+  connectNodeTLSSocketV3,
+  connectNodeWebSocketV3,
+  isNodeCertificateTrustErrorV3,
+  verifyPinnedLeafCertificateV3,
+} from "./nodeRuntime.js";
+import type { CanonicalArtifactCandidateV3, TransportSecurityPolicyV3 } from "./artifact.js";
+
+if (spawnSync("openssl", ["version"], { stdio: "ignore" }).status !== 0) {
+  throw new Error("OpenSSL is required for the transport v5 Node TLS test suite");
+}
+const require = createRequire(import.meta.url);
+const wsModule = require("ws") as { WebSocketServer: new (...args: unknown[]) => any };
+
+let directory = "";
+let rootCertificate: Buffer;
+let leafCertificate: Buffer;
+let ipLeafCertificate: Buffer;
+let cnOnlyLeafCertificate: Buffer;
+let leafKey: Buffer;
+let purposeLeafCertificate: Buffer;
+let expiredLeafCertificate: Buffer;
+let futureLeafCertificate: Buffer;
+let expiredLeafDigest: Buffer;
+let futureLeafDigest: Buffer;
+let pinCertificate: Buffer;
+let pinKey: Buffer;
+let pinDigest: Buffer;
+let nextPinCertificate: Buffer;
+let nextPinKey: Buffer;
+let nextPinDigest: Buffer;
+let rsaPinCertificate: Buffer;
+let rsaPinKey: Buffer;
+let rsaPinDigest: Buffer;
+let overlongPinCertificate: Buffer;
+let overlongPinKey: Buffer;
+let overlongPinDigest: Buffer;
+let legacyPinDER: Buffer;
+
+describe("transport v5 Node TLS verifier and WebSocket production path", () => {
+  beforeAll(() => {
+    directory = mkdtempSync(join(tmpdir(), "flowersec-ts-v5-tls-"));
+    generateCertificates(directory);
+    rootCertificate = readFileSync(join(directory, "root.pem"));
+    leafCertificate = readFileSync(join(directory, "leaf.pem"));
+    ipLeafCertificate = readFileSync(join(directory, "leaf-ip.pem"));
+    cnOnlyLeafCertificate = readFileSync(join(directory, "leaf-cn-only.pem"));
+    leafKey = readFileSync(join(directory, "leaf.key"));
+    purposeLeafCertificate = readFileSync(join(directory, "leaf-purpose.pem"));
+    expiredLeafCertificate = readFileSync(join(directory, "leaf-expired.pem"));
+    futureLeafCertificate = readFileSync(join(directory, "leaf-future.pem"));
+    expiredLeafDigest = createHash("sha256").update(readFileSync(join(directory, "leaf-expired.der"))).digest();
+    futureLeafDigest = createHash("sha256").update(readFileSync(join(directory, "leaf-future.der"))).digest();
+    pinCertificate = readFileSync(join(directory, "pin.pem"));
+    pinKey = readFileSync(join(directory, "pin.key"));
+    pinDigest = createHash("sha256").update(readFileSync(join(directory, "pin.der"))).digest();
+    nextPinCertificate = readFileSync(join(directory, "pin-next.pem"));
+    nextPinKey = readFileSync(join(directory, "pin-next.key"));
+    nextPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-next.der"))).digest();
+    rsaPinCertificate = readFileSync(join(directory, "pin-rsa.pem"));
+    rsaPinKey = readFileSync(join(directory, "pin-rsa.key"));
+    rsaPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-rsa.der"))).digest();
+    overlongPinCertificate = readFileSync(join(directory, "pin-overlong.pem"));
+    overlongPinKey = readFileSync(join(directory, "pin-overlong.key"));
+    overlongPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-overlong.der"))).digest();
+    legacyPinDER = certificateWithVersion(readFileSync(join(directory, "pin.der")), 1);
+  });
+
+  afterAll(() => {
+    if (directory !== "") rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("routes target TLS through an explicit path and still checks the target name", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    const targets: string[] = [];
+    const connectionPath: NodeConnectionPath = {
+      connect: async ({ hostname, port: targetPort, signal }) => {
+        targets.push(`${hostname}:${targetPort}`);
+        return connectTCP({ host: "127.0.0.1", port, signal });
+      },
+    };
+    try {
+      // Port 1 has no server: success proves the requested route was used.
+      const socket = await connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath, timeoutMilliseconds: 2_000,
+      });
+      expect(socket.authorized).toBe(true);
+      socket.destroy();
+      expect(targets).toEqual(["localhost:1"]);
+      await expect(connectNodeTLSSocketV3(websocketCandidateForHost(1, "wrong.invalid", { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath, timeoutMilliseconds: 2_000,
+      })).rejects.toMatchObject({ code: "tls_failed", detail: "ca_untrusted" });
+    } finally { await closeServer(server); }
+  });
+
+  test("never falls back to a reachable direct target after path rejection", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    let direct = 0;
+    server.on("connection", () => { direct += 1; });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(websocketCandidate(port, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath: { connect: async () => { throw new Error("private route detail"); } },
+      })).rejects.toMatchObject({ code: "connection_failed" });
+      expect(direct).toBe(0);
+    } finally { await closeServer(server); }
+  });
+
+  test("retains a canceled WSS dial through the route callback and the late stream's close", async () => {
+    let deliver!: (stream: Duplex) => void;
+    let canceled!: () => void;
+    const canceledRoute = new Promise<void>(resolve => { canceled = resolve; });
+    const operation = connectNodeWebSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+      origin: "https://app.example", timeoutMilliseconds: 20,
+      connectionPath: { connect: ({ signal }) => {
+        signal.addEventListener("abort", canceled, { once: true });
+        return new Promise<Duplex>(resolve => { deliver = resolve; });
+      } },
+    });
+    let settled = false;
+    const result = operation.catch(error => { settled = true; return error; });
+    await canceledRoute;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    let finishDestroy!: (error: Error | null) => void;
+    const stream = new Duplex({ destroy(_error, done) { finishDestroy = done; } });
+    deliver(stream);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(false);
+    stream.emit("error", new Error("route teardown in progress"));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    let observedClose = false;
+    stream.once("close", () => { observedClose = true; });
+    finishDestroy(new Error("private teardown failure"));
+    expect(await result).toMatchObject({ code: "connection_failed" });
+    expect(observedClose).toBe(true);
+    expect(stream.listenerCount("error")).toBe(0);
+  });
+
+  test("rejects an already closed route without waiting for a second close", async () => {
+    const stream = new Duplex();
+    const closed = once(stream, "close");
+    stream.destroy();
+    await closed;
+    await expect(connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+      connectionPath: { connect: async () => stream },
+    })).rejects.toMatchObject({ code: "connection_failed" });
+  });
+
+  test("waits for a route already being destroyed when the provider returns it", async () => {
+    let finishDestroy!: () => void;
+    const stream = new Duplex({ destroy(_error, done) { finishDestroy = done; } });
+    stream.destroy();
+    let settled = false;
+    const result = connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+      connectionPath: { connect: async () => stream },
+    }).catch(error => { settled = true; return error; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(stream.closed).toBe(false);
+    finishDestroy();
+    expect(await result).toMatchObject({ code: "connection_failed" });
+    expect(stream.closed).toBe(true);
+  });
+
+  test("finishes a canceled route only when its provider rejects and redacts the failure", async () => {
+    const cancel = new AbortController();
+    let fail!: (error: Error) => void;
+    const operation = connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+      signal: cancel.signal, connectionPath: { connect: () => new Promise((_resolve, reject) => { fail = reject; }) },
+    });
+    let settled = false;
+    const result = operation.catch(error => { settled = true; return error; });
+    await new Promise(resolve => setImmediate(resolve));
+    cancel.abort();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    fail(new Error("private route failure"));
+    expect(await result).toMatchObject({ code: "connection_failed", cause: undefined });
+  });
+
+  test("uses the same path for HTTPS bootstrap without accepting TLS overrides", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (req, res) => {
+      expect(req.headers.host).toBe("localhost:1");
+      res.end("bootstrap");
+    });
+    const port = await listen(server);
+    let routes = 0;
+    const connectionPath: NodeConnectionPath = { connect: async ({ signal }) => { routes += 1; return connectTCP({ host: "127.0.0.1", port, signal }); } };
+    const agent = createConnectionPathAgent({ connectionPath, ca: rootCertificate, connectTimeoutMs: 100 });
+    const untrusted = createConnectionPathAgent({ connectionPath });
+    const read = (selected: typeof agent, url = "https://localhost:1/"): Promise<string> => new Promise((resolve, reject) => {
+      httpsGet(url, { agent: selected, rejectUnauthorized: false }, (res) => {
+        let body = ""; res.on("data", (part) => { body += part; }); res.on("end", () => resolve(body));
+      }).on("error", reject);
+    });
+    try {
+      expect(await read(agent)).toBe("bootstrap");
+      // Admission timeout cannot terminate an established reusable connection.
+      await new Promise((resolve) => setTimeout(resolve, 130));
+      expect(await read(agent)).toBe("bootstrap");
+      expect(routes).toBe(1);
+      await expect(read(untrusted)).rejects.toBeInstanceOf(Error);
+      await expect(read(agent, "https://wrong.invalid:1/")).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    } finally { agent.destroy(); untrusted.destroy(); await closeServer(server); }
+  });
+
+  test("samples authenticated trust only after the explicit route is ready", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (_req, res) => res.end("refreshed"));
+    const port = await listen(server);
+    const roots: Buffer[] = [];
+    const agent = createConnectionPathAgent({ ca: roots, connectionPath: { connect: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      roots.splice(0, roots.length, rootCertificate);
+      return connectTCP({ host: "127.0.0.1", port });
+    } } });
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        httpsGet("https://localhost:1/", { agent }, res => {
+          let text = ""; res.on("data", chunk => { text += chunk; });
+          res.on("end", () => resolve(text)); res.once("error", reject);
+        }).once("error", reject);
+      });
+      expect(body).toBe("refreshed");
+    } finally { agent.destroy(); await closeServer(server); }
+  });
+
+  test("counts pending explicit routes against the HTTPS connection pool", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (_req, res) => res.end("bounded"));
+    const port = await listen(server);
+    let routes = 0;
+    const agent = createConnectionPathAgent({ ca: rootCertificate, connectionPath: { connect: async () => {
+      routes++;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return connectTCP({ host: "127.0.0.1", port });
+    } } });
+    agent.maxSockets = 2;
+    agent.maxTotalSockets = 2;
+    const read = (): Promise<string> => new Promise((resolve, reject) => {
+      httpsGet("https://localhost:1/", { agent }, res => {
+        let body = ""; res.on("data", part => { body += part; });
+        res.on("end", () => resolve(body)); res.on("error", reject);
+      }).on("error", reject);
+    });
+    try {
+      expect(await Promise.all(Array.from({ length: 32 }, read))).toEqual(Array(32).fill("bounded"));
+      expect(routes).toBeLessThanOrEqual(2);
+    } finally { agent.destroy(); await closeServer(server); }
+  });
+
+  test("cancels pending HTTPS admission and destroys a late route", async () => {
+    let deliver!: (stream: Duplex) => void;
+    let attempted!: () => void;
+    const started = new Promise<void>(resolve => { attempted = resolve; });
+    const agent = createConnectionPathAgent({ connectionPath: { connect: async () => {
+      attempted();
+      return await new Promise<Duplex>(resolve => { deliver = resolve; });
+    } } });
+    const failed = Array.from({ length: 8 }, () => new Promise<Error>(resolve => {
+      httpsGet("https://localhost:1/", { agent }).once("error", resolve);
+    }));
+    await started;
+    agent.destroy();
+    for (const error of await Promise.all(failed)) expect(error).toBeInstanceOf(Error);
+    const late = new Duplex({ read() {}, write(_chunk, _encoding, done) { done(); } });
+    deliver(late);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(late.destroyed).toBe(true);
+  });
+
+  test("accepts a deployment CA and rejects the same server without its trust root", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    const candidate = websocketCandidate(port, { mode: "ca" });
+    try {
+      const socket = await connectNodeTLSSocketV3(candidate, nowSeconds(), {
+        roots: rootCertificate,
+        timeoutMilliseconds: 2_000,
+      });
+      expect(socket.authorized).toBe(true);
+      socket.destroy();
+      await expect(connectNodeTLSSocketV3(candidate, nowSeconds(), { timeoutMilliseconds: 2_000 }))
+        .rejects.toMatchObject({ code: "tls_failed", detail: "ca_untrusted" });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("enforces IP SAN hostname validation for a CA-trusted socket", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const candidate = websocketCandidateForHost(port, "127.0.0.1", { mode: "ca" });
+      await expect(connectNodeTLSSocketV3(candidate, nowSeconds(), {
+        roots: rootCertificate,
+        timeoutMilliseconds: 2_000,
+      })).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+        cause: expect.objectContaining({ code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("accepts a CA-trusted certificate with the exact IP SAN", async () => {
+    const server = createTLSServer({ cert: ipLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(
+        websocketCandidateForHost(port, "127.0.0.1", { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      );
+      expect(socket.authorized).toBe(true);
+      socket.destroy();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a CA-trusted certificate that relies on CN without a SAN", async () => {
+    const server = createTLSServer({ cert: cnOnlyLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("does not resume or accept TLS session tickets for v5 clients", async () => {
+    expect(readFileSync(new URL("./nodeRuntime.ts", import.meta.url), "utf8"))
+      .toContain("secureOptions: constants.SSL_OP_NO_TICKET");
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(websocketCandidate(port, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate,
+        timeoutMilliseconds: 2_000,
+      });
+      expect(socket.isSessionReused()).toBe(false);
+      socket.destroy();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test.each([
+    ["expired", () => expiredLeafCertificate, "CERT_HAS_EXPIRED"],
+    ["not-yet-valid", () => futureLeafCertificate, "CERT_NOT_YET_VALID"],
+  ] as const)("classifies a real %s CA certificate as terminal trust failure", async (_name, certificate, code) => {
+    const server = createTLSServer({ cert: certificate(), key: leafKey });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+        cause: expect.objectContaining({ code }),
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("classifies a trusted client-only certificate purpose as terminal CA trust failure", async () => {
+    const server = createTLSServer({ cert: purposeLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+        cause: expect.objectContaining({ code: "INVALID_PURPOSE" }),
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("classifies the authoritative Node/OpenSSL PKI verification codes", () => {
+    for (const code of [
+      "CERT_HAS_EXPIRED",
+      "CERT_NOT_YET_VALID",
+      "CERT_REJECTED",
+      "CERT_REVOKED",
+      "CERT_SIGNATURE_FAILURE",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+      "INVALID_CA",
+      "INVALID_PURPOSE",
+      "PATH_LENGTH_EXCEEDED",
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+      "UNABLE_TO_GET_ISSUER_CERT",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    ]) {
+      expect(isNodeCertificateTrustErrorV3(code), code).toBe(true);
+    }
+    for (const code of [undefined, "CERT_EXPIRED", "ECONNREFUSED", "ERR_SSL_WRONG_VERSION_NUMBER"]) {
+      expect(isNodeCertificateTrustErrorV3(code), String(code)).toBe(false);
+    }
+  });
+
+  test("accepts exact and old-new overlap P-256 DER pins and rejects a mismatch", async () => {
+    const server = createTLSServer({ cert: pinCertificate, key: pinKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(
+        websocketCandidate(port, pinPolicy(pinDigest)),
+        nowSeconds(),
+        { timeoutMilliseconds: 2_000 },
+      );
+      expect(socket.authorized).toBe(false);
+      socket.destroy();
+      const wrong = Buffer.from(pinDigest);
+      wrong[0] = (wrong[0] ?? 0) ^ 0xff;
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, pinPolicy(wrong)),
+        nowSeconds(),
+        { roots: pinCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({ code: "tls_failed", detail: "pin_mismatch" });
+
+      const overlapPolicy = overlapPinPolicy(pinDigest, nextPinDigest);
+      const oldCertificate = await connectNodeTLSSocketV3(
+        websocketCandidate(port, overlapPolicy),
+        nowSeconds(),
+        { timeoutMilliseconds: 2_000 },
+      );
+      expect(oldCertificate.authorized).toBe(false);
+      oldCertificate.destroy();
+
+      const nextServer = createTLSServer({ cert: nextPinCertificate, key: nextPinKey });
+      const nextPort = await listen(nextServer);
+      try {
+        const nextCertificate = await connectNodeTLSSocketV3(
+          websocketCandidate(nextPort, overlapPolicy),
+          nowSeconds(),
+          { timeoutMilliseconds: 2_000 },
+        );
+        expect(nextCertificate.authorized).toBe(false);
+        nextCertificate.destroy();
+      } finally {
+        await closeServer(nextServer);
+      }
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test.each([
+    ["rsa", () => rsaPinCertificate, () => rsaPinKey, () => rsaPinDigest],
+    ["overlong", () => overlongPinCertificate, () => overlongPinKey, () => overlongPinDigest],
+    ["not-yet-valid", () => futureLeafCertificate, () => leafKey, () => futureLeafDigest],
+    ["expired", () => expiredLeafCertificate, () => leafKey, () => expiredLeafDigest],
+  ] as const)("rejects a hash-matched %s pin profile through the production TLS adapter", async (
+    _name,
+    certificate,
+    key,
+    digest,
+  ) => {
+    const server = createTLSServer({ cert: certificate(), key: key() });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, pinPolicy(digest())),
+        nowSeconds(),
+        { timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({ code: "tls_failed", detail: "unknown" });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("freezes active pins at attempt start but checks certificate validity at secureConnect", async () => {
+    const certificate = new X509Certificate(pinCertificate);
+    const notBefore = Date.parse(certificate.validFrom);
+    const notAfter = Date.parse(certificate.validTo);
+    expect(Number.isFinite(notBefore) && Number.isFinite(notAfter)).toBe(true);
+    const policy: TransportSecurityPolicyV3 = {
+      mode: "pin",
+      pins: [{
+        algorithm: "sha-256",
+        value_b64u: pinDigest.toString("base64url"),
+        not_after_unix_s: Math.floor(notAfter / 1_000) + 3_600,
+      }],
+    };
+    const server = createTLSServer({ cert: pinCertificate, key: pinKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(
+        websocketCandidate(port, policy),
+        Math.floor((notBefore - 1_000) / 1_000),
+        {
+          timeoutMilliseconds: 2_000,
+          nowUnixMilliseconds: () => notBefore + 1_000,
+        },
+      );
+      socket.destroy();
+
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, policy),
+        Math.floor((notBefore + 1_000) / 1_000),
+        {
+          timeoutMilliseconds: 2_000,
+          nowUnixMilliseconds: () => notAfter,
+        },
+      )).rejects.toMatchObject({ code: "tls_failed", detail: "unknown" });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("performs WebSocket Upgrade only after pin verification", async () => {
+    const server = createHTTPSServer({ cert: pinCertificate, key: pinKey });
+    const webSocketServer = new wsModule.WebSocketServer({
+      server,
+      handleProtocols: (protocols: Set<string>) => protocols.has("flowersec.direct.v5")
+        ? "flowersec.direct.v5"
+        : false,
+    });
+    const port = await listen(server);
+    let upgrades = 0;
+    server.on("upgrade", () => { upgrades += 1; });
+    const candidate = websocketCandidate(port, pinPolicy(pinDigest));
+    try {
+      const socket = await connectNodeWebSocketV3(candidate, nowSeconds(), {
+        origin: "https://app.example",
+        timeoutMilliseconds: 2_000,
+      });
+      expect(socket.protocol).toBe("flowersec.direct.v5");
+      expect(upgrades).toBe(1);
+      socket.close();
+
+      const wrong = Buffer.from(pinDigest);
+      wrong[31] = (wrong[31] ?? 0) ^ 0xff;
+      await expect(connectNodeWebSocketV3(
+        websocketCandidate(port, pinPolicy(wrong)),
+        nowSeconds(),
+        { origin: "https://app.example", timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({ code: "tls_failed", detail: "pin_mismatch" });
+      expect(upgrades).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a hash-matched X.509 version 2 certificate", () => {
+    const digest = createHash("sha256").update(legacyPinDER).digest();
+    expect(() => verifyPinnedLeafCertificateV3(
+      legacyPinDER,
+      {
+        mode: "pin",
+        activePins: [{
+          algorithm: "sha-256",
+          not_after_unix_s: Math.floor(Date.now() / 1_000) + 600,
+          value_b64u: digest.toString("base64url"),
+        }],
+        activeLeafDerSHA256: [digest],
+      },
+      Date.now(),
+    )).toThrowError(expect.objectContaining({ code: "tls_failed", detail: "unknown" }));
+  });
+
+  test("accepts a later matching pin after comparing the complete active set", () => {
+    const leaf = new X509Certificate(pinCertificate).raw;
+    expect(() => verifyPinnedLeafCertificateV3(
+      leaf,
+      {
+        mode: "pin",
+        activePins: [
+          {
+            algorithm: "sha-256",
+            not_after_unix_s: nowSeconds() + 600,
+            value_b64u: Buffer.alloc(32, 0).toString("base64url"),
+          },
+          {
+            algorithm: "sha-256",
+            not_after_unix_s: nowSeconds() + 600,
+            value_b64u: pinDigest.toString("base64url"),
+          },
+        ],
+        activeLeafDerSHA256: [Buffer.alloc(32, 0), pinDigest],
+      },
+      Date.now(),
+    )).not.toThrow();
+  });
+});
+
+function generateCertificates(target: string): void {
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "root.key")]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "root.key"), "-sha256", "-days", "2",
+    "-subj", "/CN=Flowersec Test Root", "-addext", "basicConstraints=critical,CA:TRUE",
+    "-addext", "keyUsage=critical,keyCertSign,cRLSign", "-out", join(target, "root.pem"),
+  ]);
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "leaf.key")]);
+  runOpenSSL([
+    "req", "-new", "-key", join(target, "leaf.key"), "-subj", "/CN=localhost", "-out", join(target, "leaf.csr"),
+  ]);
+  writeFileSync(join(target, "leaf.ext"), [
+    "subjectAltName=DNS:localhost",
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=serverAuth",
+    "",
+  ].join("\n"));
+  writeFileSync(join(target, "leaf-purpose.ext"), [
+    "subjectAltName=DNS:localhost",
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=clientAuth",
+    "",
+  ].join("\n"));
+  writeFileSync(join(target, "leaf-ip.ext"), [
+    "subjectAltName=IP:127.0.0.1",
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=serverAuth",
+    "",
+  ].join("\n"));
+  writeFileSync(join(target, "leaf-cn-only.ext"), [
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=serverAuth",
+    "",
+  ].join("\n"));
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf.ext"), "-out", join(target, "leaf.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-purpose.ext"), "-out", join(target, "leaf-purpose.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-ip.ext"), "-out", join(target, "leaf-ip.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-cn-only.ext"), "-out", join(target, "leaf-cn-only.pem"),
+  ]);
+  writeFileSync(join(target, "index.txt"), "");
+  writeFileSync(join(target, "serial"), "1000\n");
+  writeFileSync(join(target, "ca.cnf"), [
+    "[ca]",
+    "default_ca=flowersec_ca",
+    "[flowersec_ca]",
+    `database=${join(target, "index.txt")}`,
+    `serial=${join(target, "serial")}`,
+    `new_certs_dir=${target}`,
+    `certificate=${join(target, "root.pem")}`,
+    `private_key=${join(target, "root.key")}`,
+    "default_md=sha256",
+    "policy=flowersec_policy",
+    "unique_subject=no",
+    "copy_extensions=copy",
+    "[flowersec_policy]",
+    "commonName=supplied",
+    "",
+  ].join("\n"));
+  for (const [name, start, end] of [
+    ["expired", "20000101000000Z", "20000102000000Z"],
+    ["future", "20400101000000Z", "20400102000000Z"],
+  ] as const) {
+    runOpenSSL([
+      "ca", "-batch", "-config", join(target, "ca.cnf"), "-in", join(target, "leaf.csr"),
+      "-startdate", start, "-enddate", end, "-out", join(target, `leaf-${name}.pem`),
+    ]);
+    runOpenSSL([
+      "x509", "-in", join(target, `leaf-${name}.pem`), "-outform", "DER",
+      "-out", join(target, `leaf-${name}.der`),
+    ]);
+  }
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "pin.key")]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin.key"), "-sha256", "-days", "2",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin.pem"),
+  ]);
+  runOpenSSL(["x509", "-in", join(target, "pin.pem"), "-outform", "DER", "-out", join(target, "pin.der")]);
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "pin-next.key")]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin-next.key"), "-sha256", "-days", "2",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin-next.pem"),
+  ]);
+  runOpenSSL(["x509", "-in", join(target, "pin-next.pem"), "-outform", "DER", "-out", join(target, "pin-next.der")]);
+
+  runOpenSSL([
+    "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+    "-out", join(target, "pin-rsa.key"),
+  ]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin-rsa.key"), "-sha256", "-days", "2",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin-rsa.pem"),
+  ]);
+  runOpenSSL(["x509", "-in", join(target, "pin-rsa.pem"), "-outform", "DER", "-out", join(target, "pin-rsa.der")]);
+
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "pin-overlong.key")]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin-overlong.key"), "-sha256", "-days", "30",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin-overlong.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-in", join(target, "pin-overlong.pem"), "-outform", "DER",
+    "-out", join(target, "pin-overlong.der"),
+  ]);
+
+}
+
+function certificateWithVersion(der: Buffer, encodedVersion: number): Buffer {
+  const marker = Buffer.from([0xa0, 0x03, 0x02, 0x01, 0x02]);
+  const offset = der.indexOf(marker);
+  if (offset < 0) throw new Error("generated certificate is not X.509v3");
+  const result = Buffer.from(der);
+  result[offset + marker.length - 1] = encodedVersion;
+  return result;
+}
+
+function runOpenSSL(args: readonly string[]): void {
+  execFileSync("openssl", [...args], { stdio: "ignore" });
+}
+
+function pinPolicy(digest: Uint8Array): TransportSecurityPolicyV3 {
+  return {
+    mode: "pin",
+    pins: [{
+      algorithm: "sha-256",
+      value_b64u: Buffer.from(digest).toString("base64url"),
+      not_after_unix_s: nowSeconds() + 3_600,
+    }],
+  };
+}
+
+function overlapPinPolicy(...digests: readonly Uint8Array[]): TransportSecurityPolicyV3 {
+  return {
+    mode: "pin",
+    pins: digests.map((digest) => ({
+      algorithm: "sha-256" as const,
+      value_b64u: Buffer.from(digest).toString("base64url"),
+      not_after_unix_s: nowSeconds() + 3_600,
+    })).sort((left, right) => left.value_b64u < right.value_b64u ? -1 : left.value_b64u > right.value_b64u ? 1 : 0),
+  };
+}
+
+function websocketCandidate(port: number, tls: TransportSecurityPolicyV3): CanonicalArtifactCandidateV3 {
+  return websocketCandidateForHost(port, "localhost", tls);
+}
+
+function websocketCandidateForHost(
+  port: number,
+  host: string,
+  tls: TransportSecurityPolicyV3,
+): CanonicalArtifactCandidateV3 {
+  return {
+    carrier: "websocket",
+    id: "node-websocket",
+    normalized_url: `wss://${host}:${port}/flowersec/v5/direct`,
+    tls,
+    wire_profile: "flowersec-direct/5",
+  };
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1_000);
+}
+
+async function listen(server: { listen(port: number, host: string): unknown; address(): unknown }): Promise<number> {
+  server.listen(0, "127.0.0.1");
+  await once(server as unknown as NodeJS.EventEmitter, "listening");
+  const address = server.address();
+  if (typeof address !== "object" || address === null || !("port" in address)) throw new Error("server did not listen");
+  return (address as { port: number }).port;
+}
+
+async function closeServer(server: { close(callback: (error?: Error) => void): void; closeAllConnections?: () => void }): Promise<void> {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+}

@@ -2,10 +2,9 @@ package protocolv4
 
 import (
 	"errors"
-	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // CredentialValidation comes from independently authenticated Environment
@@ -39,18 +38,6 @@ type AuthorizationGuard interface {
 // CheckCurrent is the pre-consumption closure/publication/current-authorization
 // check. It reserves nothing and conveys no Activate/Noise/admission capability.
 func (e *EndpointCredentials) CheckCurrent(bindings []CredentialValidation, hardEnd uint64) (CredentialValidity, error) {
-	samples, err := sampleCredentialBindings(bindings)
-	if err != nil {
-		return CredentialValidity{}, err
-	}
-	return e.checkCurrentAt(bindings, hardEnd, samples)
-}
-
-func (e *EndpointCredentials) checkCurrentAt(bindings []CredentialValidation, hardEnd uint64, samples credentialSamples) (CredentialValidity, error) {
-	return e.checkCurrentAuthorizationAt(bindings, hardEnd, samples, nil, false)
-}
-
-func (e *EndpointCredentials) checkCurrentAuthorizationAt(bindings []CredentialValidation, hardEnd uint64, samples credentialSamples, activation *ActivationAuthority, admission bool) (CredentialValidity, error) {
 	var result CredentialValidity
 	if e == nil || len(bindings) != e.count {
 		return result, CBORFailure("credential_validation_count")
@@ -65,108 +52,26 @@ func (e *EndpointCredentials) checkCurrentAuthorizationAt(bindings []CredentialV
 	}
 	result = CredentialValidity{Requirements: requirement, DeadlineMS: min(hardEnd, e.hardEnd)}
 	for i, binding := range bindings {
-		currentScope := e.credentialScope(i)
+		credential := e.credentials[i]
 		if binding.Namespace == nil {
 			return result, CBORFailure("credential_namespace_owner")
 		}
 		// A generation/capacity mismatch is checked by the live owner. Repeated
 		// dependencies must borrow the same actual owner, not private snapshots.
 		for j, earlier := range bindings[:i] {
-			scope := e.credentialScope(j)
-			if scope.Tenant == currentScope.Tenant && scope.Authority == currentScope.Authority && binding.Namespace != earlier.Namespace {
+			scope := e.credentials[j].scope
+			if scope.Tenant == credential.scope.Tenant && scope.Authority == credential.scope.Authority && binding.Namespace != earlier.Namespace {
 				return result, CBORFailure("credential_namespace_owner")
 			}
 		}
-	}
-	for i, binding := range bindings {
-		if i == 3 && e.pendingGrant != nil {
-			deadline, err := e.pendingGrant.checkAt(binding, requirement, min(hardEnd, e.hardEnd), samples[i])
-			if err != nil {
-				return result, err
-			}
-			result.deadlines[i] = deadline
-			result.DeadlineMS = min(result.DeadlineMS, deadline)
-			continue
-		}
-		checked := false
-		for j, earlier := range bindings[:i] {
-			if earlier.Namespace == binding.Namespace && (j != 3 || e.pendingGrant == nil) {
-				checked = true
-				break
-			}
-		}
-		if checked {
-			continue
-		}
-		if err := binding.Namespace.checkClosureNamespaceAt(e, bindings, requirement, min(hardEnd, e.hardEnd), samples[i], activation, admission, &result); err != nil {
-			return result, err
-		}
-	}
-	return result, nil
-}
-
-// All credentials borrowing one original namespace use its current Head/State
-// under one lock. This is a finite local check, with no stored authorization or
-// snapshot reused by a later call. Independent issuer and activation trust
-// checks still consume their original scopes and the same clock envelope.
-func (n *LiveNamespace) checkClosureNamespaceAt(e *EndpointCredentials, bindings []CredentialValidation, requirement CredentialRequirements, hardEnd uint64, now timev4.Sample, activation *ActivationAuthority, admission bool, result *CredentialValidity) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if err := n.checkAvailable(); err != nil {
-		return err
-	}
-	if err := n.continuityAvailable(); err != nil {
-		return err
-	}
-	var err error
-	if now, err = n.clock.RefreshSample(now); err != nil {
-		return err
-	}
-	if err := n.rules.CheckPublication(requirement); err != nil {
-		return err
-	}
-	trust, err := n.lockClosureReadAt(now)
-	if err != nil {
-		return err
-	}
-	defer trust.unlock()
-	if err := trust.headAt(n.active.head, now); err != nil {
-		return err
-	}
-	for i, binding := range bindings {
-		if binding.Namespace != n || i == 3 && e.pendingGrant != nil {
-			continue
-		}
-		credential, policy := e.credentials[i], binding.Policy
-		if credential == nil || policy == nil || policy.id != credential.facts.PolicyID || policy.revision != credential.facts.PolicyRevision {
-			return CBORFailure("credential_policy_reference")
-		}
-		policyChecked := false
-		for j, earlier := range bindings[:i] {
-			if earlier.Namespace == n && earlier.Policy == policy && (j != 3 || e.pendingGrant == nil) {
-				policyChecked = true
-				break
-			}
-		}
-		if !policyChecked {
-			if err := trust.policyAt(policy, now); err != nil {
-				return err
-			}
-		}
-		facts, deadline, err := n.checkCredentialUnderHeadTrustAt(credential, binding.Issuer, requirement.StalenessMS, requirement.SignerLifetimeMS, hardEnd, now, trust)
+		deadline, err := binding.Namespace.checkBoundCredential(credential, binding.Issuer, binding.Policy, requirement, min(hardEnd, e.hardEnd))
 		if err != nil {
-			return err
-		}
-		if i == 0 && activation != nil {
-			deadline, err = n.checkActivationContentsTrustAt(activation, credential, binding.Issuer, facts, deadline, admission, now, trust)
-			if err != nil {
-				return err
-			}
+			return result, err
 		}
 		result.DeadlineMS = min(result.DeadlineMS, deadline)
 		result.deadlines[i] = deadline
 	}
-	return nil
+	return result, nil
 }
 
 // EndpointAuthorization retains original detached credentials and exact shared
@@ -176,18 +81,15 @@ func (n *LiveNamespace) checkClosureNamespaceAt(e *EndpointCredentials, bindings
 // scheduler enforces the returned absolute deadline even without application
 // activity; each publication also calls CheckSession at its original gate.
 type EndpointAuthorization struct {
-	sampling       uint32
-	closing        bool
-	mu             sync.Mutex
-	closure        *EndpointCredentials
-	deliveryOrigin *EndpointCredentials
-	activation     *ActivationAuthority
-	bindings       [5]CredentialValidation
-	hardEnd        uint64
-	hard           *timev4.Deadline
-	freshness      [5]credentialProjection
-	terminal       error
-	subscriptions  *CredentialSubscriptions
+	mu            sync.Mutex
+	closure       *EndpointCredentials
+	activation    *ActivationAuthority
+	bindings      [5]CredentialValidation
+	hardEnd       uint64
+	hard          *timev4.Deadline
+	freshness     [5]credentialProjection
+	terminal      error
+	subscriptions *CredentialSubscriptions
 }
 
 type credentialProjection struct {
@@ -202,30 +104,12 @@ func NewEndpointAuthorization(subscriptions *CredentialSubscriptions, activation
 }
 
 func newEndpointAuthorization(subscriptions *CredentialSubscriptions, activation *ActivationAuthority, preparation *CredentialPreparation) (_ *EndpointAuthorization, err error) {
-	return newEndpointAuthorizationAt(subscriptions, activation, preparation, nil)
-}
-
-func newEndpointAuthorizationAt(subscriptions *CredentialSubscriptions, activation *ActivationAuthority, preparation *CredentialPreparation, sampled *credentialSamples) (_ *EndpointAuthorization, err error) {
 	if subscriptions == nil {
 		return nil, CBORFailure("credential_authorization_owner")
 	}
 	s := subscriptions
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.used || s.prepared && preparation != &s.preparation || !s.prepared && preparation != nil {
-		return nil, CBORFailure("credential_authorization_owner")
-	}
-	var samples credentialSamples
-	if sampled != nil {
-		samples = *sampled
-	} else {
-		samples, err = s.sampleLocked()
-		if err != nil {
-			return nil, err
-		}
-	}
-	// Sampling released the gate. The original one-time adoption must still
-	// be unused and belong to this exact preparation before any mutation.
 	if s.closed || s.used || s.prepared && preparation != &s.preparation || !s.prepared && preparation != nil {
 		return nil, CBORFailure("credential_authorization_owner")
 	}
@@ -239,20 +123,19 @@ func newEndpointAuthorizationAt(subscriptions *CredentialSubscriptions, activati
 	if err := closure.MatchActivation(activation); err != nil {
 		return nil, err
 	}
-	if _, err := s.checkPreparationLockedAt(samples, nil); err != nil {
+	if _, err := s.checkPreparationLocked(); err != nil {
 		return nil, err
 	}
 	a := &s.authorization
 	a.subscriptions, a.closure, a.activation = s, closure, activation
-	a.deliveryOrigin = s.deliveryOrigin
 	a.hardEnd = min(hardEnd, closure.hardEnd, activation.binding.sessionEnd)
 	a.hard, a.freshness = s.hard, s.freshness
 	copy(a.bindings[:], bindings)
-	err = a.hard.TightenAt(a.hardEnd, samples[0])
+	err = a.hard.Tighten(a.hardEnd)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.checkLockedAt(false, samples, nil); err != nil {
+	if _, err := a.CheckSession(); err != nil {
 		return nil, err
 	}
 	s.bound = a
@@ -272,17 +155,6 @@ func (a *EndpointAuthorization) CheckSession() (CredentialValidity, error)   { r
 func (a *EndpointAuthorization) Check() error                                { _, err := a.CheckSession(); return err }
 func (a *EndpointAuthorization) CheckAdmission() (CredentialValidity, error) { return a.check(true) }
 
-// CheckWithSample shares the original Engine gate's current clock read. It
-// still checks this complete current authorization and independently samples
-// any other Environment clock; no result is retained for a subsequent call.
-func (a *EndpointAuthorization) CheckWithSample(sample timev4.Sample) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	samples, err := a.sampleLockedAt(sample)
-	_, err = a.checkLockedAt(false, samples, err)
-	return err
-}
-
 // WithCurrentAuthorization orders a finite SDK ownership transfer with this
 // original authorization's close gate. It may not call application code, wait
 // for I/O, or reenter the authorization. A prior Check alone cannot authorize
@@ -291,23 +163,12 @@ func (a *EndpointAuthorization) WithCurrentAuthorization(transfer func() error) 
 	if a == nil || transfer == nil {
 		return CBORFailure("credential_authorization_owner")
 	}
-	return a.WithCurrentAuthorizationSample(func(timev4.Sample) error { return transfer() })
-}
-
-// WithCurrentAuthorizationSample lends the gate's actual parent-clock sample
-// to adjacent SDK deadlines. The finite transfer obeys the same no-callback,
-// no-I/O contract and must not resample a clock while this gate is held.
-func (a *EndpointAuthorization) WithCurrentAuthorizationSample(transfer func(timev4.Sample) error) error {
-	if a == nil || transfer == nil {
-		return CBORFailure("credential_authorization_owner")
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	samples, err := a.sampleLocked()
-	if _, err := a.checkLockedAt(false, samples, err); err != nil {
+	if _, err := a.checkLocked(false); err != nil {
 		return err
 	}
-	return transfer(samples[0])
+	return transfer()
 }
 
 // ConstrainHandshakeDeadline tightens the original stage deadline to the
@@ -316,14 +177,13 @@ func (a *EndpointAuthorization) WithCurrentAuthorizationSample(transfer func(tim
 func (a *EndpointAuthorization) ConstrainHandshakeDeadline(deadline *timev4.Deadline) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	samples, err := a.sampleLocked()
-	if _, err := a.checkLockedAt(true, samples, err); err != nil {
+	if _, err := a.checkLocked(true); err != nil {
 		return err
 	}
 	if !deadline.BelongsTo(a.bindings[0].Namespace.clock) {
 		return timev4.ErrOwner
 	}
-	return deadline.TightenAt(min(deadline.Cap(), a.hardEnd), samples[0])
+	return deadline.Tighten(a.hardEnd)
 }
 
 func (a *EndpointAuthorization) check(admission bool) (result CredentialValidity, err error) {
@@ -333,47 +193,6 @@ func (a *EndpointAuthorization) check(admission bool) (result CredentialValidity
 }
 
 func (a *EndpointAuthorization) checkLocked(admission bool) (result CredentialValidity, err error) {
-	samples, err := a.sampleLocked()
-	return a.checkLockedAt(admission, samples, err)
-}
-
-// The caller holds mu on entry and after return, including abnormal exit.
-// These are synchronous reads on existing caller tasks. Retaining the original
-// subscriptions until every read returns prevents Close from refunding a
-// blocked adapter; no task, timer, waiter or new reference is created here.
-func (a *EndpointAuthorization) sampleLocked() (samples credentialSamples, err error) {
-	return a.sampleLockedAt(timev4.Sample{})
-}
-
-func (a *EndpointAuthorization) sampleLockedAt(adjacent timev4.Sample) (samples credentialSamples, err error) {
-	if a.terminal != nil {
-		return samples, a.terminal
-	}
-	if a.closure == nil || a.sampling == math.MaxUint32 {
-		return samples, CBORFailure("credential_authorization_owner")
-	}
-	// sampling pins these original immutable bindings through the adapter read;
-	// cleanup cannot clear them until this synchronous borrower returns.
-	bindings, count := &a.bindings, a.closure.count
-	claimed, attached := a.subscriptions.delivery[0].claimed, a.subscriptions.delivery[1].attached
-	a.sampling++
-	a.mu.Unlock()
-	returned := false
-	defer func() {
-		a.mu.Lock()
-		a.sampling--
-		if !returned && a.subscriptions.delivery[0].claimed == claimed && a.subscriptions.delivery[1].attached == attached {
-			a.closeLocked(CBORFailure("credential_authorization_callback_exit"))
-		} else {
-			a.cleanupLocked()
-		}
-	}()
-	samples, err = sampleCredentialBindingsAt(bindings[:count], adjacent)
-	returned = true
-	return samples, err
-}
-
-func (a *EndpointAuthorization) checkLockedAt(admission bool, samples credentialSamples, sampleErr error) (result CredentialValidity, err error) {
 	if a.terminal != nil {
 		return result, a.terminal
 	}
@@ -386,25 +205,24 @@ func (a *EndpointAuthorization) checkLockedAt(admission bool, samples credential
 	if err = a.subscriptions.reservation.Check(); err != nil {
 		return result, err
 	}
-	err = a.hard.CheckAt(samples[0])
-	if sampleErr != nil && !errors.Is(err, timev4.ErrExpired) {
-		return result, sampleErr
+	if err = a.hard.Check(); err != nil {
+		return result, err
 	}
+	result, err = a.closure.CheckCurrent(a.bindings[:a.closure.count], a.hardEnd)
 	if err != nil {
 		return result, err
 	}
-	if a.activation == nil {
-		return result, CBORFailure("activation_authority_owner")
-	}
-	result, err = a.closure.checkCurrentAuthorizationAt(a.bindings[:a.closure.count], a.hardEnd, samples, a.activation, admission)
+	parent := a.bindings[0]
+	deadline, err := parent.Namespace.checkDetachedActivation(a.activation, a.closure.credentials[0], parent.Issuer, result.Requirements.StalenessMS, result.Requirements.SignerLifetimeMS, result.DeadlineMS, admission)
 	if err != nil {
 		return result, err
 	}
+	result.DeadlineMS = min(result.DeadlineMS, deadline)
 	// Retain each dependency's original projection separately. Switching which
 	// namespace supplies the minimum must not reset another namespace's clock
 	// anchor. Renewal consumes no new timer, allocation or retained Head bytes.
 	for i, cap := range result.deadlines[:a.closure.count] {
-		if _, err = a.freshness[i].projectAt(a.bindings[i].Namespace.clock, cap, samples[i]); err != nil {
+		if _, err = a.freshness[i].project(a.bindings[i].Namespace.clock, cap); err != nil {
 			return result, err
 		}
 	}
@@ -418,13 +236,12 @@ func (a *EndpointAuthorization) RemainingMS() (remaining uint64, err error) {
 }
 
 func (a *EndpointAuthorization) remainingLocked() (remaining uint64, err error) {
-	samples, err := a.sampleLocked()
-	if _, err = a.checkLockedAt(false, samples, err); err != nil {
+	if _, err = a.checkLocked(false); err != nil {
 		return 0, err
 	}
 	remaining = ^uint64(0)
 	for i := 0; i < a.closure.count; i++ {
-		projected, err := a.freshness[i].projectAt(a.bindings[i].Namespace.clock, a.freshness[i].cap, samples[i])
+		projected, err := a.freshness[i].project(a.bindings[i].Namespace.clock, a.freshness[i].cap)
 		if err != nil {
 			if !authorizationPaused(err) {
 				a.terminal = err
@@ -433,7 +250,7 @@ func (a *EndpointAuthorization) remainingLocked() (remaining uint64, err error) 
 		}
 		remaining = min(remaining, projected)
 	}
-	hard, err := a.hard.RemainingMSAt(samples[0])
+	hard, err := a.hard.RemainingMS()
 	if err != nil {
 		if !authorizationPaused(err) {
 			a.terminal = err
@@ -451,15 +268,6 @@ func (p *credentialProjection) project(clock *timev4.Clock, cap uint64) (uint64,
 	sample, err := clock.Sample()
 	if err != nil {
 		return 0, err
-	}
-	return p.projectAt(clock, cap, sample)
-}
-
-func (p *credentialProjection) projectAt(clock *timev4.Clock, cap uint64, sample timev4.Sample) (uint64, error) {
-	if current, err := clock.RefreshSample(sample); err != nil {
-		return 0, err
-	} else {
-		sample = current
 	}
 	if !sample.ValidBefore(cap) {
 		return 0, timev4.ErrExpired
@@ -495,26 +303,7 @@ func (a *EndpointAuthorization) closeLocked(cause error) {
 		}
 		a.terminal = cause
 	}
-	a.closing = true
-	if a.hard != nil {
-		a.hard.Cancel()
-	}
-	a.Notify()
-	a.cleanupLocked()
-}
-
-func (a *EndpointAuthorization) cleanupLocked() {
-	if !a.closing || a.sampling != 0 {
-		return
-	}
 	clear(a.bindings[:])
 	a.closure, a.activation = nil, nil
-	a.deliveryOrigin = nil
 	a.subscriptions.closeOwned(a)
-}
-
-// WithApplicationPublication holds the same original endpoint gate used for
-// every other finite authenticated application transfer.
-func (a *EndpointAuthorization) WithApplicationPublication(action func() error) error {
-	return a.WithCurrentAuthorization(action)
 }

@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use rand::{Rng, RngExt as _, seq::SliceRandom as _};
+use rand::{Rng, RngExt, seq::SliceRandom as _};
 use thiserror::Error;
 
 use crate::quic_proto::{
@@ -758,6 +758,10 @@ fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) ->
 
 #[cfg(test)]
 mod test {
+    use std::convert::Infallible;
+
+    use rand::TryRng;
+
     use super::*;
 
     #[test]
@@ -849,8 +853,8 @@ mod test {
 
     struct StepRng(u64);
 
-    impl rand::TryRng for StepRng {
-        type Error = std::convert::Infallible;
+    impl TryRng for StepRng {
+        type Error = Infallible;
 
         #[inline]
         fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
@@ -864,7 +868,6 @@ mod test {
             Ok(res)
         }
 
-        #[inline]
         fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
             let mut left = dst;
             while left.len() >= 8 {
@@ -876,6 +879,7 @@ mod test {
             if n > 0 {
                 left.copy_from_slice(&self.next_u64().to_le_bytes()[..n]);
             }
+
             Ok(())
         }
     }

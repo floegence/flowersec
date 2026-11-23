@@ -76,7 +76,7 @@ function run(command, args, cwd, environment = {}, replaceEnvironment = false) {
   return result.stdout;
 }
 
-function readRegularFile(filePath, label) {
+function readRegularFile(filePath, label, encoding = "utf8") {
   let descriptor;
   try {
     descriptor = fs.openSync(
@@ -93,7 +93,7 @@ function readRegularFile(filePath, label) {
       || opened.dev !== linked.dev || opened.ino !== linked.ino) {
       throw new Error(`${label}: ${filePath}`);
     }
-    return fs.readFileSync(descriptor, "utf8");
+    return fs.readFileSync(descriptor, encoding);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -233,22 +233,7 @@ function mergeComponents(groups) {
 }
 
 function loadLicensePolicy(repoRoot) {
-  const policy = readJson(path.join(repoRoot, "scripts/source-license-policy.json"));
-  const embedded = readJson(path.join(repoRoot, "scripts/brotli-wasm-components.json"));
-  for (const component of embedded.components) {
-    const texts = component.licenses.map(file => {
-      if (sha256(file.text) !== file.sha256) throw new Error("Brotli embedded license digest mismatch");
-      return `${file.path}\n\n${file.text.trimEnd()}`;
-    });
-    const licenseText = texts.join("\n\n") + "\n";
-    policy.bundledNotices[`pkg:cargo/${component.name}@${component.version}`] = {
-      copyright: "Upstream copyright notices are reproduced in the complete license materials below.",
-      license: resolveLicenseReview(component.license, policy).concludedExpression,
-      licenseTextLines: licenseText.trimEnd().split("\n"),
-      sha256: sha256(licenseText),
-    };
-  }
-  return policy;
+  return readJson(path.join(repoRoot, "scripts/source-license-policy.json"));
 }
 
 const officialSchemaValidatorCache = new Map();
@@ -486,7 +471,7 @@ function expressionContainsLicense(expression, identifiers) {
   return tokens.some((token) => identifiers.has(token));
 }
 
-function makeComponent({ ecosystem, name, version, license, source, purl, policy, sourceEvidence }) {
+function makeComponent({ ecosystem, name, version, license, source, purl, policy, sourceEvidence, licenseFiles }) {
   if (typeof sourceEvidence?.kind !== "string" || typeof sourceEvidence?.value !== "string") {
     throw new Error(`${ecosystem} ${name}@${version} has no immutable source evidence`);
   }
@@ -536,6 +521,7 @@ function makeComponent({ ecosystem, name, version, license, source, purl, policy
     purl,
     sourceOfferRequired,
     ...(bundledNotice ? { bundledNotice } : {}),
+    ...(licenseFiles ? { licenseFiles } : {}),
     review: {
       ...licenseReview,
       sourceEvidenceKind: sourceEvidence.kind,
@@ -544,13 +530,13 @@ function makeComponent({ ecosystem, name, version, license, source, purl, policy
       expressionEvidenceSha256,
       copyright: {
         requirement: "retain-upstream-copyright-and-license-notices",
-        fulfillment: bundledNotice
+        fulfillment: bundledNotice || licenseFiles?.length
           ? "full-upstream-copyright-and-license-text-in-generated-notice"
           : "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately",
       },
       notice: {
         required: true,
-        fulfillment: bundledNotice
+        fulfillment: bundledNotice || licenseFiles?.length
           ? "component-entry-and-full-license-text-in-generated-third-party-notice"
           : "component-entry-in-generated-third-party-notice",
       },
@@ -1127,30 +1113,6 @@ export function collectNpmContext(lockfile, policy, options = {}) {
     }
   }
 
-  // The npm artifact contains a compiled Rust decoder. Its locked source
-  // closure is part of distribution provenance, including build dependencies.
-  const brotli = byPackagePath.get("node_modules/brotli-dec-wasm");
-  if (brotli) {
-    const embedded = readJson(new URL("./brotli-wasm-components.json", import.meta.url));
-    if (brotli.version !== embedded.version) throw new Error("Brotli embedded source revision drift");
-    const refs = new Map(embedded.components.map(c => [c.name, `pkg:cargo/${c.name}@${c.version}`]));
-    for (const component of embedded.components) {
-      const purl = refs.get(component.name);
-      byPackagePath.set(purl, makeComponent({
-        ecosystem: "cargo", name: component.name, version: component.version,
-        license: component.license, source: component.repository, purl, policy,
-        sourceEvidence: { kind: "cargo-lock-checksum", value: component.checksum },
-      }));
-      for (const dependency of component.dependencies ?? []) {
-        if (!refs.has(dependency)) throw new Error("Brotli source dependency missing");
-        edges.push({ from: purl, to: refs.get(dependency), kind: "runtime" });
-      }
-    }
-    for (const dependency of embedded.root_dependencies) {
-      if (!refs.has(dependency)) throw new Error("Brotli root dependency missing");
-      edges.push({ from: brotli.purl, to: refs.get(dependency), kind: "runtime" });
-    }
-  }
   const sourceComponents = mergeComponents([[...byPackagePath.values()]]);
   const sourceEdges = uniqueEdges(edges);
   const runtimeReachable = new Set([root.purl]);
@@ -1208,7 +1170,70 @@ function parseCargoLockChecksums(lockfile) {
   return checksums;
 }
 
-function collectRustContext(metadata, policy, lockfile) {
+function vendoredQuinnComponents(repoRoot, policy) {
+  const base = "flowersec-native-transport/src";
+  const licenseFiles = [
+    ["LICENSE-MIT", "4b2d0aca6789fa39e03d6738e869ea0988cceba210ca34ebb59c15c463e93a04"],
+    ["LICENSE-APACHE", "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"],
+  ].map(([name, digest]) => {
+    const contents = readRegularFile(path.join(repoRoot, base, `QUINN_${name}`), "missing Quinn license");
+    if (sha256(contents) !== digest) throw new Error(`vendored Quinn ${name} differs from upstream`);
+    return { path: name, sha256: digest, contents };
+  });
+  return [
+    ["quinn", "0.11.11", "quic_provider", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"],
+    ["quinn-proto", "0.11.17", "quic_proto", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"],
+  ].map(([name, version, module, upstreamArchiveSha256]) => {
+    const directory = `${base}/${module}`;
+    const tree = path.join(repoRoot, directory);
+    const files = walkFiles(tree).sort();
+    if (!files.includes("mod.rs")) throw new Error(`vendored ${name} source is missing: ${directory}/mod.rs`);
+    const sourceTreeSha256 = sha256(stableJson(files.map((file) => [
+      file, sha256(readRegularFile(path.join(tree, file), "invalid vendored Quinn source file", null)),
+    ])));
+    const vendored = { directory, sourceTreeSha256, upstreamArchiveSha256 };
+    return {
+      ...makeComponent({
+        ecosystem: "cargo", name, version, purl: `pkg:cargo/${name}@${version}`,
+        source: `https://static.crates.io/crates/${name}/${name}-${version}.crate`,
+        sourceEvidence: { kind: "modified-vendored-cargo-source", value: stableJson(vendored) },
+        license: "MIT OR Apache-2.0", licenseFiles, policy,
+      }),
+      vendored,
+      copyrightText: licenseFiles[0].contents.split("\n")[0],
+    };
+  });
+}
+
+function vendoredSourceDescription(component) {
+  const { directory, sourceTreeSha256, upstreamArchiveSha256 } = component.vendored;
+  return `Flowersec incorporates modified upstream source in ${directory}. Upstream crate SHA-256: ${upstreamArchiveSha256}. Modified source tree SHA-256: ${sourceTreeSha256}.`;
+}
+
+function vendoredNoiseReference(repoRoot, policy) {
+  const directory = "test-support/snow";
+  const tree = path.join(repoRoot, directory);
+  const licenseFiles = [
+    ["LICENSE-MIT", "dd6a6177e441f98b36c8e0e92e399a90e94fe09c3fed92d8bf21fe00a840a6ed"],
+    ["LICENSE-APACHE", "25a9014ab0838dec94e22f7598e115e9e55b8360044ef6e30dcda5679d268275"],
+  ].map(([name, digest]) => {
+    const contents = readRegularFile(path.join(tree, name), "missing Snow license");
+    if (sha256(contents) !== digest) throw new Error(`vendored Snow ${name} differs from upstream`);
+    return { path: name, sha256: digest, contents };
+  });
+  const sourceTreeSha256 = sha256(stableJson(walkFiles(tree).sort().map((file) => [
+    file, sha256(readRegularFile(path.join(tree, file), "invalid Snow test dependency file", null)),
+  ])));
+  const vendored = { directory, sourceTreeSha256, upstreamArchiveSha256: "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82" };
+  return {
+    ...makeComponent({ ecosystem: "cargo", name: "snow", version: "0.10.0", purl: "pkg:cargo/snow@0.10.0",
+      source: "https://static.crates.io/crates/snow/snow-0.10.0.crate", license: "Apache-2.0 OR MIT", policy,
+      licenseFiles, sourceEvidence: { kind: "modified-vendored-cargo-source", value: stableJson(vendored) } }),
+    vendored, copyrightText: licenseFiles[0].contents.split("\n").find((line) => line.startsWith("Copyright")),
+  };
+}
+
+function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored, noiseManifest, noise) {
   const rootPackage = metadata.packages.find((pkg) => pkg.id === metadata.resolve.root);
   if (!rootPackage) throw new Error("Cargo metadata has no root package details");
   const root = rootComponent(
@@ -1218,8 +1243,16 @@ function collectRustContext(metadata, policy, lockfile) {
     `pkg:cargo/${rootPackage.name}@${rootPackage.version}`,
   );
   const checksums = parseCargoLockChecksums(lockfile);
+  const nativeId = metadata.packages.find((pkg) => pkg.source === null && pkg.manifest_path === nativeManifest)?.id;
   const byId = new Map();
   for (const pkg of metadata.packages) {
+    if (pkg.manifest_path === noiseManifest) {
+      if (pkg.source !== null || pkg.name !== noise.name || pkg.version !== noise.version || pkg.license !== noise.declaredLicense) {
+        throw new Error("unexpected vendored Snow test dependency identity");
+      }
+      byId.set(pkg.id, noise);
+      continue;
+    }
     if (pkg.source === null) continue;
     const checksum = checksums.get(`${pkg.name}\0${pkg.version}`);
     if (!checksum) throw new Error(`Cargo package ${pkg.name}@${pkg.version} has no lock checksum`);
@@ -1236,12 +1269,12 @@ function collectRustContext(metadata, policy, lockfile) {
   }
   const sourceReachable = rustReachablePackageIds(metadata, false);
   const distributionReachable = rustReachablePackageIds(metadata, true);
-  const sourceComponents = mergeComponents([metadata.packages.flatMap((pkg) => (
-    sourceReachable.has(pkg.id) && byId.has(pkg.id) ? [byId.get(pkg.id)] : []
-  ))]);
-  const distributionComponents = mergeComponents([metadata.packages.flatMap((pkg) => (
-    distributionReachable.has(pkg.id) && byId.has(pkg.id) ? [byId.get(pkg.id)] : []
-  ))]);
+  function collectComponents(reachable) {
+    return mergeComponents([
+      [...byId].flatMap(([id, component]) => reachable.has(id) ? [component] : []),
+      reachable.has(nativeId) ? vendored : [],
+    ]);
+  }
   const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
   function dependencyKind(dependency) {
     const kinds = dependency.dep_kinds ?? [];
@@ -1256,11 +1289,17 @@ function collectRustContext(metadata, policy, lockfile) {
   }
   function collectEdges(reachable, publishedOnly) {
     const edges = [];
+    function addVendoredEdges(anchor, kind) {
+      const [provider, proto] = vendored;
+      edges.push({ from: anchor.purl, to: provider.purl, kind }, { from: anchor.purl, to: proto.purl, kind },
+        { from: provider.purl, to: proto.purl, kind: "runtime" });
+    }
     const anchors = [metadata.resolve.root, ...[...byId.keys()].filter((id) => reachable.has(id))];
     for (const anchorId of anchors) {
       const anchor = anchorId === metadata.resolve.root ? root : byId.get(anchorId);
       const anchorNode = nodes.get(anchorId);
       if (!anchor || !anchorNode) throw new Error(`Cargo metadata is missing graph anchor ${anchorId}`);
+      if (anchorId === nativeId) addVendoredEdges(anchor, "runtime");
       function visit(dependencyId, inheritedKind, localPath) {
         if (!reachable.has(dependencyId)) return;
         const external = byId.get(dependencyId);
@@ -1271,6 +1310,7 @@ function collectRustContext(metadata, policy, lockfile) {
         if (localPath.has(dependencyId)) throw new Error(`Cargo path dependency cycle at ${dependencyId}`);
         const localNode = nodes.get(dependencyId);
         if (!localNode) throw new Error(`Cargo metadata is missing local dependency ${dependencyId}`);
+        if (dependencyId === nativeId) addVendoredEdges(anchor, inheritedKind);
         const nextPath = new Set(localPath).add(dependencyId);
         for (const dependency of localNode.deps ?? []) {
           const kind = dependencyKind(dependency);
@@ -1287,10 +1327,10 @@ function collectRustContext(metadata, policy, lockfile) {
     return uniqueEdges(edges);
   }
   return {
-    source: { root, components: sourceComponents, edges: collectEdges(sourceReachable, false) },
+    source: { root, components: collectComponents(sourceReachable), edges: collectEdges(sourceReachable, false) },
     distribution: {
       root,
-      components: distributionComponents,
+      components: collectComponents(distributionReachable),
       edges: collectEdges(distributionReachable, true),
     },
   };
@@ -1436,7 +1476,8 @@ export function renderSpdx(name, graph, inventoryDigest, createdAtUtc) {
       filesAnalyzed: false,
       licenseConcluded: component.concludedLicense,
       licenseDeclared: component.declaredLicense,
-      copyrightText: "NOASSERTION",
+      copyrightText: component.copyrightText ?? "NOASSERTION",
+      ...(component.vendored ? { sourceInfo: vendoredSourceDescription(component) } : {}),
       externalRefs: [{
         referenceCategory: "PACKAGE-MANAGER",
         referenceType: "purl",
@@ -1505,7 +1546,11 @@ export function renderCycloneDx(name, graph, inventoryDigest) {
       purl: component.purl,
       "bom-ref": component.purl,
       licenses: [{ expression: component.concludedLicense }],
-      externalReferences: [{ type: "distribution", url: component.source }],
+      ...(component.vendored ? { description: vendoredSourceDescription(component), copyright: component.copyrightText } : {}),
+      externalReferences: [{ type: "distribution", url: component.source, ...(component.vendored ? {
+        comment: "Upstream crate before Flowersec modifications",
+        hashes: [{ alg: "SHA-256", content: component.vendored.upstreamArchiveSha256 }],
+      } : {}) }],
       properties: [
         { name: "flowersec:declared-license", value: component.declaredLicense },
         { name: "flowersec:source-offer-required", value: String(component.sourceOfferRequired) },
@@ -1707,6 +1752,7 @@ export function renderNotice(name, components) {
         `### ${component.name} ${component.version}`,
         "",
       );
+      if (component.vendored) lines.push(vendoredSourceDescription(component), "");
       if (component.bundledNotice) {
         lines.push(
           "#### Reviewed bundled license text",
@@ -1840,19 +1886,23 @@ export function generateSourceArtifacts(repoRoot) {
   );
   const rustDefinitions = [
     ["rust:flowersec-rust", "flowersec-rust/Cargo.toml", "flowersec-rust/Cargo.lock"],
+    ["rust:flowersec-rust/noise-reference", "flowersec-rust/noise-reference/Cargo.toml", "flowersec-rust/Cargo.lock"],
     ["rust:flowersec-native-transport", "flowersec-native-transport/Cargo.toml", "flowersec-native-transport/Cargo.lock"],
     ["rust:flowersec-node-native", "flowersec-node-native/Cargo.toml", "flowersec-node-native/Cargo.lock"],
     ["rust:flowersec-rust/fuzz", "flowersec-rust/fuzz/Cargo.toml", "flowersec-rust/fuzz/Cargo.lock"],
     ["rust:examples/rust", "examples/rust/Cargo.toml", "examples/rust/Cargo.lock"],
   ];
-  const rustMetadata = new Map(rustDefinitions.map(([id, manifest, lockfile]) => [id, {
-    metadata: cargoMetadata(repoRoot, manifest),
-    lockfile: path.join(repoRoot, lockfile),
-  }]));
+  const vendored = vendoredQuinnComponents(repoRoot, policy);
+  const nativeManifest = fs.realpathSync(path.join(repoRoot, "flowersec-native-transport/Cargo.toml"));
+  const noise = vendoredNoiseReference(repoRoot, policy);
+  const noiseManifest = fs.realpathSync(path.join(repoRoot, noise.vendored.directory, "Cargo.toml"));
+  const rustGraphs = new Map(rustDefinitions.map(([id, manifest, lockfile]) => [id, collectRustContext(
+    cargoMetadata(repoRoot, manifest), policy, path.join(repoRoot, lockfile), nativeManifest, vendored, noiseManifest, noise,
+  )]));
   const rustContexts = rustDefinitions.map(([id]) => ({
     id,
     ecosystem: "cargo",
-    ...collectRustContext(rustMetadata.get(id).metadata, policy, rustMetadata.get(id).lockfile).source,
+    ...rustGraphs.get(id).source,
   }));
   const swiftRootContext = collectSwiftContext(
     repoRoot,
@@ -1900,14 +1950,8 @@ export function generateSourceArtifacts(repoRoot) {
   const digest = sha256(inventoryText);
   const goDistribution = goContexts.find((context) => context.id === "go:flowersec-go");
   if (!goDistribution) throw new Error("missing flowersec-go dependency context");
-  const rustInput = rustMetadata.get("rust:flowersec-rust");
-  const rustDistribution = collectRustContext(rustInput.metadata, policy, rustInput.lockfile).distribution;
-  const nodeNativeInput = rustMetadata.get("rust:flowersec-node-native");
-  const nodeNativeCargoDistribution = collectRustContext(
-    nodeNativeInput.metadata,
-    policy,
-    nodeNativeInput.lockfile,
-  ).distribution;
+  const rustDistribution = rustGraphs.get("rust:flowersec-rust").distribution;
+  const nodeNativeCargoDistribution = rustGraphs.get("rust:flowersec-node-native").distribution;
   const releaseDistributions = collectGoReleaseDistributionsWithInputs(
     repoRoot,
     policy,
@@ -2013,14 +2057,7 @@ export function assertOwnedOutputClosure(repoRoot, artifacts) {
       ...walkFiles(path.join(repoRoot, sbomRoot)).map((relative) => `${sbomRoot}/${relative}`),
     ];
   });
-  const unexpected = owned.filter((relative) => {
-    // OSV reads policy beside the aggregate SBOM; it is maintained, not generated.
-    if (relative === "sbom/osv-scanner.toml") {
-      readRegularFile(path.join(repoRoot, relative), "OSV policy must be a regular file");
-      return false;
-    }
-    return !expected.has(relative);
-  });
+  const unexpected = owned.filter((relative) => !expected.has(relative));
   if (unexpected.length > 0) {
     throw new Error(`unexpected owned source inventory output: ${unexpected.sort().join(", ")}`);
   }

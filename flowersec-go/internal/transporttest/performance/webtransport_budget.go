@@ -3,8 +3,8 @@ package performance
 import (
 	"time"
 
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v7/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
 )
 
 func webTransportExecutionPlan(plan transporttest.ProfilePlan) transporttest.ProfilePlan {

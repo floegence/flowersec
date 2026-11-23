@@ -10,12 +10,13 @@ commands use the Node version selected by `actions/setup-node` from this policy.
 
 | Role | Configuration | Execution |
 | --- | --- | --- |
-| Go | `go.version` | All modules, CI, security tools, probes, and the container builder |
+| Go | `go.version` | Engineering modules and workspace, CI, security tools, probes, and the container builder; workflow setup reads `tools/releasenotes/go.mod` from the checked-out revision |
+| Go minimum | `go.minimum` | Published core and SQLite modules, and the standalone parity consumer |
 | Rust | `rust.version` | Root `rust-toolchain.toml`, local gates, native addons, probes, and publication |
 | Rust minimum | `rust.msrv` | Dedicated MSRV checks for all three published Rust crates |
 | Rust fuzzing | `rust.nightly` | Explicit fuzz target using a dated nightly |
 | Node | `node.version` | `.nvmrc`, primary CI, local gates, and publication |
-| Node minimum | `node.minimum` | Published SDK engine requirements and local pre-push compatibility tests |
+| Node minimum | `node.minimum` | Published SDK engine requirements and local compatibility tests in `make check` |
 | Swift | `swift.version`, `swift.xcode` | Explicit Xcode selection on macOS, including CodeQL; signed Swift release on Linux |
 | Swift package minimum | `swift.toolsVersion` | Swift package manifests |
 | TypeScript compiler | `typescript.version` | Explicit `@typescript/native/bin/tsc` entry point |
@@ -45,16 +46,21 @@ They do not modify a developer's global toolchain selection. Make disables Go
 automatic toolchain switching. Arbitrary direct compiler commands outside the
 engineering gates remain subject to the caller's environment.
 
-Install the separately declared Node minimum alongside the primary runtime.
+Install the separately declared Go and Node minimums alongside the primary runtimes.
+Set `FLOWERSEC_GO_MINIMUM_BIN` to the absolute `go` executable for the Go SDK
+minimum when running `make go-minimum-check`, `make main-compatibility-check`,
+or `make check`. This lane exercises the endpoint, issuer, relay, and SQLite
+adapter with workspace mode and automatic toolchain switching disabled.
+
 Set `FLOWERSEC_NODE_MINIMUM_BIN` to its absolute executable path before
-`make prepush` or `scripts/push-main.sh`. The compatibility lane selects that
+`make node-minimum-check` or `make check`. The compatibility lane selects that
 executable for itself and its children; it does not change the primary runtime
 or install a compiler. `make rust-msrv-check` uses the separately installed
 minimum Rust compiler for the published crates and Rust SDK example.
 
 ## Consistency enforcement
 
-`make precommit`, `make prepush`, `make test`, and `make check` validate the actual toolchain
+`make precommit`, `make test`, and `make check` validate the actual toolchain
 versions before executing work. The primary language precommit lanes also
 validate their own toolchains. TypeScript builds validate the explicit compiler
 entry point after dependencies are installed.

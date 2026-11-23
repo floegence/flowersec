@@ -61,10 +61,17 @@ jobs:
             scripts/verify-release-main.sh
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify tagged commit is the remote main tip
-        run: |
-          set -euo pipefail
-          bash scripts/verify-release-main.sh
+      - name: Verify release source authority
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/verify-release-main.sh "$RELEASE_VERSION"
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/releasenotes/go.mod
+          cache: true
+          cache-dependency-path: flowersec-go/go.sum
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -77,7 +84,7 @@ jobs:
           node-version: "26.8.1"
 
       - name: Validate runtime toolchains
-        run: node scripts/toolchains.mjs --check-runtime node rust
+        run: node scripts/toolchains.mjs --check-runtime go node rust
 
       - name: Validate release version facts
         env:
@@ -167,7 +174,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          timeout --kill-after=5s 600s cargo publish --locked
+          timeout --kill-after=5s 600s cargo publish --locked -p flowersec
           status=$?
           set -e
           if [[ $status -eq 124 || $status -eq 137 ]]; then

@@ -17,21 +17,30 @@ if [[ -n "$(git status --short)" ]]; then
 fi
 
 branch=$(git symbolic-ref --short -q HEAD || true)
-if [[ "$branch" != "main" ]]; then
-  echo "release must run from the main worktree" >&2
+if [[ "$branch" != "main" && "$branch" != "release/5.x" ]]; then
+  echo "release must run from main or release/5.x" >&2
+  exit 1
+fi
+if [[ "$branch" == "release/5.x" ]]; then
+  [[ "$version" == 5.* ]] || { echo "release/5.x only publishes major 5" >&2; exit 1; }
+  maintenance_base="74e6ae7d5d2a992f4a33bf05259d1b786c386f81"
+  [[ "$(git rev-parse '5.6.0^{commit}')" == "$maintenance_base" ]] || exit 1
+  git merge-base --is-ancestor "$maintenance_base" HEAD
+elif [[ "$version" == 5.* ]]; then
+  echo "major 5 must be published from release/5.x" >&2
   exit 1
 fi
 
-git fetch origin main --tags
+git fetch origin "$branch" --tags
 head=$(git rev-parse HEAD)
-origin_main=$(git rev-parse origin/main)
-if [[ "$head" != "$origin_main" ]]; then
-  echo "local main must exactly match origin/main before release" >&2
+origin_tip=$(git rev-parse "origin/$branch")
+if [[ "$head" != "$origin_tip" ]]; then
+  echo "local release branch must exactly match its remote tip before release" >&2
   exit 1
 fi
 
 node scripts/check-release-version-consistency.mjs "$version"
-previous_release_tag=$(git tag --list 'flowersec-go/v*' --sort=-v:refname | grep -Fvx "flowersec-go/v$version" | head -1 || true)
+previous_release_tag=$(git tag --list "flowersec-go/v${version%%.*}.*" --sort=-v:refname | grep -Fvx "flowersec-go/v$version" | head -1 || true)
 release_range="$head"
 if [[ -n "$previous_release_tag" ]]; then
   release_range="$previous_release_tag..$head"
@@ -46,6 +55,19 @@ tags=(
   "$version"
   "flowersec-rust/v$version"
 )
+if git cat-file -e "$head:flowersec-go/adapters/sqlite/go.mod" 2>/dev/null; then
+  tags+=("flowersec-go/adapters/sqlite/v$version")
+fi
+dispatch_repo=""
+if (( ${#tags[@]} > 3 )); then
+  push_url=$(git remote get-url --push origin)
+  case "${push_url%.git}" in
+    https://github.com/floegence/flowersec|git@github.com:floegence/flowersec|ssh://git@github.com/floegence/flowersec) ;;
+    *) echo "Four-tag publication requires the official GitHub push remote." >&2; exit 1 ;;
+  esac
+  dispatch_repo=github.com/floegence/flowersec
+  gh auth status --hostname github.com >/dev/null
+fi
 for tag in "${tags[@]}"; do
   if git show-ref --verify --quiet "refs/tags/$tag"; then
     echo "release tag already exists locally: $tag" >&2
@@ -91,15 +113,23 @@ if [[ ! -s "$notes_file" ]]; then
   exit 1
 fi
 
+tag_refs=()
+for tag in "${tags[@]}"; do
+  tag_refs+=("refs/tags/$tag")
+done
 FLOWERSEC_RELEASE_PUSH_SHA="$head" \
 FLOWERSEC_RELEASE_VERSION="$version" \
 git push --atomic origin \
-  "refs/heads/main:refs/heads/main" \
-  "refs/tags/${tags[0]}" \
-  "refs/tags/${tags[1]}" \
-  "refs/tags/${tags[2]}"
+  "refs/heads/$branch:refs/heads/$branch" \
+  "${tag_refs[@]}"
 
 created_tags=()
 trap - EXIT INT TERM
 rm -rf "$notes_tmp_dir"
-echo "released Flowersec $version from $head"
+if [[ -n "$dispatch_repo" ]]; then
+  if ! gh workflow run release.yml --repo "$dispatch_repo" --ref "flowersec-go/v$version" -f "version=$version" -f mode=full; then
+    echo "Coordinated tags are already public. Check the release workflow runs for $head before retrying dispatch; do not recreate the tags." >&2
+    exit 1
+  fi
+fi
+echo "Flowersec $version tags published from $head; verify the release workflow and registry readbacks."

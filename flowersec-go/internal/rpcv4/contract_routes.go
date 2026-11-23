@@ -1,14 +1,13 @@
 package rpcv4
 
 import (
-	"context"
 	"math"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // MethodRoutes is one local implementation binding's exact contract set. All
@@ -24,13 +23,6 @@ type MethodRoutes struct {
 	// OfferWindowMS is the trusted positive execution window policy. Zero keeps
 	// execution contracts as semantic routes without new admission windows.
 	OfferWindowMS uint64
-	// InitialOffers are exact trusted windows for this method's declared
-	// contracts. Durable services obtain them from their original store;
-	// construction never creates or renews a window.
-	InitialOffers []protocolv4.AdmissionOfferBounds
-	// AdvertisedContract selects one declared digest after all initial windows
-	// have been installed. Zero leaves advertisement explicitly disabled.
-	AdvertisedContract [32]byte
 }
 type ContractRoutesConfig struct {
 	Methods       []MethodRoutes
@@ -54,7 +46,6 @@ type ContractRoutes struct {
 	entries         []contractRouteEntry
 	captures        uint32
 	closed, cleaned bool
-	done            chan struct{}
 	clock           *timev4.Clock
 	offerDecoder    *protocolv4.Decoder
 	generation      uint64
@@ -80,7 +71,7 @@ func ContractRoutesCharge(c ContractRoutesConfig) (resourcev4.Vector, error) {
 	}
 	count := uint64(0)
 	for _, method := range c.Methods {
-		if len(method.Contracts) == 0 || len(method.Contracts) > 8 || len(method.InitialOffers) > 8*len(method.Contracts) || method.OfferWindowMS != 0 && c.Clock == nil || len(method.InitialOffers) != 0 && method.OfferWindowMS == 0 {
+		if len(method.Contracts) == 0 || len(method.Contracts) > 8 || method.OfferWindowMS != 0 && c.Clock == nil {
 			return resourcev4.Vector{}, ErrConfiguration
 		}
 		for _, wire := range method.Contracts {
@@ -96,7 +87,7 @@ func ContractRoutesCharge(c ContractRoutesConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	size := uint64(unsafe.Sizeof(ContractRoutes{})) + 128 + count*(bytes+uint64(unsafe.Sizeof(contractRouteEntry{}))+128)
+	size := uint64(unsafe.Sizeof(ContractRoutes{})) + count*(bytes+uint64(unsafe.Sizeof(contractRouteEntry{}))+128)
 	return (resourcev4.Vector{resourcev4.SDKBytes: size + offerBytes, resourcev4.Items: count + 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 func NewContractRoutes(c ContractRoutesConfig, reservation resourcev4.Reference) (_ *ContractRoutes, err error) {
@@ -112,7 +103,7 @@ func NewContractRoutes(c ContractRoutesConfig, reservation resourcev4.Reference)
 	for _, m := range c.Methods {
 		count += len(m.Contracts)
 	}
-	r := &ContractRoutes{reservation: owned, entries: make([]contractRouteEntry, 0, count), clock: c.Clock, done: make(chan struct{})}
+	r := &ContractRoutes{reservation: owned, entries: make([]contractRouteEntry, 0, count), clock: c.Clock}
 	defer func() {
 		if err != nil {
 			r.Close()
@@ -163,9 +154,6 @@ func NewContractRoutes(c ContractRoutesConfig, reservation resourcev4.Reference)
 			}
 			r.entries = append(r.entries, contractRouteEntry{contract: contract, policy: policy, method: uint32(method), offerWindowMS: m.OfferWindowMS, registered: true})
 		}
-	}
-	if err := r.installInitialOffers(c.Methods); err != nil {
-		return nil, err
 	}
 	return r, nil
 }
@@ -228,24 +216,6 @@ func (c ContractRoute) Policy() (uint32, protocolv4.ServiceContractPolicy, error
 	return s.entry.method, s.entry.policy, nil
 }
 
-// CheckResponsePayload checks the captured immutable application-error catalog
-// and byte limit without borrowing or reconstructing its canonical contract.
-func (c ContractRoute) CheckResponsePayload(errorCode, payloadBytes uint32) error {
-	if c.capture == nil {
-		return ErrOwner
-	}
-	s := c.capture
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.registry == nil {
-		return ErrOwner
-	}
-	if err := s.reservation.Check(); err != nil {
-		return err
-	}
-	return s.entry.contract.CheckResponsePayload(errorCode, payloadBytes)
-}
-
 // RegisteredMethodPolicy is a local installation projection. The caller must
 // own any retained namespace bytes; this grants no future registration or
 // dispatch right. Actual message admission uses its exact digest capture.
@@ -267,79 +237,6 @@ func (r *ContractRoutes) RegisteredMethodPolicy(method uint32) (protocolv4.Servi
 		}
 	}
 	return protocolv4.ServiceContractPolicy{}, ErrMethod
-}
-
-// RegisteredContractPolicy observes one exact immutable registration. It
-// grants no transfer right; WithRegisteredNotify rechecks at publication.
-func (r *ContractRoutes) RegisteredContractPolicy(digest [32]byte) (uint32, protocolv4.ServiceContractPolicy, error) {
-	if r == nil {
-		return 0, protocolv4.ServiceContractPolicy{}, ErrOwner
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return 0, protocolv4.ServiceContractPolicy{}, ErrClosed
-	}
-	if err := r.reservation.Check(); err != nil {
-		return 0, protocolv4.ServiceContractPolicy{}, err
-	}
-	for _, entry := range r.entries {
-		if entry.policy.Digest == digest && entry.registered {
-			return entry.method, entry.policy, nil
-		}
-	}
-	return 0, protocolv4.ServiceContractPolicy{}, ErrMethod
-}
-
-// CheckRequiredUnary checks registered exact contracts and the original
-// execution Offer windows. It never queries, registers or refreshes them.
-func (r *ContractRoutes) CheckRequiredUnary(required [][32]byte) error {
-	now, err := r.offerSample()
-	if err != nil {
-		return err
-	}
-	return r.WithRequiredUnaryAt(required, now, func() error { return nil })
-}
-
-// WithRequiredUnaryAt keeps the original route gate through a bounded SDK
-// publication action. Unregister cannot slip between qualification and current
-// publication. The caller supplies its gate sample without clock callbacks here.
-func (r *ContractRoutes) WithRequiredUnaryAt(required [][32]byte, now timev4.Sample, action func() error) error {
-	if r == nil {
-		return ErrMethod
-	}
-	if action == nil {
-		return ErrConfiguration
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !now.BelongsTo(r.clock) {
-		return ErrConfiguration
-	}
-	if r.closed {
-		return ErrClosed
-	}
-	if err := r.reservation.Check(); err != nil {
-		return err
-	}
-	for _, digest := range required {
-		found := false
-		for _, entry := range r.entries {
-			if entry.policy.Digest == digest && entry.policy.Shape == 0 && entry.registered {
-				if entry.policy.Semantics == 1 {
-					if _, ok := usableOffer(&entry, now, 0, true); !ok {
-						return ErrMethod
-					}
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			return ErrMethod
-		}
-	}
-	return action()
 }
 
 // WithRegisteredNotify checks the original exact digest and message variant
@@ -512,24 +409,6 @@ func (r *ContractRoutes) cleanupLocked() {
 	r.reservation.Release()
 	r.reservation = resourcev4.Reference{}
 	r.cleaned = true
-	close(r.done)
-}
-
-// WaitCleanup joins the original semantic captures after Close. The registry's
-// precharged completion signal creates no replacement cleanup owner.
-func (r *ContractRoutes) WaitCleanup(ctx context.Context) error {
-	if r == nil {
-		return nil
-	}
-	if ctx == nil {
-		return ErrConfiguration
-	}
-	select {
-	case <-r.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 func (r *ContractRoutes) CleanupComplete() bool {
 	if r == nil {

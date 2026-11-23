@@ -13,7 +13,6 @@
 //! managing a single connection and all the related state (such as streams).
 
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
-#![cfg_attr(test, allow(dead_code))]
 // Fixes welcome:
 #![warn(unreachable_pub)]
 #![allow(clippy::cognitive_complexity)]
@@ -30,58 +29,46 @@ mod cid_queue;
 pub(crate) mod coding;
 mod constant_time;
 mod range_set;
-#[cfg(all(test, any(any(), all())))]
+#[cfg(test)]
 mod tests;
 pub(crate) mod transport_parameters;
 mod varint;
 
 pub(crate) use varint::{VarInt, VarIntBoundsExceeded};
 
-#[cfg(any())]
-mod bloom_token_log;
-#[cfg(any())]
-pub(crate) use bloom_token_log::BloomTokenLog;
-
 mod connection;
 pub(crate) use crate::quic_proto::connection::{
-    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Event, FinishError,
-    ReadError, ReadableError, SendDatagramError, SendStream, StreamEvent, WriteError, Written,
+    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
+    FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
+    SendDatagramError, SendStream, StreamEvent, Streams, UdpStats, WriteError, Written,
 };
-#[cfg(test)]
-use cid_generator::HashedConnectionIdGenerator;
-#[cfg(test)]
-use config::TimeSource;
 #[cfg(any())]
 pub(crate) use connection::qlog::QlogStream;
-#[cfg(test)]
-pub(crate) use connection::{Datagrams, RecvStream, Streams};
-#[cfg(test)]
-use frame::{ApplicationClose, ConnectionClose, Datagram};
-#[cfg(test)]
-use token::TokenReuseError;
-
-#[cfg(any())]
-pub(crate) use rustls;
 
 mod config;
 #[cfg(any())]
 pub(crate) use config::QlogConfig;
 pub(crate) use config::{
-    AckFrequencyConfig, ClientConfig, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, TransportConfig,
+    AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
+    ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
 
 pub(crate) mod crypto;
 
 mod frame;
 use crate::quic_proto::frame::Frame;
+pub(crate) use crate::quic_proto::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};
 
 mod endpoint;
 pub(crate) use crate::quic_proto::endpoint::{
-    ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
+    AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
 };
 
 mod packet;
+pub(crate) use packet::{
+    ConnectionIdParser, FixedLengthConnectionIdParser, LongType, PacketDecodeError, PartialDecode,
+    ProtectedHeader, ProtectedInitialHeader,
+};
 
 mod shared;
 pub(crate) use crate::quic_proto::shared::{
@@ -96,11 +83,13 @@ pub(crate) use crate::quic_proto::transport_error::{
 pub(crate) mod congestion;
 
 mod cid_generator;
-pub(crate) use crate::quic_proto::cid_generator::RandomConnectionIdGenerator;
+pub(crate) use crate::quic_proto::cid_generator::{
+    ConnectionIdGenerator, HashedConnectionIdGenerator, InvalidCid, RandomConnectionIdGenerator,
+};
 
 mod token;
 use token::ResetToken;
-pub(crate) use token::{NoneTokenLog, TokenLog, TokenStore};
+pub(crate) use token::{NoneTokenLog, NoneTokenStore, TokenLog, TokenReuseError, TokenStore};
 
 mod token_memory_cache;
 pub(crate) use token_memory_cache::TokenMemoryCache;
@@ -284,7 +273,7 @@ impl StreamId {
 
 impl From<StreamId> for VarInt {
     fn from(x: StreamId) -> Self {
-        Self::from_u64_bounded(x.0)
+        Self::from_u64(x.0).expect("stream ID fits QUIC varint")
     }
 }
 

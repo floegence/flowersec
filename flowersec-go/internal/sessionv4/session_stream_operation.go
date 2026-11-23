@@ -7,11 +7,11 @@ import (
 	"errors"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // StreamOperation shares the original bounded prepared-operation table with
@@ -20,7 +20,6 @@ import (
 type StreamOperation struct{ owner *UnaryOperation }
 
 type streamPreparationPlan struct {
-	workload *unaryWorkload
 	notify   bool
 	resume   *resumePreparationPlan
 	core     *SessionCore
@@ -29,7 +28,6 @@ type streamPreparationPlan struct {
 }
 
 type streamOperationState struct {
-	workload *unaryWorkloadSlot
 	resume   *resumeTarget
 	core     *SessionCore
 	kind     string
@@ -69,7 +67,7 @@ func (r *RPCServices) prepareStreamOperation(ctx context.Context, core *SessionC
 	if err != nil {
 		return nil, err
 	}
-	if !canonicalStreamHandlerKind(kind) || len(kind) > kindLimit || len(metadata) > metadataLimit {
+	if len(kind) == 0 || len(kind) > kindLimit || len(metadata) > metadataLimit {
 		return nil, cryptov4.ErrConfiguration
 	}
 	core.plan.mu.Lock()
@@ -123,8 +121,7 @@ func (s *StreamOperation) Start(ctx context.Context, sessions ...*SessionCore) S
 		return StreamStartResult{NotAdmitted: true, Error: err}
 	}
 	var stream *StreamMessages
-	operationCtx := withOwnedDiagnosticOperation(ctx, o.diagnosticOperation)
-	err := o.request.WithStart(operationCtx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, _, payload []byte) error {
+	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, _, payload []byte) error {
 		if x.resume != nil {
 			if err := x.resume.check(x.core); err != nil {
 				return err
@@ -134,7 +131,7 @@ func (s *StreamOperation) Start(ctx context.Context, sessions ...*SessionCore) S
 		if err != nil {
 			return err
 		}
-		stream, err = o.services.beginPreparedStream(operationCtx, x, route, h, payload, deadline, o.resultPlan, &o.dependencies)
+		stream, err = o.services.beginPreparedStream(ctx, x, route, h, payload, deadline, o.resultPlan.decode, &o.dependencies)
 		return err
 	})
 	if err != nil {
@@ -161,10 +158,7 @@ func (s *StreamOperation) Start(ctx context.Context, sessions ...*SessionCore) S
 
 // beginPreparedStream reserves only the exact original general stream vector.
 // The shared root performs one atomic batch before any native/OPEN side effect.
-func (r *RPCServices) beginPreparedStream(ctx context.Context, binding *streamOperationState, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, payload []byte, deadline *timev4.Deadline, result *unaryResultPlan, dependencies *applicationDependencies) (*StreamMessages, error) {
-	if binding.workload != nil {
-		return r.beginWorkloadStream(ctx, binding, route, h, payload, deadline, result, dependencies)
-	}
+func (r *RPCServices) beginPreparedStream(ctx context.Context, binding *streamOperationState, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, payload []byte, deadline *timev4.Deadline, decode UnaryResultDecoder, dependencies *applicationDependencies) (*StreamMessages, error) {
 	var contract *protocolv4.ServiceContract
 	var err error
 	if binding.resume != nil {
@@ -185,7 +179,7 @@ func (r *RPCServices) beginPreparedStream(ctx context.Context, binding *streamOp
 		return nil, cryptov4.ErrClosed
 	}
 	plan := r.plan
-	config := StreamMessagesConfig{environment: result.environment, dependencies: dependencies, HardDeadline: deadline, Request: h, HashRuntimeBytes: r.hashRuntimeBytes, RuntimeBytes: r.runtimeBytes, RouteRuntimeBytes: r.runtimeBytes, Result: &StreamResultConfig{Executor: plan.executor, Decode: result.decode, resumeResult: result.resumeResult}}
+	config := StreamMessagesConfig{dependencies: dependencies, HardDeadline: deadline, Request: h, HashRuntimeBytes: r.hashRuntimeBytes, RuntimeBytes: r.runtimeBytes, RouteRuntimeBytes: r.runtimeBytes, Result: &StreamResultConfig{Executor: plan.executor, Decode: decode}}
 	config.resume = binding.resume != nil
 	var charges [4]resourcev4.Vector
 	charges[0], err = StreamMessagesCharge(policy, config)

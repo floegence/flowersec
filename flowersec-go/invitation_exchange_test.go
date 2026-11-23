@@ -2,16 +2,9 @@ package flowersec_test
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v7"
 )
 
 func TestInvitationCodeCanonicalizationAndRedaction(t *testing.T) {
@@ -85,29 +78,10 @@ func invitationServer(t *testing.T, code flowersec.InvitationCode, describe func
 		t.Fatal(err)
 	}
 	server := httptest.NewUnstartedServer(handler)
-	server.TLS = invitationTLSConfig(t)
+	server.TLS, _ = acceptorListenerTLS(t)
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	return server
-}
-
-func invitationTLSConfig(t *testing.T) *tls.Config {
-	t.Helper()
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(91), Subject: pkix.Name{CommonName: "localhost"},
-		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: privateKey}}}
 }
 
 func TestInvitationExchangeAuthenticatesBeforeDeliveringDescriptor(t *testing.T) {

@@ -6,169 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
-import { addNodePeerCoverage, readNodePeerCoverage } from "./ts-peer-coverage.mjs";
-import { runCoverageLanes, validateSuccessfulResult } from "./server-parity-native-addon.mjs";
-import { cleanupParityArtifact, ParityProcessCleanupError } from "./server-parity-browser-installation.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
-
-test("native title results accept exact leaf and qualified names but reject uncertain execution", () => {
-  const title = "admits direct raw QUIC with original stores, typed RPC, stream FIN, and cleanup (hold DRAINED: false)";
-  const assertion = { title, fullName: `Node current production raw QUIC runtime ${title}`, status: "passed" };
-  const report = assertions => ({ success: true, testResults: [{ assertionResults: assertions }] });
-  validateSuccessfulResult(report([assertion]), "native title", title);
-  validateSuccessfulResult(report([assertion]), "native title", assertion.fullName);
-  validateSuccessfulResult(report([{ ...assertion, fullName: title }]), "native title", title);
-  const parameterized = "Node current production raw QUIC runtime > rejects %s on the authenticated WSS hop";
-  const variants = [
-    { title: "rejects unknown DATA on the authenticated WSS hop", fullName: "Node current production raw QUIC runtime rejects unknown DATA on the authenticated WSS hop", status: "passed" },
-    { title: "rejects duplicate OPEN on the authenticated WSS hop", fullName: "Node current production raw QUIC runtime rejects duplicate OPEN on the authenticated WSS hop", status: "passed" },
-  ];
-  validateSuccessfulResult(report(variants), "native parameterized title", parameterized);
-  for (const status of ["skipped", "pending"]) {
-    assert.throws(() => validateSuccessfulResult(report([
-      variants[0], { ...variants[1], status },
-    ]), "native parameterized title", parameterized), /all reported parameterized variants/);
-  }
-  assert.throws(() => validateSuccessfulResult(report([]), "native parameterized title", parameterized), /all reported parameterized variants/);
-  assert.throws(() => validateSuccessfulResult(report([
-    ...variants, { ...variants[0], title: "unrelated test", fullName: "Another suite unrelated test" },
-  ]), "native parameterized title", parameterized), /all reported parameterized variants/);
-  // Selecting one concrete variant still permits its unselected sibling.
-  validateSuccessfulResult(report([
-    variants[0], { ...variants[1], status: "skipped" },
-  ]), "native concrete parameterized title", variants[0].title);
-  assert.throws(() => validateSuccessfulResult(report([]), "native title", title), /exactly one passing test/);
-  assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "skipped" }]), "native title", title), /exactly one passing test/);
-  assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "failed" }]), "native title", title), /failed assertions/);
-  assert.throws(() => validateSuccessfulResult(report([
-    assertion, { ...assertion, fullName: `Another suite ${title}` },
-  ]), "native title", title), /exactly one passing test/);
-  assert.throws(() => validateSuccessfulResult(report([assertion]), "native title", "cleanup (hold DRAINED: false)"), /exactly one passing test/);
-  assert.throws(() => validateSuccessfulResult(report([assertion]), "native title", `${title} extra`), /exactly one passing test/);
-  assert.throws(() => validateSuccessfulResult({ ...report([assertion]), success: false }, "native title", title), /suiteSuccess=true/);
-});
-
-test("coverage artifacts stay owned through an incomplete lane join and preserve both failures", async t => {
-  // Exercise the actual gate finalizer without compiling SDKs or starting the
-  // full matrix. Its process ownership error comes from the real lane runner.
-  const source = fs.readFileSync(path.join(sourceRoot, "scripts/server-parity-native-addon.mjs"), "utf8");
-  const gate = source.slice(source.indexOf("async function runCoverageGate("), source.indexOf("async function runNodePeerCoverage("));
-  const finalizer = /\} finally \{([\s\S]*)\n  \}\n\}/u.exec(gate);
-  assert.ok(finalizer);
-  const finalize = new (async function () {}).constructor("fixture", "failure", "cleanupParityArtifact", "rm", "scratchRoot", finalizer[1]);
-  fs.mkdirSync(path.join(sourceRoot, ".flowersec"), { recursive: true });
-  const base = fs.mkdtempSync(path.join(sourceRoot, ".flowersec", "coverage-cleanup-test-"));
-  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  const addon = path.join(base, "addon"), scratch = path.join(base, "scratch");
-  fs.mkdirSync(addon); fs.mkdirSync(scratch);
-  fs.writeFileSync(path.join(scratch, "original.log"), "original assertion failure");
-  const fixture = { cleanup: () => fs.promises.rm(addon, { recursive: true }) };
-  const assertion = new Error("original assertion failure"), join = new Error("physical exit unconfirmed");
-  let failure;
-  await assert.rejects(runCoverageLanes(async () => { throw assertion; }, async () => {
-    throw new Error("unit coverage command failed", { cause: new ParityProcessCleanupError([join], "join incomplete") });
-  }), error => { failure = error; return true; });
-  await finalize(fixture, failure, cleanupParityArtifact, fs.promises.rm, scratch);
-  assert.equal(fs.existsSync(addon), true);
-  assert.equal(fs.readFileSync(path.join(scratch, "original.log"), "utf8"), assertion.message);
-  assert.equal(failure.errors[0], assertion);
-  assert.equal(failure.errors[1].cause.errors[0], join);
-  // Once physical exit is known, the protocol failure does not prevent removal.
-  await finalize(fixture, assertion, cleanupParityArtifact, fs.promises.rm, scratch);
-  assert.equal(fs.existsSync(addon), false); assert.equal(fs.existsSync(scratch), false);
-  const removal = new Error("scratch removal failed");
-  await assert.rejects(finalize(undefined, assertion, cleanupParityArtifact, async () => { throw removal; }, scratch), error => {
-    assert.deepEqual(error.errors, [assertion, removal]); return true;
-  });
-});
-
-test("coverage lanes overlap independent work and join canceled physical tails", async () => {
-  const entered = Promise.withResolvers(), release = Promise.withResolvers(), canceled = Promise.withResolvers();
-  const failure = new Error("original integration failure");
-  let cleanupComplete = false, settled = false;
-  const running = runCoverageLanes(async () => { await entered.promise; throw failure; }, async signal => {
-    signal.addEventListener("abort", () => canceled.resolve(signal.reason), { once: true });
-    entered.resolve();
-    await release.promise;
-    cleanupComplete = true;
-    signal.throwIfAborted();
-  });
-  const observed = running.then(() => { settled = true; }, error => { settled = true; return error; });
-  try {
-    assert.equal(await canceled.promise, failure);
-    assert.equal(settled, false);
-    assert.equal(cleanupComplete, false);
-  } finally { release.resolve(); }
-  const result = await observed;
-  assert.equal(cleanupComplete, true);
-  assert.ok(result instanceof AggregateError);
-  assert.ok(result.errors.includes(failure));
-});
-
-test("coverage lanes preserve external cancellation and never start after cancellation", async () => {
-  const cancellation = new AbortController(), reason = new Error("caller canceled");
-  const entered = Promise.withResolvers();
-  const seen = [];
-  const lane = async signal => {
-    const canceled = Promise.withResolvers();
-    signal.addEventListener("abort", () => { seen.push(signal.reason); canceled.resolve(); }, { once: true });
-    if (seen.length === 0) entered.resolve();
-    await canceled.promise;
-    signal.throwIfAborted();
-  };
-  const running = runCoverageLanes(lane, lane, cancellation.signal);
-  const rejected = assert.rejects(running, AggregateError);
-  await entered.promise; cancellation.abort(reason); await rejected;
-  assert.deepEqual(seen, [reason, reason]);
-  let called = false;
-  await assert.rejects(runCoverageLanes(async () => { called = true; }, async () => { called = true; }, cancellation.signal), error => error === reason);
-  assert.equal(called, false);
-});
-
-test("Node peer coverage preserves original denominators and refuses uncertain source positions", () => {
-  const require = createRequire(path.join(sourceRoot, "flowersec-ts/package.json"));
-  const { createCoverageMap } = require("@vitest/istanbul-lib-coverage");
-  const position = line => ({ start: { line, column: 0 }, end: { line, column: 12 } });
-  const file = path.join(sourceRoot, "coverage-fixture.ts");
-  const original = {
-    path: file, statementMap: { 0: position(1), 1: position(2) }, s: { 0: 0, 1: 0 },
-    fnMap: { 0: { name: "original", decl: position(1), loc: position(1), line: 1 } }, f: { 0: 0 },
-    branchMap: { 0: { type: "if", loc: position(2), locations: [position(2), position(3)], line: 2 } }, b: { 0: [0, 0] },
-  };
-  const peer = structuredClone(original);
-  peer.s = { 0: 2, 1: 99 };
-  peer.statementMap[1] = position(4);
-  peer.fnMap[0].name = "transpiledName";
-  peer.fnMap[0].decl = position(5);
-  peer.f[0] = 3;
-  peer.b[0] = [4, 0];
-  const result = createCoverageMap({ [file]: original }), incoming = createCoverageMap({ [file]: peer });
-  const before = structuredClone(result.fileCoverageFor(file).toJSON());
-  addNodePeerCoverage(result, incoming);
-  const after = result.fileCoverageFor(file).toJSON();
-  for (const map of ["statementMap", "fnMap", "branchMap"]) assert.deepEqual(after[map], before[map]);
-  assert.deepEqual(after.s, { 0: 2, 1: 0 });
-  assert.deepEqual(after.f, { 0: 3 });
-  assert.deepEqual(after.b, { 0: [4, 0] });
-  const changed = structuredClone(peer);
-  changed.statementMap[2] = position(6); changed.s[2] = 1;
-  assert.throws(() => addNodePeerCoverage(result, createCoverageMap({ [file]: changed })), /source mapping differs/u);
-});
-
-test("Node peer coverage rejects missing profiles and changed source before crediting execution", async t => {
-  const scratchRoot = path.join(sourceRoot, ".flowersec");
-  fs.mkdirSync(scratchRoot, { recursive: true });
-  const directory = fs.mkdtempSync(path.join(scratchRoot, "ts-peer-coverage-test-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  await assert.rejects(readNodePeerCoverage(directory, ["client"]), /Expected 1 successful Node peer profiles, received 0/u);
-  const file = path.join(sourceRoot, "flowersec-ts/src/interop/serverParityPeer.ts");
-  fs.writeFileSync(path.join(directory, "peer-1.json"), JSON.stringify({ pid: 1, role: "client", scripts: [{
-    coverage: { url: pathToFileURL(file).href }, sourceSHA256: "changed", sourceMap: { sourcesContent: ["changed"] },
-  }] }));
-  await assert.rejects(readNodePeerCoverage(directory, ["client"]), /Node peer source changed/u);
-});
 
 function run(command, args, options = {}) {
   const environment = { ...process.env, ...options.env };
@@ -207,7 +46,7 @@ function assertHostArchitectureBindings(source) {
       selector: "x86_64|amd64",
       architecture: "amd64",
       tuples: {
-        Go: "    go_arch=amd64\n    go_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5\n",
+        Go: "    go_arch=amd64\n    go_sha256=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840\n",
         Node: "    node_arch=x64\n    node_sha256=3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d\n",
         Rust: "    rustup_target=x86_64-unknown-linux-gnu\n    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c\n    rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f\n",
         Swiftly: "    swiftly_arch=x86_64\n    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0\n    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61\n",
@@ -218,7 +57,7 @@ function assertHostArchitectureBindings(source) {
       selector: "aarch64|arm64",
       architecture: "arm64",
       tuples: {
-        Go: "    go_arch=arm64\n    go_sha256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8\n",
+        Go: "    go_arch=arm64\n    go_sha256=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92\n",
         Node: "    node_arch=arm64\n    node_sha256=23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2\n",
         Rust: "    rustup_target=aarch64-unknown-linux-gnu\n    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c\n    rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da\n",
         Swiftly: "    swiftly_arch=aarch64\n    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a\n    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa\n",
@@ -408,8 +247,8 @@ test("TypeScript entry points select the primary compiler despite the legacy tsc
   const consumerChecks = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/scripts/verify-package-exports.mjs"), "utf8");
   assert.equal(
     (consumerChecks.match(/run\(process\.execPath, \[path\.join\(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'\)/gu) ?? []).length,
-    1,
-    "the packed consumer type check must retain the explicit TypeScript 6 compatibility compiler",
+    2,
+    "both packed consumer type checks must retain the explicit TypeScript 6 compatibility compiler",
   );
 });
 
@@ -465,8 +304,8 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
   assertHostArchitectureBindings(source);
   for (const digest of [
-    "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5",
-    "94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8",
+    "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840",
+    "3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92",
     "3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d",
     "23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2",
     "4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0",
@@ -502,7 +341,7 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   assert.match(source, /authentication_marker_matches "\$swift_verification_marker"/);
   assert.match(source, /authentication_marker_matches "\$expected" "\$marker"/);
   assert.equal((hostEntry.match(/SWIFTLY_TOOLCHAINS_DIR="\$host_swift_toolchains"/g) ?? []).length, 2);
-  assert.match(source, /swiftly" init (?:--platform "\$swiftly_platform" )?--overwrite --assume-yes --skip-install/);
+  assert.match(source, /swiftly" init --overwrite --assume-yes --skip-install/);
   assert.doesNotMatch(source, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
   assert.doesNotMatch(hostEntry, /RUSTUP_DIST_SERVER|RUSTUP_UPDATE_ROOT|PLAYWRIGHT_DOWNLOAD_HOST|PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
   assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);

@@ -25,7 +25,6 @@ const (
 	ErrContinuity      Error = "time_continuity"
 	ErrContradiction   Error = "time_contradiction"
 	ErrPending         Error = "time_pending"
-	ErrNotProven       Error = "time_not_proven"
 	ErrFutureTimestamp Error = "future_timestamp"
 	ErrCancelled       Error = "time_cancelled"
 	ErrCapacity        Error = "time_capacity"
@@ -81,11 +80,6 @@ func (r Rate) Elapsed(delta uint64) (lower, upper uint64, err error) {
 	lo := uint64(0)
 	if delta > r.QuantizationMS {
 		lo = delta - r.QuantizationMS
-	}
-	// An admitted zero drift rate has exact elapsed bounds after quantization.
-	// Avoid temporary big integers on every live clock/deadline check.
-	if r.Numerator == 0 {
-		return lo, hi, nil
 	}
 	den := integer(r.Denominator)
 	plus := new(big.Int).Add(den, integer(r.Numerator))
@@ -160,11 +154,7 @@ func (r Rate) DeadlineDelta(upper, deadline uint64) (uint64, error) {
 	if upper >= deadline {
 		return 0, ErrExpired
 	}
-	n := deadline - upper
-	var err error
-	if r.Numerator != 0 {
-		n, err = quotient(new(big.Int).Mul(integer(n), integer(r.Denominator-r.Numerator)), integer(r.Denominator), false)
-	}
+	n, err := quotient(new(big.Int).Mul(integer(deadline-upper), integer(r.Denominator-r.Numerator)), integer(r.Denominator), false)
 	if err != nil {
 		return 0, err
 	}
@@ -180,9 +170,6 @@ func (r Rate) ProveDelta(lower, bound uint64) (uint64, error) {
 	}
 	if bound <= lower {
 		return 0, nil
-	}
-	if r.Numerator == 0 {
-		return add(bound-lower, r.QuantizationMS)
 	}
 	plus := new(big.Int).Add(integer(r.Denominator), integer(r.Numerator))
 	n, err := quotient(new(big.Int).Mul(integer(bound-lower), plus), integer(r.Denominator), true)

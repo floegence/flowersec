@@ -14,7 +14,7 @@ func (ref Reference) DetachSessionScope() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, c := ref.slotsLocked()
-	if s == nil || s.protectedScope || c.protected != nil && (!c.protected.hasAnchor || ref.index == c.protected.anchorIndex) {
+	if s == nil || c.protected != nil && (!c.protected.hasAnchor || ref.index == c.protected.anchorIndex) {
 		return ErrOwner
 	}
 	// A completed input or an actual physical retirement may race Session
@@ -29,7 +29,7 @@ func (ref Reference) DetachSessionScope() error {
 			return ErrClosed
 		}
 	}
-	var removed [MaxAccountsPerCharge]accountSlotKey
+	var removed [MaxAccountsPerCharge]Account
 	n, kept := 0, 0
 	for _, account := range s.accounts[:s.count] {
 		kind := account.slotLocked(r).key.Kind
@@ -60,7 +60,7 @@ func (ref Reference) RestoreOriginalScopes(anchor Reference) error {
 	defer r.mu.Unlock()
 	s, c := ref.slotsLocked()
 	a, ac := anchor.slotsLocked()
-	if s == nil || a == nil || ac != c || s.protectedScope {
+	if s == nil || a == nil || ac != c {
 		return ErrOwner
 	}
 	for _, scope := range s.accounts[:s.count] {
@@ -73,7 +73,7 @@ func (ref Reference) RestoreOriginalScopes(anchor Reference) error {
 }
 
 func (r *Root) restoreScopesLocked(s *referenceSlot, c *chargeSlot, a *referenceSlot) {
-	var added [MaxAccountsPerCharge]accountSlotKey
+	var added [MaxAccountsPerCharge]Account
 	n := 0
 	for _, scope := range a.accounts[:a.count] {
 		if accountIndex(s.accounts[:s.count], scope) < 0 {

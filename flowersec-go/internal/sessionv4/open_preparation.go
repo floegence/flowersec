@@ -3,7 +3,7 @@ package sessionv4
 import (
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 // OpenPreparation is the original peer OPEN's once-only application metadata
@@ -34,16 +34,15 @@ func (a *OpenAdmission) PreparePeerOpen(h OpenHandle) (OpenPreparation, error) {
 	if s.preparationTarget != 0 {
 		return OpenPreparation{}, ErrOpenAssociation
 	}
-	_, proofs, _, byOpener, _ := a.protectedUsage(-1)
 	var protected uint32
 	for role, classes := range a.limits.Protected {
 		for class, capacity := range classes {
-			if used := byOpener[role][class]; used < capacity {
+			if used := a.byOpener[role][class]; used < capacity {
 				protected += capacity - used
 			}
 		}
 	}
-	if proofs+protected >= a.limits.Terminal-a.limits.RejectionReserve {
+	if a.positiveProofs+protected >= a.limits.Terminal-a.limits.RejectionReserve {
 		return OpenPreparation{}, ErrOpenPending
 	}
 	target := a.freeSlot(false, false)
@@ -123,7 +122,7 @@ func (p OpenPreparation) CopyRequest(dst []byte) (kind, metadata []byte, peerLim
 	if len(dst) < s.metadataSize {
 		return nil, nil, 0, cryptov4.ErrCapacity
 	}
-	a.metadata.copyRange(dst, s.metadataStart, s.metadataStart+s.metadataSize)
+	copy(dst, a.metadata[s.metadataStart:s.metadataStart+s.metadataSize])
 	s.preparationSnapshot = dst[:s.metadataSize:s.metadataSize]
 	s.preparationCaptured = true
 	return dst[:s.kindSize:s.kindSize], dst[s.kindSize:s.metadataSize:s.metadataSize], s.peerLimit, nil

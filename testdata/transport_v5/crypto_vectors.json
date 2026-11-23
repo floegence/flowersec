@@ -1,0 +1,32 @@
+{
+  "version": 5,
+  "profile": "flowersec/5",
+  "source": "testdata/transport_v5/generate_crypto_vectors.mjs using Node.js crypto",
+  "vectors": [
+    {
+      "id": "epoch0-c2s-stream1-data-abc",
+      "direction": 1,
+      "epoch": 0,
+      "logical_stream_id": 1,
+      "sequence": 0,
+      "session_prk_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "h3_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "epoch_secret_hex": "d6b8a76d2f387ca83c15c1150185175bb4a4d9d1a1cbf33da238d36f669b2427",
+      "control_root_hex": "e72b99b334af7088e5d3bad90632c3041f7cb2cf1b2534d5da262e2b814312f7",
+      "stream_root_hex": "952c79d0f3686cb6286a01abf883ea330126a478b4caf499196b09de9da72046",
+      "setup_root_hex": "579a532c87c080c6fe493a27d354795fbc12731d529532767d891a2ff17c0790",
+      "rekey_root_hex": "4b3eb448d0db5eaa8f6b534b376823fb331e539644382a14c5d6c2e1bd363f30",
+      "stream_secret_hex": "8f0c60128c348647646777b205fde6f9342a654dac5635b9d9c8ca0c9df3eb9b",
+      "record_key_hex": "ad8a0630f3ce37668b1e6c2ddcc205df983ada42154d1c25213f9f895e0293dc",
+      "nonce_prefix_hex": "ea8b8429",
+      "fss5_hex": "465353350501000000000000000000010000000000000000e5c88808a519832c136be86a51d05ea665cda4f9e97ce7963e9ac908a5284e0a",
+      "fsr5_header_hex": "46535235051800000000000000000000000000000000001b",
+      "inner_hex": "0400000000000003616263",
+      "aad_hex": "666c6f7765727365632d76352d7265636f726400202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f00000000000000010146535235051800000000000000000000000000000000001b",
+      "chacha20_poly1305_ciphertext_hex": "3d4bf8d8f04c284dc54990244d3f837d4039fe37662bbaee3eb409",
+      "aes_256_gcm_ciphertext_hex": "c7f124978fc499a351a5250e6b8a5712ad6002aab16211df81365c"
+    }
+  ],
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

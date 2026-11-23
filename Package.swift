@@ -2,7 +2,17 @@
 
 import PackageDescription
 
-// Flowersec release major: 6
+let researchSources = ["ProfileDHV4Reference.swift", "StrictEd25519V4Reference.swift",
+  "TransportV4Registry.generated.swift", "TransportV4APIResults.generated.swift"]
+let researchTests = ["ApplicationSupport", "ApplicationTests", "CBORSupport", "CBORTests",
+  "CompositionSupport", "CompositionTests", "CryptoUsageTests", "DomainSupport", "DomainTests",
+  "IDNASupport", "IDNATests", "OracleSupport", "OracleTests", "ProfileDHTests", "ReadyTests",
+  "RecordTests", "RekeyCreditTests", "RekeyTests", "RelationsSupport", "ResourceCostSupport",
+  "ResourceSupport", "ResourceTests", "RulesSupport", "RulesTests", "ShapeSupport", "ShapeTests",
+  "SignatureTests", "StrictSignatureTests", "TextSupport", "TextTests", "TimeSupport", "TimeTests",
+  "VariantsSupport"].map { "TransportV4\($0).swift" }
+
+// Flowersec release major: 7
 let package = Package(
   name: "Flowersec",
   platforms: [
@@ -13,7 +23,6 @@ let package = Package(
     .library(name: "Flowersec", targets: ["Flowersec"])
   ],
   dependencies: [
-    .package(url: "https://github.com/jedisct1/swift-sodium.git", exact: "0.11.0"),
     .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.82.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
@@ -28,29 +37,18 @@ let package = Package(
       ]
     ),
     .target(
-      name: "FlowersecSQLite",
-      path: "flowersec-swift/Sources/FlowersecSQLite",
-      publicHeadersPath: "include",
-      linkerSettings: [.linkedLibrary("sqlite3", .when(platforms: [.macOS, .iOS]))]
-    ),
-    .target(
       name: "Flowersec",
       dependencies: [
         "CFlowersecIDNA",
-        .target(name: "FlowersecSQLite", condition: .when(platforms: [.macOS, .iOS])),
-        .product(name: "Clibsodium", package: "swift-sodium"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOWebSocket", package: "swift-nio"),
-        .product(name: "NIOTLS", package: "swift-nio"),
         .product(name: "NIOSSL", package: "swift-nio-ssl"),
       ],
       path: "flowersec-swift/Sources/Flowersec",
-      // Xcode may promote the SDK to a dynamic product for app-hosted tests.
-      // Link the binary C dependency here so its unused shim cannot strip it.
-      linkerSettings: [.linkedLibrary("sodium", .when(platforms: [.macOS, .iOS]))]
+      exclude: researchSources
     ),
     .testTarget(
       name: "FlowersecTests",
@@ -59,6 +57,7 @@ let package = Package(
         .product(name: "NIOFoundationCompat", package: "swift-nio"),
       ],
       path: "flowersec-swift/Tests/FlowersecTests",
+      exclude: researchTests,
       resources: [.copy("Fixtures")]
     ),
   ]

@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type serviceTestWriter struct {
@@ -112,14 +111,9 @@ func newServiceFixtureAuthorization(t *testing.T, streams uint32, workers [3]uin
 	return newServiceFixtureResources(t, streams, workers, capacity, waiters, authorization, false, nil)
 }
 
-func newServiceFixtureResources(t *testing.T, streams uint32, workers [3]uint32, capacity uint64, waiters uint32, authorization protocolv4.AuthorizationGuard, sharedPool bool, extra []resourcev4.Vector, extraReferences ...uint32) *serviceFixture {
+func newServiceFixtureResources(t *testing.T, streams uint32, workers [3]uint32, capacity uint64, waiters uint32, authorization protocolv4.AuthorizationGuard, sharedPool bool, extra []resourcev4.Vector) *serviceFixture {
 	t.Helper()
-	return newServiceFixtureResourcesWithClock(t, sessionTestClock(t), streams, workers, capacity, waiters, authorization, sharedPool, extra, extraReferences...)
-}
-
-func newServiceFixtureResourcesWithClock(t *testing.T, clock *timev4.Clock, streams uint32, workers [3]uint32, capacity uint64, waiters uint32, authorization protocolv4.AuthorizationGuard, sharedPool bool, extra []resourcev4.Vector, extraReferences ...uint32) *serviceFixture {
-	t.Helper()
-	f := &serviceFixture{queueCapacity: capacity, queueWaiters: waiters, local: newOpenEndpointAuthorization(t, protocolv4.ClientToServer, streams, streams, 1, clock, 0, authorization), peer: newOpenEndpoint(t, protocolv4.ServerToClient, streams, streams, 1)}
+	f := &serviceFixture{queueCapacity: capacity, queueWaiters: waiters, local: newOpenEndpointAuthorization(t, protocolv4.ClientToServer, streams, streams, 1, sessionTestClock(t), 0, authorization), peer: newOpenEndpoint(t, protocolv4.ServerToClient, streams, streams, 1)}
 	// This fixture installs trusted local class policy before any OPEN. No
 	// wire field or peer-provided label selects the protected service share.
 	for _, endpoint := range []*openEndpoint{f.local, f.peer} {
@@ -155,9 +149,6 @@ func newServiceFixtureResourcesWithClock(t *testing.T, clock *timev4.Clock, stre
 		limit, _ = limit.Add(charge)
 		config.ReservationSlots++
 		config.ReferenceSlots++
-	}
-	for _, references := range extraReferences {
-		config.ReferenceSlots += references
 	}
 	metadata, err := resourcev4.BackingBytes(config)
 	if err != nil {

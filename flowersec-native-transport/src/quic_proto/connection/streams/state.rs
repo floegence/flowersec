@@ -377,6 +377,7 @@ impl StreamsState {
         if stream.state != SendState::ResetSent {
             return;
         }
+        let partial = stream.partial_reset.is_some();
         if let Some(reset) = &mut stream.partial_reset {
             reset.reset_acked = true;
             if !stream.pending.is_fully_acked() {
@@ -385,7 +386,9 @@ impl StreamsState {
         }
         entry.remove_entry();
         self.stream_freed(id, StreamHalf::Send);
-        self.events.push_back(StreamEvent::Finished { id });
+        if partial {
+            self.events.push_back(StreamEvent::Finished { id });
+        }
     }
 
     /// Whether any stream data is queued, regardless of control frames

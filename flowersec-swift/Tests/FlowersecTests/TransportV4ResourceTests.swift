@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-final class TransportResourceTests: XCTestCase {
+final class TransportV4ResourceTests: XCTestCase {
   func testPartialCostCorpus() throws {
     let corpus = try JSONSerialization.jsonObject(with: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/resource_costs.json"))) as! [String: Any]
     let vectors = corpus["vectors"] as! [[String: Any]], reference = try V4ResourceCostReference()

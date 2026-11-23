@@ -1,0 +1,13 @@
+{
+  "version": 3,
+  "source": {
+    "issuer": "flowersec-go/controlplane.Issuer.IssueDirect",
+    "random_bytes_hex": "42",
+    "issued_at_unix_s": 1800000000
+  },
+  "artifact_json": "{\"correlation\":{\"tags\":[],\"v\":3},\"path\":{\"candidates\":[{\"carrier\":\"websocket\",\"id\":\"issuer-ws\",\"tls\":{\"mode\":\"ca\"},\"url\":\"wss://issuer.example/flowersec/v3/direct\",\"wire_profile\":\"flowersec-direct/3\"}],\"kind\":\"direct\",\"listener_audience\":\"issuer-audience\",\"rendezvous_group_id\":\"issuer-group\",\"routing_token\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI\"},\"profile\":\"flowersec/3\",\"scoped\":[],\"session\":{\"allowed_suites\":[1,2],\"channel_id\":\"issuer-shared\",\"contract_hash_b64u\":\"81XXUykAE_J_K1LvRqkr_B7H3CCCcSRF7E7CIbmfwCU\",\"default_suite\":1,\"e2ee_psk_b64u\":\"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI\",\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"init_expire_at_unix_s\":1800000060,\"max_inbound_streams\":32,\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0},\"v\":3}",
+  "chosen_candidate_id": "issuer-ws",
+  "fsb3_hex": "4653423303010000000002207b2263616e6469646174655f7365745f686173685f62363475223a223077325041334b304556527a784c774e4c3776793571707867694e4771574962496a78616e5f3157424a49222c2263616e64696461746573223a5b7b2263617272696572223a22776562736f636b6574222c226964223a226973737565722d7773222c226e6f726d616c697a65645f75726c223a227773733a2f2f6973737565722e6578616d706c652f666c6f7765727365632f76332f646972656374222c22746c73223a7b226d6f6465223a226361227d2c22776972655f70726f66696c65223a22666c6f7765727365632d6469726563742f33227d5d2c226368616e6e656c5f6964223a226973737565722d736861726564222c2263686f73656e5f63616e6469646174655f6964223a226973737565722d7773222c226c697374656e65725f61756469656e6365223a226973737565722d61756469656e6365222c2270726f66696c65223a22666c6f7765727365632f33222c2272656e64657a766f75735f67726f75705f6964223a226973737565722d67726f7570222c22726f7574696e675f746f6b656e223a22516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b4a43516b49222c2273657373696f6e5f636f6e74726163745f686173685f62363475223a223831585855796b41455f4a5f4b314c7652716b725f42374833434343635352463745374349626d66774355227d",
+  "admission_binding_hex": "d975059e39546ec9c73e7ba5c8da3a5f16b192b5de8a12d6893fd84e6c37bfe9",
+  "acceptor_admissions_hash_hex": "95ec486f0b1fc52904863adb774f64f7c062339f798cbf2b561f48699b271076"
+}

@@ -251,10 +251,6 @@ func encodeMap(dst []byte, schema string, fields []Field, omitted string) ([]byt
 }
 
 func processMap(sink *mapEncodingSink, schema string, fields []Field, omitted string) error {
-	return processMapExcept(sink, schema, fields, omitted, "")
-}
-
-func processMapExcept(sink *mapEncodingSink, schema string, fields []Field, omitted, secondOmitted string) error {
 	r, err := runtimeSchema()
 	if err != nil {
 		return err
@@ -291,7 +287,7 @@ func processMapExcept(sink *mapEncodingSink, schema string, fields []Field, omit
 		}
 	}
 	for _, id := range m.Required {
-		if omitted != "" && m.byID[id].Name == omitted || secondOmitted != "" && m.byID[id].Name == secondOmitted {
+		if omitted != "" && m.byID[id].Name == omitted {
 			continue
 		}
 		i := sort.Search(len(fields), func(i int) bool { return entries[i].id >= id })

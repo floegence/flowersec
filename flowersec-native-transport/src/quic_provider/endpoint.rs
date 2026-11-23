@@ -1,10 +1,10 @@
-use crate::preparation_budget::{CandidatePreparationBudget, IncomingPreparationPool};
 use std::{
     collections::VecDeque,
     fmt,
     future::Future,
     io,
     io::IoSliceMut,
+    mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
@@ -16,10 +16,10 @@ use std::{
 };
 
 use crate::quic_proto::{
-    ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent, EndpointEvent,
-    ServerConfig,
+    self as proto, ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
+    EndpointEvent, ServerConfig,
 };
-#[cfg(all(not(wasm_browser), any(any(), all())))]
+#[cfg(not(wasm_browser))]
 use crate::quic_provider::runtime::default_runtime;
 use crate::quic_provider::{
     Instant,
@@ -29,7 +29,7 @@ use crate::quic_provider::{
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
-#[cfg(all(not(wasm_browser), any(any(), all()),))]
+#[cfg(not(wasm_browser))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
@@ -37,9 +37,7 @@ use udp::{BATCH_SIZE, RecvMeta};
 
 use crate::quic_provider::{
     ConnectionEvent, EndpointConfig, IO_LOOP_BOUND, RECV_TIME_BOUND, VarInt,
-    connection::{Connecting, DriverTermination},
-    incoming::Incoming,
-    work_limiter::WorkLimiter,
+    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter,
 };
 
 /// A QUIC endpoint.
@@ -65,12 +63,11 @@ impl Endpoint {
     /// If an IPv6 address is provided, attempts to make the socket dual-stack so as to allow
     /// communication with both IPv4 and IPv6 addresses. As such, calling `Endpoint::client` with
     /// the address `[::]:0` is a reasonable default to maximize the ability to connect to other
-    /// addresses. Construct that wildcard address from `Ipv6Addr::UNSPECIFIED`
-    /// and port zero inside the selected asynchronous runtime.
+    /// addresses.
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
-    #[cfg(all(not(wasm_browser), any(any(), all())))] // `EndpointConfig::default()` is only available with these
+    #[cfg(not(wasm_browser))] // `EndpointConfig::default()` is only available with these
     pub(crate) fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6()
@@ -100,7 +97,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    #[cfg(all(not(wasm_browser), any(any(), all())))] // `EndpointConfig::default()` is only available with these
+    #[cfg(not(wasm_browser))] // `EndpointConfig::default()` is only available with these
     pub(crate) fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime =
@@ -135,27 +132,19 @@ impl Endpoint {
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
-        Self::new_with_abstract_socket_and_preparation(config, server_config, socket, runtime, None)
-    }
-    pub(crate) fn new_with_abstract_socket_and_preparation(
-        config: EndpointConfig,
-        server_config: Option<ServerConfig>,
-        socket: Arc<dyn AsyncUdpSocket>,
-        runtime: Arc<dyn Runtime>,
-        preparation: Option<IncomingPreparationPool>,
-    ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
-        let mut inner = crate::quic_proto::Endpoint::new(
-            Arc::new(config),
-            server_config.map(Arc::new),
-            allow_mtud,
-            None,
+        let rc = EndpointRef::new(
+            socket,
+            crate::quic_proto::Endpoint::new(
+                Arc::new(config),
+                server_config.map(Arc::new),
+                allow_mtud,
+                None,
+            ),
+            addr.is_ipv6(),
+            runtime.clone(),
         );
-        if let Some(preparation) = preparation {
-            inner.set_incoming_preparation(preparation);
-        }
-        let rc = EndpointRef::new(socket, inner, addr, runtime.clone());
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(
             async {
@@ -185,13 +174,6 @@ impl Endpoint {
         }
     }
 
-    pub(crate) async fn accept_prepared(
-        &self,
-    ) -> Option<(Incoming, Option<CandidatePreparationBudget>)> {
-        let accepting = self.accept();
-        tokio::pin!(accepting);
-        std::future::poll_fn(|cx| accepting.as_mut().poll_prepared(cx)).await
-    }
     /// Set the client configuration used by `connect`
     pub(crate) fn set_default_client_config(&mut self, config: ClientConfig) {
         self.default_client_config = Some(config);
@@ -246,16 +228,12 @@ impl Endpoint {
             .inner
             .connect(self.runtime.now(), config, addr, server_name)?;
 
-        let socket = endpoint
-            .socket
-            .as_ref()
-            .expect("live endpoint socket")
-            .clone();
+        let socket = endpoint.socket.clone();
         endpoint.stats.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
-            .insert(ch, conn, socket, self.runtime.clone(), None))
+            .insert(ch, conn, socket, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -275,22 +253,13 @@ impl Endpoint {
     pub(crate) fn rebind_abstract(&self, socket: Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
         let mut inner = self.inner.state.lock().unwrap();
-        if inner.driver_lost || inner.recv_state.connections.close.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "endpoint is closed",
-            ));
-        }
-        inner.prev_socket = inner.socket.replace(socket);
-        inner.local_address = addr;
+        inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
 
         // Update connection socket references
         for sender in inner.recv_state.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::Rebind(
-                inner.socket.as_ref().expect("live endpoint socket").clone(),
-            ));
+            let _ = sender.send(ConnectionEvent::Rebind(inner.socket.clone()));
         }
         if let Some(driver) = inner.driver.take() {
             // Ensure the driver can register for wake-ups from the new socket
@@ -314,7 +283,7 @@ impl Endpoint {
 
     /// Get the local `SocketAddr` the underlying socket is bound to
     pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
-        Ok(self.inner.state.lock().unwrap().local_address)
+        self.inner.state.lock().unwrap().socket.local_addr()
     }
 
     /// Get the number of connections that are currently open
@@ -339,9 +308,6 @@ impl Endpoint {
             });
         }
         self.inner.shared.incoming.notify_waiters();
-        if let Some(driver) = endpoint.driver.take() {
-            driver.wake();
-        }
     }
 
     /// Wait for all connections on the endpoint to be cleanly shut down
@@ -356,52 +322,16 @@ impl Endpoint {
     /// [`close()`]: Endpoint::close
     pub(crate) async fn wait_idle(&self) {
         loop {
-            let idle = self.inner.shared.idle.notified();
-            tokio::pin!(idle);
-            idle.as_mut().enable();
-            let lost_drivers = {
-                let endpoint = self.inner.state.lock().unwrap();
+            {
+                let endpoint = &mut *self.inner.state.lock().unwrap();
                 if endpoint.recv_state.connections.is_empty() {
-                    return;
+                    break;
                 }
-                endpoint.driver_lost.then(|| {
-                    endpoint
-                        .recv_state
-                        .connections
-                        .terminations
-                        .values()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                })
-            };
-            if let Some(drivers) = lost_drivers {
-                // An endpoint I/O failure closes its channels, but its original
-                // connection drivers still own socket and poller references.
-                for driver in drivers {
-                    driver.wait().await;
-                }
-                return;
+                // Construct future while lock is held to avoid race
+                self.inner.shared.idle.notified()
             }
-            idle.await;
+            .await;
         }
-    }
-
-    /// Retire the endpoint only after every admitted connection has drained.
-    /// Retained public handles keep metadata, never the physical UDP socket.
-    pub(crate) async fn wait_idle_and_shutdown(&self) {
-        self.wait_idle().await;
-        self.close(VarInt::from_u32(0), &[]);
-        loop {
-            let ended = self.inner.shared.driver_ended.notified();
-            tokio::pin!(ended);
-            ended.as_mut().enable();
-            if self.inner.state.lock().unwrap().driver_lost {
-                break;
-            }
-            ended.await;
-        }
-        // Also join drivers whose endpoint terminated because of an I/O error.
-        self.wait_idle().await;
     }
 }
 
@@ -451,8 +381,7 @@ impl Future for EndpointDriver {
             self.0.shared.incoming.notify_waiters();
         }
 
-        if (self.0.shared.ref_count.load(Ordering::Relaxed) == 0
-            || endpoint.recv_state.connections.close.is_some())
+        if self.0.shared.ref_count.load(Ordering::Relaxed) == 0
             && endpoint.recv_state.connections.is_empty()
         {
             Poll::Ready(Ok(()))
@@ -472,19 +401,11 @@ impl Future for EndpointDriver {
 impl Drop for EndpointDriver {
     fn drop(&mut self) {
         let mut endpoint = self.0.state.lock().unwrap();
-        // Stop each remaining connection driver on I/O failure, and release
-        // both migration sockets before exposing endpoint driver termination.
-        endpoint.recv_state.connections.senders.clear();
-        while let Some(incoming) = endpoint.recv_state.incoming.pop_front() {
-            endpoint.inner.ignore(incoming);
-        }
-        endpoint.socket.take();
-        endpoint.prev_socket.take();
-        endpoint.driver.take();
         endpoint.driver_lost = true;
         self.0.shared.incoming.notify_waiters();
-        self.0.shared.idle.notify_waiters();
-        self.0.shared.driver_ended.notify_waiters();
+        // Drop all outgoing channels, signaling the termination of the endpoint to the associated
+        // connections.
+        endpoint.recv_state.connections.senders.clear();
     }
 }
 
@@ -499,45 +420,26 @@ impl EndpointInner {
         &self,
         incoming: crate::quic_proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
-        stop_accepting_current: bool,
     ) -> Result<Connecting, ConnectionError> {
         let mut state = self.state.lock().unwrap();
-        if state.driver_lost || state.recv_state.connections.close.is_some() {
-            state.inner.ignore(incoming);
-            return Err(ConnectionError::LocallyClosed);
-        }
-        // Transfer the original configuration while holding the same lock that
-        // admits packets and closes the endpoint. No second accept can borrow
-        // this candidate's configuration after its first connection takes it.
-        let server_config = if stop_accepting_current {
-            state.inner.take_server_config_current()
-        } else {
-            server_config
-        };
         let mut response_buffer = Vec::new();
         let now = state.runtime.now();
-        let preparation_budget = state.inner.incoming_preparation_budget(&incoming);
         match state
             .inner
             .accept(incoming, now, &mut response_buffer, server_config)
         {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
-                let socket = state.socket.as_ref().expect("live endpoint socket").clone();
+                let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
-                Ok(state.recv_state.connections.insert(
-                    handle,
-                    conn,
-                    socket,
-                    runtime,
-                    preparation_budget,
-                ))
+                Ok(state
+                    .recv_state
+                    .connections
+                    .insert(handle, conn, socket, runtime))
             }
             Err(error) => {
-                if let Some(transmit) = error.response
-                    && let Some(socket) = &state.socket
-                {
-                    respond(transmit, &response_buffer, &**socket);
+                if let Some(transmit) = error.response {
+                    respond(transmit, &response_buffer, &*state.socket);
                 }
                 Err(error.cause)
             }
@@ -549,9 +451,7 @@ impl EndpointInner {
         state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
-        if let Some(socket) = &state.socket {
-            respond(transmit, &response_buffer, &**socket);
-        }
+        respond(transmit, &response_buffer, &*state.socket);
     }
 
     pub(crate) fn retry(
@@ -561,9 +461,7 @@ impl EndpointInner {
         let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
         let transmit = state.inner.retry(incoming, &mut response_buffer)?;
-        if let Some(socket) = &state.socket {
-            respond(transmit, &response_buffer, &**socket);
-        }
+        respond(transmit, &response_buffer, &*state.socket);
         Ok(())
     }
 
@@ -576,8 +474,7 @@ impl EndpointInner {
 
 #[derive(Debug)]
 pub(crate) struct State {
-    socket: Option<Arc<dyn AsyncUdpSocket>>,
-    local_address: SocketAddr,
+    socket: Arc<dyn AsyncUdpSocket>,
     /// During an active migration, abandoned_socket receives traffic
     /// until the first packet arrives on the new socket.
     prev_socket: Option<Arc<dyn AsyncUdpSocket>>,
@@ -595,7 +492,6 @@ pub(crate) struct State {
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
-    driver_ended: Notify,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: AtomicUsize,
 }
@@ -613,13 +509,9 @@ impl State {
                 self.prev_socket = None;
             }
         };
-        let poll_res = self.recv_state.poll_socket(
-            cx,
-            &mut self.inner,
-            &**self.socket.as_ref().expect("live endpoint socket"),
-            &*self.runtime,
-            now,
-        );
+        let poll_res =
+            self.recv_state
+                .poll_socket(cx, &mut self.inner, &*self.socket, &*self.runtime, now);
         self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
         if poll_res.received_connection_packet {
@@ -642,7 +534,6 @@ impl State {
 
             if event.is_drained() {
                 self.recv_state.connections.senders.remove(&ch);
-                self.recv_state.connections.terminations.remove(&ch);
                 if self.recv_state.connections.is_empty() {
                     shared.idle.notify_waiters();
                 }
@@ -713,8 +604,6 @@ fn proto_ecn(ecn: udp::EcnCodepoint) -> crate::quic_proto::EcnCodepoint {
 struct ConnectionSet {
     /// Senders for communicating with the endpoint's connections
     senders: FxHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
-    /// Physical driver completion survives an endpoint I/O failure.
-    terminations: FxHashMap<ConnectionHandle, Arc<DriverTermination>>,
     /// Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     /// Set if the endpoint has been manually closed
@@ -728,7 +617,6 @@ impl ConnectionSet {
         conn: crate::quic_proto::Connection,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
-        preparation_budget: Option<CandidatePreparationBudget>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -739,22 +627,11 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        let connecting = Connecting::new(
-            handle,
-            conn,
-            self.sender.clone(),
-            recv,
-            socket,
-            runtime,
-            preparation_budget,
-        );
-        self.terminations
-            .insert(handle, connecting.driver_termination());
-        connecting
+        Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
     }
 
     fn is_empty(&self) -> bool {
-        self.terminations.is_empty()
+        self.senders.is_empty()
     }
 }
 
@@ -777,26 +654,16 @@ pin_project! {
 impl Future for Accept<'_> {
     type Output = Option<Incoming>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.poll_prepared(ctx)
-            .map(|incoming| incoming.map(|(incoming, _budget)| incoming))
-    }
-}
-impl Accept<'_> {
-    fn poll_prepared(
-        self: Pin<&mut Self>,
-        ctx: &mut Context<'_>,
-    ) -> Poll<Option<(Incoming, Option<CandidatePreparationBudget>)>> {
         let mut this = self.project();
         let mut endpoint = this.endpoint.inner.state.lock().unwrap();
         if endpoint.driver_lost {
             return Poll::Ready(None);
         }
         if let Some(incoming) = endpoint.recv_state.incoming.pop_front() {
-            let preparation_budget = endpoint.inner.incoming_preparation_budget(&incoming);
             // Release the mutex lock on endpoint so cloning it doesn't deadlock
             drop(endpoint);
             let incoming = Incoming::new(incoming, this.endpoint.inner.clone());
-            return Poll::Ready(Some((incoming, preparation_budget)));
+            return Poll::Ready(Some(incoming));
         }
         if endpoint.recv_state.connections.close.is_some() {
             return Poll::Ready(None);
@@ -821,7 +688,7 @@ impl EndpointRef {
     pub(crate) fn new(
         socket: Arc<dyn AsyncUdpSocket>,
         inner: crate::quic_proto::Endpoint,
-        local_address: SocketAddr,
+        ipv6: bool,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         let (sender, events) = mpsc::unbounded_channel();
@@ -830,15 +697,13 @@ impl EndpointRef {
             shared: Shared {
                 incoming: Notify::new(),
                 idle: Notify::new(),
-                driver_ended: Notify::new(),
                 ref_count: AtomicUsize::new(0),
             },
             state: Mutex::new(State {
-                socket: Some(socket),
-                local_address,
+                socket,
                 prev_socket: None,
                 inner,
-                ipv6: local_address.is_ipv6(),
+                ipv6,
                 events,
                 driver: None,
                 driver_lost: false,
@@ -902,7 +767,6 @@ impl RecvState {
         Self {
             connections: ConnectionSet {
                 senders: FxHashMap::default(),
-                terminations: FxHashMap::default(),
                 sender,
                 close: None,
             },
@@ -938,42 +802,17 @@ impl RecvState {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
-                        // Socket buffers are fixed and prepaid. Attribute each
-                        // GRO segment to its original CID before allocating a
-                        // packet copy or invoking QUIC/TLS decoding.
-                        for packet in buf[0..meta.len].chunks(if meta.stride == 0 {
-                            meta.len.max(1)
-                        } else {
-                            meta.stride
-                        }) {
-                            let preparation_budget =
-                                match endpoint.prepare_datagram(meta.addr, meta.dst_ip, packet) {
-                                    Ok(budget) => budget,
-                                    Err(connection) => {
-                                        if let Some(handle) = connection
-                                            && let Some(sender) =
-                                                self.connections.senders.get_mut(&handle)
-                                        {
-                                            let _ = sender.send(ConnectionEvent::Close {
-                                                error_code: VarInt::from_u32(0),
-                                                reason: Bytes::from_static(
-                                                    b"preparation_budget_exhausted",
-                                                ),
-                                            });
-                                        }
-                                        continue;
-                                    }
-                                };
-                            let buf: BytesMut = packet.into();
+                        let mut data: BytesMut = buf[0..meta.len].into();
+                        while !data.is_empty() {
+                            let buf = data.split_to(meta.stride.min(data.len()));
                             let mut response_buffer = Vec::new();
-                            match endpoint.handle_prepared(
+                            match endpoint.handle(
                                 now,
                                 meta.addr,
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),
                                 buf,
                                 &mut response_buffer,
-                                preparation_budget,
                             ) {
                                 Some(DatagramEvent::NewConnection(incoming)) => {
                                     if self.connections.close.is_none() {

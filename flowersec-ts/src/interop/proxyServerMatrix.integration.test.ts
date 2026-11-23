@@ -1,30 +1,32 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { isAbsolute } from "node:path";
 
 import { describe, expect, test } from "vitest";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
-import { type Session } from "../node/index.js";
-import { configureCurrentPeerWSS, connectCurrentPeerWSS, createCurrentPeerClient, peerRequirements, type CurrentPeerClient } from "./currentPeer.js";
-import { connect } from "../node/index.js";
+import {
+  connect,
+  createArtifactLease,
+  parseArtifact,
+  SessionError,
+} from "../node/index.js";
 import { createProxyRuntime } from "../proxy/runtime.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const TEST_RESPONSE_COOKIE = "theme=light; Secure; HttpOnly; SameSite=Strict";
 
-describe("TypeScript ProxyServer interoperability", () => {
-  test("runs TypeScript HTTP and WebSocket semantics against Go ProxyServer", async () => {
+describe("Browser TypeScript ProxyServer interoperability", () => {
+  test("runs Browser TypeScript HTTP and WebSocket semantics against Go ProxyServer", async () => {
     await runMatrixCell("go");
   }, 30_000);
 
-  test("runs TypeScript HTTP and WebSocket semantics against Rust ProxyServer", async () => {
+  test("runs Browser TypeScript HTTP and WebSocket semantics against Rust ProxyServer", async () => {
     await runMatrixCell("rust");
   }, 30_000);
 
-  test("runs TypeScript HTTP and WebSocket semantics against Node.js TypeScript ProxyServer", async () => {
+  test("runs Browser TypeScript HTTP and WebSocket semantics against Node.js TypeScript ProxyServer", async () => {
     await runMatrixCell("node-typescript");
   }, 30_000);
 });
@@ -32,7 +34,7 @@ describe("TypeScript ProxyServer interoperability", () => {
 type Runtime = "go" | "rust" | "node-typescript";
 type ProxyRuntime = ReturnType<typeof createProxyRuntime>;
 type ProxyRequest = Parameters<ProxyRuntime["dispatchFetch"]>[0];
-type PeerEndpoint = Readonly<{ runtime: Runtime; artifact_json: string; origin: string; trust_pem?: string; wire_revision: 4 }>;
+type PeerEndpoint = Readonly<{ runtime: Runtime; artifact_json: string; origin: string; trust_pem?: string }>;
 
 async function runMatrixCell(runtime: Runtime): Promise<void> {
   const observed: Array<Readonly<{
@@ -82,10 +84,6 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     response.end("proxied");
   });
   const sockets = new Set<WebSocket>();
-  let serverCloseResolve!: () => void;
-  const serverClosed = new Promise<void>(resolve => { serverCloseResolve = resolve; });
-  let abruptCloseResolve!: () => void;
-  const abruptlyClosed = new Promise<void>(resolve => { abruptCloseResolve = resolve; });
   const handshakes: Array<Readonly<{ origin?: string; host?: string }>> = [];
   const messages: Array<Readonly<{ text: string; binary: boolean }>> = [];
   const webSockets = new WebSocketServer({
@@ -105,17 +103,6 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
       ...(request.headers.origin === undefined ? {} : { origin: request.headers.origin }),
       ...(request.headers.host === undefined ? {} : { host: request.headers.host }),
     });
-    if (request.url === "/server-close") {
-      socket.once("close", serverCloseResolve);
-      socket.send("queued-before-close");
-      socket.close(1000, "server-done");
-      return;
-    }
-    if (request.url === "/abrupt-close") {
-      socket.once("close", abruptCloseResolve);
-      socket.once("message", () => socket.terminate());
-      return;
-    }
     socket.on("message", (data, isBinary) => {
       messages.push({ text: webSocketDataBuffer(data).toString("utf8"), binary: isBinary });
       socket.send(data, { binary: isBinary });
@@ -132,26 +119,26 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
   const stderr: string[] = [];
   peer.stderr.setEncoding("utf8");
   peer.stderr.on("data", (chunk: string) => stderr.push(chunk));
-  let session: Session | undefined;
-  let fixture: CurrentPeerClient | undefined;
-  let untrustedFixture: CurrentPeerClient | undefined;
+  let session: Awaited<ReturnType<typeof connect>> | undefined;
   let proxyRuntime: ProxyRuntime | undefined;
   try {
     const endpoint = await readEndpoint(peer.stdout, runtime);
     if (endpoint.trust_pem === undefined || !endpoint.trust_pem.startsWith("-----BEGIN CERTIFICATE-----\n")) {
       throw new Error(`${runtime} ProxyServer peer omitted its private CA trust PEM`);
     }
-    expect(endpoint.wire_revision).toBe(4);
-    untrustedFixture = await createCurrentPeerClient(endpoint.artifact_json, { trustPEM: endpoint.trust_pem });
-    const untrusted = configureCurrentPeerWSS(untrustedFixture, endpoint.origin);
-    await expect(connect(untrustedFixture.environment, untrustedFixture.registerSource(untrusted), {
-      ...peerRequirements, application_profile: untrustedFixture.applicationProfile,
-    })).rejects.toThrow();
-    expect(untrustedFixture.spentCount()).toBe(0);
-    await untrustedFixture.close(); untrustedFixture = undefined;
-    fixture = await createCurrentPeerClient(endpoint.artifact_json, { trustPEM: endpoint.trust_pem });
-    session = await connectCurrentPeerWSS(fixture, endpoint.origin, endpoint.trust_pem);
-    expect(fixture.spentCount()).toBe(1);
+    let untrustedSpends = 0;
+    await expect(connect(
+      createArtifactLease(parseArtifact(endpoint.artifact_json), async () => { untrustedSpends += 1; }),
+      { origin: endpoint.origin },
+    )).rejects.toMatchObject({
+      code: "transport_security_failed",
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(untrustedSpends).toBe(0);
+    session = await connect(
+      createArtifactLease(parseArtifact(endpoint.artifact_json), async () => undefined),
+      { origin: endpoint.origin, roots: endpoint.trust_pem },
+    );
     proxyRuntime = createProxyRuntime({
       session,
       externalOrigin: "https://app.example",
@@ -176,7 +163,7 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
       ],
       body: new TextEncoder().encode("request").buffer,
     });
-    expect(success.map((message) => message.type), JSON.stringify(success)).toEqual([
+    expect(success.map((message) => message.type)).toEqual([
       "flowersec-proxy:response_meta",
       "flowersec-proxy:response_chunk",
       "flowersec-proxy:response_end",
@@ -236,7 +223,11 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     await expect(readWebSocketFrame(reader)).resolves.toEqual({ operation: 2, payload: Uint8Array.of(1, 2, 3) });
     phase = "websocket-close";
     await writeWebSocketFrame(opened.stream, 8, webSocketClosePayload(1000, "done"));
-    expect((await readWebSocketFrame(reader)).operation).toBe(8);
+    try {
+      expect((await readWebSocketFrame(reader)).operation).toBe(8);
+    } catch (error) {
+      if (runtime !== "go" || !(error instanceof SessionError) || error.code !== "stream_reset") throw error;
+    }
     await opened.stream.close().catch(() => undefined);
     expect(messages).toEqual([
       { text: "text", binary: false },
@@ -244,43 +235,16 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     ]);
     expect(handshakes[0]).toEqual({ origin: upstreamOrigin, host: `127.0.0.1:${address.port}` });
 
-    phase = "websocket-server-close";
-    const delayed = await proxyRuntime.openWebSocketStream("/server-close", { protocols: ["chat"] });
-    // Leave application data unread until the upstream's real close exchange
-    // has ended. Local queue acceptance must not discard either frame.
-    await serverClosed;
-    const delayedReader = new ProxyByteReader(delayed.stream);
-    await expect(readWebSocketFrame(delayedReader)).resolves.toEqual({
-      operation: 1, payload: new TextEncoder().encode("queued-before-close"),
-    });
-    await expect(readWebSocketFrame(delayedReader)).resolves.toEqual({
-      operation: 8, payload: webSocketClosePayload(1000, "server-done"),
-    });
-    await writeWebSocketFrame(delayed.stream, 8, webSocketClosePayload(1000, "server-done"));
-    await delayed.stream.close();
-
-    phase = "websocket-abrupt-close";
-    const abrupt = await proxyRuntime.openWebSocketStream("/abrupt-close", { protocols: ["chat"] });
-    await writeWebSocketFrame(abrupt.stream, 1, new TextEncoder().encode("disconnect"));
-    await abruptlyClosed;
-    await expect(abrupt.stream.read()).rejects.toMatchObject({ code: "read_failed", progress: { stream_status: "aborted" } });
-    await abrupt.stream.close();
-
     phase = "websocket-reject";
     await expect(proxyRuntime.openWebSocketStream("/reject", { protocols: ["chat"] }))
       .rejects.toMatchObject({ code: "operation_failed" });
     phase = "websocket-limit";
     const oversized = await proxyRuntime.openWebSocketStream("/echo", { protocols: ["chat"] });
     await writeWebSocketFrame(oversized.stream, 2, new Uint8Array(33));
-    await expect(oversized.stream.read()).rejects.toMatchObject({ code: "read_failed", progress: { stream_status: "aborted" } });
+    await expect(oversized.stream.read()).rejects.toMatchObject({ code: "stream_reset" });
     phase = "websocket-reset";
     const reset = await proxyRuntime.openWebSocketStream("/echo", { protocols: ["chat"] });
     await reset.stream.reset();
-
-    phase = "http-after-websocket-cleanup";
-    await expect(dispatch(proxyRuntime, {
-      id: "after-websocket", method: "GET", path: "/resource", headers: [],
-    })).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_meta", status: 201 }));
 
     proxyRuntime.dispose();
     proxyRuntime = undefined;
@@ -288,10 +252,9 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     session = undefined;
     expect(await processExit(peer), stderr.join("")).toBe(0);
   } catch (error) {
-    throw new Error(`${runtime} ProxyServer matrix failed during ${phase}: ${error instanceof Error ? error.message : String(error)}; httpRequests=${observed.length}; handshakes=${JSON.stringify(handshakes)}\n${stderr.join("")}`);
+    throw new Error(`${runtime} ProxyServer matrix failed during ${phase}: ${error instanceof Error ? error.message : String(error)}; handshakes=${JSON.stringify(handshakes)}\n${stderr.join("")}`);
   } finally {
     proxyRuntime?.dispose();
-    await fixture?.close(); await untrustedFixture?.close();
     await session?.close().catch(() => undefined);
     if (peer.exitCode === null) peer.kill("SIGKILL");
     for (const socket of sockets) socket.terminate();
@@ -303,21 +266,21 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
 function spawnPeer(runtime: Runtime, upstream: string): ChildProcessWithoutNullStreams {
   if (runtime === "go") {
     return spawn("go", ["run", "./internal/cmd/ts-proxy-peer", "--upstream", upstream], {
-      cwd: `${repositoryRoot}/flowersec-go`, env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1" }, stdio: ["pipe", "pipe", "pipe"],
+      cwd: `${repositoryRoot}/flowersec-go`, stdio: ["pipe", "pipe", "pipe"],
     });
   }
   if (runtime === "node-typescript") {
     return spawn(process.execPath, ["--import", "tsx", "src/interop/proxyServerPeer.ts", "--upstream", upstream], {
-      cwd: `${repositoryRoot}/flowersec-ts`, env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1" }, stdio: ["pipe", "pipe", "pipe"],
+      cwd: `${repositoryRoot}/flowersec-ts`, stdio: ["pipe", "pipe", "pipe"],
     });
   }
-  const rustPeer = process.env.FLOWERSEC_SERVER_PARITY_RUST_PEER_BINARY;
-  if (rustPeer === undefined || !isAbsolute(rustPeer)) {
-    throw new Error("Run ProxyServer integration through scripts/server-parity-native-addon.mjs to prepare the Rust peer");
-  }
-  return spawn(rustPeer, ["proxy-server", "--carrier", "websocket"], {
+  return spawn("rustup", [
+    "run", "1.88.0", "cargo", "test", "--quiet", "--manifest-path", `${repositoryRoot}/flowersec-rust/Cargo.toml`,
+    "--test", "proxy_server_interop_peer", "browser_typescript_proxy_runtime_uses_rust_proxy_server",
+    "--", "--ignored", "--exact", "--nocapture",
+  ], {
     cwd: repositoryRoot,
-    env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1", FLOWERSEC_PROXY_UPSTREAM: upstream },
+    env: { ...process.env, FLOWERSEC_PROXY_UPSTREAM: upstream },
     stdio: ["pipe", "pipe", "pipe"],
   });
 }

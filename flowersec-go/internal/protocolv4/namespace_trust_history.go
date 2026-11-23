@@ -1,9 +1,6 @@
 package protocolv4
 
-import (
-	"bytes"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
-)
+import "bytes"
 
 // lockForPublication returns with the original namespace (when installed) and
 // trust gates held in that order. Namespace attachment can change nil to one
@@ -74,36 +71,12 @@ func (t *NamespaceTrustStore) checkPermissionExtensions(next *trustConfiguration
 // present, including permissions omitted from a newer trust configuration.
 // Neither Head assertions nor shorter current permissions can replace them.
 func (t *NamespaceTrustStore) StateHistory(state *NamespaceState) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
-	return t.stateHistoryAt(state, sample)
-}
-
-func (t *NamespaceTrustStore) stateHistoryAt(state *NamespaceState, sample timev4.Sample) error {
-	_, err := t.stateHistoryAtMode(state, sample, false)
-	return err
-}
-
-func (t *NamespaceTrustStore) stateHistoryAtPending(state *NamespaceState, sample timev4.Sample) (uint64, error) {
-	return t.stateHistoryAtMode(state, sample, true)
-}
-
-func (t *NamespaceTrustStore) stateHistoryAtMode(state *NamespaceState, sample timev4.Sample, allowPending bool) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	pending := uint64(0)
-	if err := t.checkCurrentLockedAt(sample); err != nil {
-		if !allowPending || err != timev4.ErrPending {
-			return 0, err
-		}
-		pending = t.configurations[t.count-1].issued
+	if err := t.checkCurrentLocked(); err != nil {
+		return err
 	}
-	if err := t.stateHistoryLocked(state); err != nil {
-		return 0, err
-	}
-	return pending, nil
+	return t.stateHistoryLocked(state)
 }
 
 func (t *NamespaceTrustStore) stateHistoryLocked(state *NamespaceState) error {

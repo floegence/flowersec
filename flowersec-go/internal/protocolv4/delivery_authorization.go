@@ -1,6 +1,6 @@
 package protocolv4
 
-import "github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+import "github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 
 // DeliveryAuthorization owns the original compact authorization of private
 // result/cursor bytes. Its detached closure, activation facts, clock and shared
@@ -27,16 +27,15 @@ func (a *EndpointAuthorization) ForkDeliveryWithFloor(reservation resourcev4.Ref
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	samples, err := a.sampleLocked()
-	if _, err := a.checkLockedAt(false, samples, err); err != nil {
+	if _, err := a.checkLocked(false); err != nil {
 		return nil, err
 	}
-	s, err := a.closure.subscribeWithPreparationAt(a.bindings[:a.closure.count], a.hardEnd, reservation, a.hard, floor, nil, samples, a.deliveryOrigin)
+	s, err := a.closure.subscribeWithFloor(a.bindings[:a.closure.count], a.hardEnd, reservation, a.hard, floor)
 	if err != nil {
 		return nil, err
 	}
 	s.freshness = a.freshness
-	child, err := newEndpointAuthorizationAt(s, a.activation, nil, &samples)
+	child, err := NewEndpointAuthorization(s, a.activation)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -78,14 +77,6 @@ func (d *DeliveryAuthorization) take(reservation resourcev4.Reference, checkEnvi
 	if _, err := a.checkLocked(false); err != nil {
 		return nil, err
 	}
-	if d != &a.subscriptions.delivery[0] || d.claimed || d.attached {
-		return nil, CBORFailure("credential_authorization_owner")
-	}
-	if checkEnvironment {
-		if err := reservation.CheckSameEnvironment(a.subscriptions.reservation); err != nil {
-			return nil, err
-		}
-	}
 	result := &a.subscriptions.delivery[1]
 	result.owner, result.attached = a, true
 	d.claimed = true
@@ -102,9 +93,6 @@ func (d *DeliveryAuthorization) Check() error {
 		return CBORFailure("credential_authorization_owner")
 	}
 	_, err := d.owner.checkLocked(false)
-	if !d.validLocked() {
-		return CBORFailure("credential_authorization_owner")
-	}
 	return err
 }
 
@@ -125,9 +113,6 @@ func (d *DeliveryAuthorization) WithCurrentAuthorization(transfer func() error) 
 	}
 	if _, err := a.checkLocked(false); err != nil {
 		return err
-	}
-	if !d.validLocked() {
-		return CBORFailure("credential_authorization_owner")
 	}
 	return transfer()
 }
@@ -157,11 +142,7 @@ func (d *DeliveryAuthorization) RemainingMS() (uint64, error) {
 	if !d.validLocked() {
 		return 0, CBORFailure("credential_authorization_owner")
 	}
-	remaining, err := d.owner.remainingLocked()
-	if !d.validLocked() {
-		return 0, CBORFailure("credential_authorization_owner")
-	}
-	return remaining, err
+	return d.owner.remainingLocked()
 }
 
 func (d *DeliveryAuthorization) validLocked() bool {

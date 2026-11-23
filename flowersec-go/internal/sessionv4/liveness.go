@@ -9,10 +9,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -64,11 +64,9 @@ type Probe struct {
 	start                          timev4.Mark
 	window                         *timev4.Window
 	publishing, attempted, waiting bool
-	scheduling                     bool
 	terminal, released             bool
 	result                         ProbeResult
 	done                           chan struct{}
-	publicationReady               chan struct{}
 	automatic, eligible            bool
 	handoff                        timev4.Mark
 }
@@ -109,7 +107,6 @@ func newLiveness(a *OpenAdmission, writer *RecordWriter, slots []ProbeSlot, auto
 		return nil, cryptov4.ErrConfiguration
 	}
 	writer.maintenanceOwner = a
-	writer.failureOwner = a
 	writer.mu.Unlock()
 	p := &Liveness{reservation: owned, cleanup: make(chan struct{}), admission: a, writer: writer, slots: slots, automatic: automatic, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	a.liveness = p
@@ -173,7 +170,7 @@ func (p *Liveness) begin(durationMS uint64, automatic bool) (*Probe, error) {
 	if p.lo == 0 {
 		p.hi++
 	}
-	o := &Probe{pool: p, slot: index, epoch: frontier.Epoch, start: start, window: window, done: make(chan struct{}), publicationReady: make(chan struct{}, 1), automatic: automatic}
+	o := &Probe{pool: p, slot: index, epoch: frontier.Epoch, start: start, window: window, done: make(chan struct{}), automatic: automatic}
 	binary.BigEndian.PutUint64(o.nonce[:8], p.hi)
 	binary.BigEndian.PutUint64(o.nonce[8:], p.lo)
 	p.slots[index].owner = o
@@ -216,7 +213,7 @@ func (o *Probe) check() (timev4.Mark, error) {
 
 func (o *Probe) collect() {
 	defer o.pool.cleanupLocked()
-	if o.released && o.terminal && !o.publishing && !o.waiting && !o.scheduling && o.pool.slots[o.slot].owner == o {
+	if o.released && o.terminal && !o.publishing && !o.waiting && o.pool.slots[o.slot].owner == o {
 		o.pool.slots[o.slot].owner = nil
 		o.pool.signal()
 	}
@@ -284,9 +281,7 @@ func (o *Probe) Publish(ctx context.Context) (RecordWriteResult, error) {
 	p.mu.Lock()
 	o.publishing = false
 	o.result.Submitted = o.result.Submitted || result.Submitted
-	if !o.terminal {
-		o.result.Complete = o.result.Complete || result.Complete
-	}
+	o.result.Complete = o.result.Complete || result.Complete
 	o.attempted = o.attempted || result.Submitted
 	if err != nil && (result.Submitted || !errors.Is(err, cryptov4.ErrCapacity)) {
 		now, _ := p.admission.engine.Clock().Monotonic()
@@ -300,54 +295,6 @@ func (o *Probe) Publish(ctx context.Context) (RecordWriteResult, error) {
 		p.admission.closeWithCause(err)
 	}
 	return result, err
-}
-
-// Each admitted ordinary sample owns one coalesced publication hint. A writer
-// release cannot be consumed by an unrelated sample or automatic scheduler.
-// No hint changes the original nonce, window or irreversible ticket gate.
-func (p *Liveness) notifyPublicationOpportunity() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, slot := range p.slots {
-		if o := slot.owner; o != nil && !o.automatic && !o.terminal && !o.attempted {
-			select {
-			case o.publicationReady <- struct{}{}:
-			default:
-			}
-		}
-	}
-}
-
-func (o *Probe) publishOriginal(ctx context.Context) error {
-	o.pool.mu.Lock()
-	if o.scheduling || o.released || o.terminal {
-		o.pool.mu.Unlock()
-		return ErrProbeOwner
-	}
-	o.scheduling = true
-	o.pool.mu.Unlock()
-	defer func() {
-		o.pool.mu.Lock()
-		o.scheduling = false
-		o.collect()
-		o.pool.mu.Unlock()
-	}()
-	for {
-		result, err := o.Publish(ctx)
-		if result.Submitted || !errors.Is(err, errRecordWriterBusy) {
-			return err
-		}
-		select {
-		case <-o.publicationReady:
-		case <-o.done:
-			result, _ := o.Result()
-			return result.Cause
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-o.pool.admission.engine.Done():
-			return cryptov4.ErrClosed
-		}
-	}
 }
 
 func (o *Probe) Cancel() {
@@ -458,21 +405,10 @@ func (p *Liveness) HandlePong(record *ReceivedRecord) (matched bool, err error) 
 	if !ok || len(bytes) != 16 {
 		return false, ErrProbeOwner
 	}
+	nonce := [16]byte(bytes)
 	if err := record.AcceptMessage(); err != nil {
 		return false, err
 	}
-	return p.handlePongFrame(f)
-}
-
-func (p *Liveness) handlePongFrame(f *protocolv4.Frame) (matched bool, err error) {
-	if f == nil || f.Schema != "PONG" || f.Header.Scope != 0 {
-		return false, ErrProbeOwner
-	}
-	bytes, ok := f.Field("nonce").ByteString()
-	if !ok || len(bytes) != 16 {
-		return false, ErrProbeOwner
-	}
-	nonce := [16]byte(bytes)
 	p.mu.Lock()
 	if err := p.reservation.Check(); err != nil {
 		p.mu.Unlock()
@@ -585,8 +521,8 @@ func LivenessCharge(slots int, automatic bool) (resourcev4.Vector, error) {
 	}
 	count := uint64(slots)
 	v := resourcev4.Vector{
-		resourcev4.SDKBytes: uint64(unsafe.Sizeof(Liveness{})) + 3*uint64(unsafe.Sizeof(LivenessStall{})) + count*(uint64(unsafe.Sizeof(ProbeSlot{}))+uint64(unsafe.Sizeof(Probe{}))+uint64(unsafe.Sizeof(timev4.Window{}))+128),
-		resourcev4.Items:    4 + count*4, resourcev4.Tasks: count * 2, resourcev4.WorkSlots: count * 2, resourcev4.Timers: count,
+		resourcev4.SDKBytes: uint64(unsafe.Sizeof(Liveness{})) + 3*uint64(unsafe.Sizeof(LivenessStall{})) + count*(uint64(unsafe.Sizeof(ProbeSlot{}))+uint64(unsafe.Sizeof(Probe{}))+uint64(unsafe.Sizeof(timev4.Window{}))),
+		resourcev4.Items:    4 + count*3, resourcev4.Tasks: count * 2, resourcev4.WorkSlots: count * 2, resourcev4.Timers: count,
 	}
 	if automatic {
 		v[resourcev4.SDKBytes] += uint64(unsafe.Sizeof(automaticLiveness{})) + uint64(unsafe.Sizeof(timev4.Delay{}))
@@ -603,7 +539,7 @@ func (p *Liveness) cleanupLocked() {
 		return
 	}
 	for _, slot := range p.slots {
-		if slot.owner != nil && (slot.owner.publishing || slot.owner.waiting || slot.owner.scheduling) {
+		if slot.owner != nil && (slot.owner.publishing || slot.owner.waiting) {
 			return
 		}
 	}

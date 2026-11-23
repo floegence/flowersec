@@ -27,7 +27,6 @@ func (r *Root) ReserveBatch(requests []Request, output []Reference) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.drainWaitersLocked()
-	peak := r.peak // Unpublished partial reservations are not an admitted peak.
 	for i, request := range requests {
 		var ref Reference
 		var err error
@@ -40,7 +39,6 @@ func (r *Root) ReserveBatch(requests []Request, output []Reference) error {
 			for _, acquired := range output[:i] {
 				acquired.releaseLocked()
 			}
-			r.peak = peak
 			clear(output)
 			return err
 		}

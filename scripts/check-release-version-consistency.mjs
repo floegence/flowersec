@@ -28,6 +28,28 @@ const nativeReleaseSources = [
   "flowersec-node-native/npm/linux-x64-gnu/package.json",
 ];
 
+const sqliteModule = "flowersec-go/adapters/sqlite";
+const sqliteManifest = `${sqliteModule}/go.mod`;
+
+function sqliteModuleVersion(root, version) {
+  const manifest = path.join(root, sqliteManifest);
+  if (!fs.existsSync(manifest)) return [];
+  const result = spawnSync("go", ["mod", "edit", "-json", manifest], {
+    cwd: root, encoding: "utf8", env: { ...process.env, GOWORK: "off", GOTOOLCHAIN: "local" },
+  });
+  if (result.status !== 0) throw new Error(`cannot read ${sqliteManifest}: ${result.error?.message || result.stderr}`);
+  const { Module, Require } = JSON.parse(result.stdout);
+  const major = version.split(".")[0];
+  const core = `github.com/floegence/flowersec/flowersec-go/v${major}`;
+  if (Module?.Path !== `github.com/floegence/flowersec/${sqliteModule}/v${major}`) {
+    throw new Error(`${sqliteManifest} must declare the canonical adapter module for major ${major}`);
+  }
+  if (!Require?.some(dep => dep.Path === core && dep.Version === `v${version}` && !dep.Indirect)) {
+    throw new Error(`${sqliteManifest} must require ${core} v${version}`);
+  }
+  return [{ label: sqliteManifest, version }];
+}
+
 function readJSON(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -135,6 +157,7 @@ export function collectReleaseVersions(
     { label: releaseSources[5], version: fuzzLockVersion },
     { label: releaseSources[6], version: exampleLockVersion },
     { label: releaseSources[7], version: swiftPackageVersionValue },
+    ...sqliteModuleVersion(root, tsPackageVersion),
   ];
   const nativeMarker = path.join(root, nativeReleaseSources[0]);
   if (!fs.existsSync(nativeMarker)) return versions;
@@ -172,7 +195,9 @@ export function collectReleaseVersions(
 
 export function validateReleaseVersions(versions, expectedVersion = "") {
   const hasNativeSources = versions.some((entry) => nativeReleaseSources.includes(entry.label));
-  const maintainedSources = hasNativeSources ? [...releaseSources, ...nativeReleaseSources] : releaseSources;
+  const maintainedSources = [...releaseSources];
+  if (versions.some(entry => entry.label === sqliteManifest)) maintainedSources.push(sqliteManifest);
+  if (hasNativeSources) maintainedSources.push(...nativeReleaseSources);
   const byLabel = new Map(versions.map((entry) => [entry.label, entry.version]));
   const missing = maintainedSources.filter((label) => !byLabel.has(label));
   const extra = [...byLabel.keys()].filter((label) => !maintainedSources.includes(label));
@@ -187,7 +212,7 @@ export function validateReleaseVersions(versions, expectedVersion = "") {
   }
   const distinct = new Set(maintainedSources.map((label) => byLabel.get(label)));
   if (distinct.size !== 1) {
-    const facts = releaseSources
+    const facts = maintainedSources
       .map((label) => `${label}=${byLabel.get(label)}`)
       .join(", ");
     throw new Error(`release versions are inconsistent: ${facts}`);
@@ -208,11 +233,9 @@ function main() {
   if (process.argv.length > 3) {
     throw new Error("usage: scripts/check-release-version-consistency.mjs [version]");
   }
-  const version = validateReleaseVersions(
-    collectReleaseVersions(root),
-    expectedVersion,
-  );
-  process.stdout.write(`release versions OK: ${version} across ${collectReleaseVersions(root).length} sources\n`);
+  const sources = collectReleaseVersions(root);
+  const version = validateReleaseVersions(sources, expectedVersion);
+  process.stdout.write(`release versions OK: ${version} across ${sources.length} sources\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

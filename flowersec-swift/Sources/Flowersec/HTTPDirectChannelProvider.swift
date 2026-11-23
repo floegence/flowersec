@@ -1,32 +1,26 @@
 import Foundation
 import NIOCore
 
-/// An application-owned byte channel for one exact signed private loopback endpoint.
-/// The initializer runs before activation or byte delivery. The connector honors
-/// cancellation and closes partial opens; one close must preserve sibling streams.
-/// Flowersec owns the upgrade, signed local policy and session authentication.
+/// Supplies an application-owned byte channel for one exact HTTPDirect endpoint.
+///
+/// The application authenticates the outer transport and binds it to the endpoint
+/// before constructing this value. The initializer must run on the channel's
+/// event loop before any bytes are delivered. Inbound and outbound values are
+/// NIO `ByteBuffer`s. Flowersec owns the WebSocket upgrade and session protocol;
+/// closing the supplied channel must close only this connection's byte stream.
+/// The connector must honor cancellation and close partially opened channels.
+/// This API does not enable plaintext transport for ordinary TLS artifacts.
 public struct HTTPDirectChannelProvider: Sendable, CustomStringConvertible {
-  public typealias Initializer = TLSChannelProvider.Initializer
-  public typealias Connect = TLSChannelProvider.Connect
-  let hostname: String
-  let port: Int
+  public typealias Initializer = @Sendable (any Channel) -> EventLoopFuture<Void>
+  public typealias Connect = @Sendable (@escaping Initializer) async throws -> any Channel
+
+  let endpoint: String
   let connect: Connect
+
   public init(endpoint: URL, connect: @escaping Connect) throws {
-    guard let parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
-      parts.scheme == "ws", let host = parts.host, let port = parts.port,
-      parts.path == "/flowersec/v4/local", parts.user == nil, parts.password == nil,
-      parts.query == nil, parts.fragment == nil, (1024...65535).contains(port)
-    else { throw TLSChannelError.invalidOrigin }
-    let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-    guard V4CredentialText.isLoopbackAddress(name) else { throw TLSChannelError.invalidOrigin }
-    hostname = name; self.port = port; self.connect = connect
+    self.endpoint = try HTTPDirectEndpointV1(endpoint.absoluteString).url.absoluteString
+    self.connect = connect
   }
+
   public var description: String { "HTTPDirectChannelProvider(<redacted>)" }
-  func matches(host: String, port: Int) -> Bool { hostname == host && self.port == port }
-  func openInitialized(_ initializer: @escaping Initializer) async throws -> any Channel {
-    try Task.checkCancellation()
-    let channel = try await connect(initializer)
-    do { try Task.checkCancellation(); return channel }
-    catch { try? await channel.close().get(); throw error }
-  }
 }

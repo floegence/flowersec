@@ -1,6 +1,6 @@
 package sessionv4
 
-import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 
 // StreamFlow joins the two directions of an accepted Stream. The Session owns
 // OPEN arbitration, terminal tokens, rekey barriers and eventual retirement;
@@ -21,22 +21,7 @@ func NewStreamFlow(send *SendFlow, receive *ReceiveFlow) (*StreamFlow, error) {
 		return nil, ErrStreamData
 	}
 	receive.engine = send.writer.engine
-	receive.streamSend = send
 	return &StreamFlow{send: send, receive: receive}, nil
-}
-
-// A closed receive direction can have relinquished its active assembly link
-// before an unpublished OPEN is discarded. The Stream still owns that exact
-// native assembly until its real reader/authentication tails permit retirement.
-func (s *StreamFlow) releaseUnpublished(requireEmptySequence bool) error {
-	if err := s.receive.releaseUnpublished(requireEmptySequence); err != nil {
-		return err
-	}
-	if s.nativeReceive != nil {
-		s.nativeReceive.Close()
-		return s.nativeReceive.retire()
-	}
-	return nil
 }
 
 func tupleValue(value protocolv4.Value) (TerminalTuple, error) {
@@ -138,15 +123,11 @@ func (s *StreamFlow) EncodeStopped(dst []byte) ([]byte, error) {
 	if !ok {
 		return nil, ErrTerminal
 	}
-	return encodeStoppedProof(dst, s.receive.scope, s.send.direction, tuple)
-}
-
-func encodeStoppedProof(dst []byte, scope uint64, direction protocolv4.Direction, tuple TerminalTuple) ([]byte, error) {
 	variant, err := protocolv4.ConstantField("STREAM_ACK_STOPPED", "variant")
 	if err != nil {
 		return nil, err
 	}
-	fields := [...]protocolv4.Field{variant, {Name: "stream_id", Number: scope}, {Name: "direction", Number: uint64(direction)}, {Name: "final_epoch", Number: uint64(tuple.Epoch)}, {Name: "final_next_sequence", Number: tuple.NextSequence}, {Name: "final_offset", Number: tuple.Offset}}
+	fields := [...]protocolv4.Field{variant, {Name: "stream_id", Number: s.receive.scope}, {Name: "direction", Number: uint64(s.send.direction)}, {Name: "final_epoch", Number: uint64(tuple.Epoch)}, {Name: "final_next_sequence", Number: tuple.NextSequence}, {Name: "final_offset", Number: tuple.Offset}}
 	return protocolv4.EncodeMap(dst, "STREAM_ACK_STOPPED", fields[:])
 }
 
@@ -170,10 +151,6 @@ func (s *StreamFlow) EncodeDrained(dst []byte) ([]byte, error) {
 // Admission may retain this exact immutable proof after receive backing has
 // been cleaned, for permitted repeated terminal replies before retirement.
 func (s *StreamFlow) encodeDrainProof(dst []byte, proof DrainProof) ([]byte, error) {
-	return encodeDrainProof(dst, s.receive.scope, s.receive.direction, proof)
-}
-
-func encodeDrainProof(dst []byte, scope uint64, direction protocolv4.Direction, proof DrainProof) ([]byte, error) {
 	var first, second [64]byte
 	terminal, err := encodeTuple(first[:], proof.Terminal)
 	if err != nil {
@@ -195,7 +172,7 @@ func encodeDrainProof(dst []byte, scope uint64, direction protocolv4.Direction, 
 	if err != nil {
 		return nil, err
 	}
-	fields := [...]protocolv4.Field{variant, {Name: "stream_id", Number: scope}, {Name: "direction", Number: uint64(direction)}, {Name: "terminal_tuple", Kind: protocolv4.EncodedMap, Bytes: terminal}, {Name: "outcome", Number: outcome}, {Name: "observed_tuple", Kind: protocolv4.EncodedMap, Bytes: observed}}
+	fields := [...]protocolv4.Field{variant, {Name: "stream_id", Number: s.receive.scope}, {Name: "direction", Number: uint64(s.receive.direction)}, {Name: "terminal_tuple", Kind: protocolv4.EncodedMap, Bytes: terminal}, {Name: "outcome", Number: outcome}, {Name: "observed_tuple", Kind: protocolv4.EncodedMap, Bytes: observed}}
 	return protocolv4.EncodeMap(dst, "STREAM_ACK_DRAINED", fields[:])
 }
 

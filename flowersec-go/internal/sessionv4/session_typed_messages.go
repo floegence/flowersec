@@ -3,8 +3,8 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // MessageStreamHandlerConfig is stored in the existing immutable kind plan.
@@ -59,7 +59,7 @@ func (c *SessionCore) OpenMessageStream(ctx context.Context, config TypedMessage
 		return nil, err
 	}
 	allocation.candidate.typed = m
-	h, _, err := p.openBusinessStream(ctx, allocation, config.Definition.Kind(), wire, deadline)
+	h, _, err := a.OpenLocal(ctx, BusinessStream, config.Definition.Kind(), wire, &CarrierAssociation{shared: a.sharedIngress}, allocation.reservation, deadline)
 	if err != nil {
 		return nil, err
 	}

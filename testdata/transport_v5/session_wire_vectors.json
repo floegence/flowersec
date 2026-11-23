@@ -1,0 +1,31 @@
+{
+  "version": 5,
+  "profile": "flowersec/5",
+  "stream_key_update_ack": [
+    {
+      "logical_id_hex": "0102030405060708",
+      "transition_id_hex": "1112131415161718",
+      "next_epoch_hex": "21222324",
+      "payload_hex": "0102030405060708111213141516171821222324"
+    }
+  ],
+  "transition_boundary": {
+    "maximum_transition_id_hex": "ffffffffffffffff",
+    "next_after_maximum_hex": "0000000000000000",
+    "maximum_is_usable_once": true,
+    "exhaustion_error": "resource_exhausted",
+    "exhaustion_goaway_reason": 5,
+    "receive_after_maximum": "protocol_failure",
+    "goaway_delivery_failure": "session_failure"
+  },
+  "epoch_boundary": {
+    "maximum_epoch_hex": "ffffffff",
+    "maximum_is_usable": true,
+    "rekey_after_maximum": "resource_exhausted",
+    "exhaustion_goaway_reason": 5,
+    "receive_after_maximum": "protocol_failure",
+    "goaway_delivery_failure": "session_failure"
+  },
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

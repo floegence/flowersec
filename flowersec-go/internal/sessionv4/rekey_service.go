@@ -7,9 +7,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // RekeyService owns one bounded coordinator and one publication worker. Peer
@@ -193,41 +193,17 @@ func (p *RekeyService) step(ctx context.Context) error {
 	return err
 }
 
-func (p *RekeyService) scheduleSafety() error {
-	snapshot, err := p.admission.engine.RekeySafety()
-	if errors.Is(err, cryptov4.ErrTransition) || errors.Is(err, cryptov4.ErrNotReady) {
-		// The coordinator can start before the authenticated current epoch is
-		// installed. That transient state is not a rekey failure.
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !snapshot.Triggered {
-		return nil
-	}
-	// The Engine snapshot is a one-round sample. A completed switch may have
-	// installed a new root while the cause owner is still retiring the old
-	// exchange; never inject the old deadline into that new intent.
-	if !p.admission.engine.RekeySafetyMatches(snapshot) {
-		return nil
-	}
-	_, err = p.causes.safety(snapshot.Epoch, snapshot.Deadline)
-	if errors.Is(err, cryptov4.ErrTransition) {
-		return nil
-	}
-	return err
-}
-
 func (p *RekeyService) check() (bool, error) {
-	if err := p.scheduleSafety(); err != nil {
-		return false, err
-	}
 	p.mu.Lock()
 	active := p.active
 	p.mu.Unlock()
 	if active != nil {
-		err := active.timing.checkPhase()
+		active.timing.mu.Lock()
+		var err error
+		if active.timing.phase != nil {
+			err = active.timing.phase.Check()
+		}
+		active.timing.mu.Unlock()
 		if err != nil {
 			return false, rekeyTimeError(err)
 		}
@@ -238,7 +214,7 @@ func (p *RekeyService) check() (bool, error) {
 	var err error
 	if i != nil {
 		x = i.exchange
-		if i != nil && !i.switched && i.securityGate != nil {
+		if i.securityGate != nil {
 			err = i.securityGate.Check()
 		}
 	}
@@ -257,11 +233,6 @@ func (p *RekeyService) check() (bool, error) {
 // checkExchange reconciles a snapshot with the cause owner after checking its
 // original timing. Cancellation or completion can win while the check runs.
 func (p *RekeyService) checkExchange(x *RekeyExchange) error {
-	if x.intent != nil && x.intent.isSwitched() {
-		// The Engine frontier has already advanced. The old round deadline must
-		// not close the new epoch while barrier retirement completes.
-		return nil
-	}
 	err := x.timing.Check()
 	if err == nil {
 		_, err = x.round.DeadlineRemainingMS()
@@ -270,7 +241,7 @@ func (p *RekeyService) checkExchange(x *RekeyExchange) error {
 		return nil
 	}
 	p.causes.mu.Lock()
-	completed := x.intent != nil && (x.intent.completed || x.intent.switched)
+	completed := x.intent != nil && x.intent.completed
 	p.causes.mu.Unlock()
 	if completed {
 		_, err = p.admission.engine.AuthorizationRemainingMS()
@@ -319,13 +290,12 @@ func (p *RekeyService) Run(ctx context.Context) (err error) {
 		}
 		var submit chan<- struct{}
 		var tick <-chan time.Time
-		// Safety is time based as well as use based. Keep the already admitted
-		// coordinator wake alive while idle so root-age soft windows cannot pass
-		// unnoticed when no application record arrives.
-		timer.Reset(10 * time.Millisecond)
-		tick = timer.C
-		if pending && !busy && !retry {
-			submit = jobs
+		if pending {
+			timer.Reset(10 * time.Millisecond)
+			tick = timer.C
+			if !busy && !retry {
+				submit = jobs
+			}
 		}
 		select {
 		case submit <- struct{}{}:

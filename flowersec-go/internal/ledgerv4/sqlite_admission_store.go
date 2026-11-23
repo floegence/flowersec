@@ -7,7 +7,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type storedAdmission struct {
@@ -83,13 +83,7 @@ func (s *sqliteStore) writeTransaction(ctx context.Context, guard func() error, 
 // Retained mode is restricted to ending an already owned business work tail.
 // It cannot register, dispatch, publish a result or create a new obligation.
 func (s *sqliteStore) writeTransactionMode(ctx context.Context, guard func() error, write func() error, retained bool) (err error) {
-	return s.writeTransactionCommit(ctx, guard, write, retained, func() error { return s.exec("COMMIT") })
-}
-
-// commit is an internal final publication gate. All callbacks, encoding and
-// signing finish before it; only the original bounded driver COMMIT runs there.
-func (s *sqliteStore) writeTransactionCommit(ctx context.Context, guard func() error, write func() error, retained bool, commit func() error) (err error) {
-	if err = s.checkpointForWrite(); err != nil {
+	if err = s.checkpoint(); err != nil {
 		return err
 	}
 	if err = s.exec("BEGIN IMMEDIATE"); err != nil {
@@ -141,7 +135,7 @@ func (s *sqliteStore) writeTransactionCommit(ctx context.Context, guard func() e
 	if err = guard(); err != nil {
 		return err
 	}
-	if err = commit(); err != nil {
+	if err = s.exec("COMMIT"); err != nil {
 		return errors.Join(ErrUnknown, err)
 	}
 	committed = true
@@ -169,17 +163,6 @@ func (a *sqliteAdmission) reserve(ctx context.Context) error {
 		return ErrFenced
 	}
 	return s.writeTransaction(ctx, a.check, func() error {
-		// Only an identical connection is the same transaction domain. Remote
-		// continuations and distinct parent stores retain their earlier claim.
-		if a.parent == s && a.winnerContinuation == nil {
-			n, err := a.record.encodeParentWinner(a.target)
-			if err != nil {
-				return err
-			}
-			if err = s.matchParentWinnerInTransaction(ctx, a.key[:a.keySize], a.target[:n], a.scratch); err != nil {
-				return err
-			}
-		}
 		// All competitors share exactly tenant + Artifact issuer + lease. A
 		// duplicate can report a fact but cannot manufacture this invocation.
 		existing, err := s.readAdmission(a.key[:a.keySize], a.scratch)
@@ -189,7 +172,7 @@ func (a *sqliteAdmission) reserve(ctx context.Context) error {
 		if existing.found {
 			return ErrConflict
 		}
-		count, err := s.scalar("SELECT admission_rows+spend_rows+winner_rows+issuance_rows+relay_rows FROM manifest WHERE id=1")
+		count, err := s.scalar("SELECT admission_rows+spend_rows FROM manifest WHERE id=1")
 		if err != nil {
 			return err
 		}

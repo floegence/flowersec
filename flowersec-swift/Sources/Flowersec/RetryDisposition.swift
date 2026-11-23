@@ -11,10 +11,10 @@ public enum RetryDisposition: Equatable, Sendable {
 extension SessionError {
   public var retryDisposition: RetryDisposition {
     switch self {
-    case .canceled, .streamRejected, .operationFailed, .timeUnavailable:
+    case .canceled, .streamRejected, .operationFailed:
       return .terminal
     case .timeout, .closed, .goingAway, .resourceExhausted, .streamReset, .rekeyFailed,
-      .livenessFailed, .livenessPathUnresponsive, .idleTimeout:
+      .livenessFailed:
       return .retryable
     }
   }

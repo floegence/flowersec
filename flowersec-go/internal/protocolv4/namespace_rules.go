@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // NamespaceRules fixes the complete original capacity and publication mapping.
@@ -52,13 +52,6 @@ func boundedMap(input []byte, schema string) (*Document, error) {
 	}
 	if len(input) == 0 || len(input) > maximum {
 		return nil, CBORFailure("map_size")
-	}
-	if schema == "FreshnessHead" || schema == "HeadSignerDelegation" {
-		d, err := newSchemaDecoder(schema, maximum, maximum)
-		if err != nil {
-			return nil, err
-		}
-		return d.DecodeMap(input, schema, DecodeContext{})
 	}
 	d, err := NewDecoder(maximum, maximum)
 	if err != nil {
@@ -169,7 +162,6 @@ func (r *NamespaceRules) matchesPublication(root Value, schema string) bool {
 // A pending lower-bound result may occupy only the original namespace pin; it
 // cannot advance observed or authorize a Session until CheckTime succeeds.
 type NamespaceHead struct {
-	authorityStateOnly      bool
 	rules                   *NamespaceRules
 	schema                  string
 	bytes, delegation       []byte
@@ -182,7 +174,6 @@ type NamespaceHead struct {
 	issued, next, signerEnd uint64
 	trustIssued, trustEnd   uint64
 	delegationIssued        uint64
-	trustRevision           uint64
 }
 
 // NamespaceHeadBackingBytes includes both original maps, the detached object
@@ -197,7 +188,7 @@ func NamespaceHeadBackingBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	workspace, err := schemaDecoderBackingBytes("HeadSignerDelegation", d, d)
+	workspace, err := DecoderBackingBytes(d, d)
 	// The detached schema text is an additional copy bounded by the Head map.
 	return workspace + uint64(d+2*h) + uint64(unsafe.Sizeof(NamespaceHead{})), err
 }
@@ -275,24 +266,12 @@ func (r *NamespaceRules) BindHead(head *SignedMap, delegation []byte, generation
 	return result, nil
 }
 
-func (h *NamespaceHead) CheckTimePending(now timev4.Interval) (uint64, error) {
-	if h != nil && h.authorityStateOnly {
-		return 0, CBORFailure("revocation_publication_snapshot")
-	}
+func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
 	if h == nil || !now.ValidBefore(min(h.next, h.signerEnd, h.trustEnd)) {
-		return 0, timev4.ErrExpired
+		return timev4.ErrExpired
 	}
-	var pending uint64
-	check := func(bound uint64) error {
-		err := now.LowerBound(bound, true)
-		if err == timev4.ErrPending {
-			pending = max(pending, bound)
-			return nil
-		}
+	if err := now.LowerBound(max(h.issued, h.delegationIssued, h.trustIssued), true); err != nil {
 		return err
-	}
-	if err := check(max(h.issued, h.delegationIssued, h.trustIssued)); err != nil {
-		return 0, err
 	}
 	for class, floor := range h.floors {
 		if floor == 0 {
@@ -300,22 +279,11 @@ func (h *NamespaceHead) CheckTimePending(now timev4.Interval) (uint64, error) {
 		}
 		mature, err := h.rules.mature(class, floor-1)
 		if err != nil {
-			return 0, err
+			return err
 		}
-		if err = check(mature); err != nil {
-			return 0, err
+		if err := now.LowerBound(mature, true); err != nil {
+			return err
 		}
-	}
-	return pending, nil
-}
-
-func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
-	pending, err := h.CheckTimePending(now)
-	if err != nil {
-		return err
-	}
-	if pending != 0 {
-		return timev4.ErrPending
 	}
 	return nil
 }

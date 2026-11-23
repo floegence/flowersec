@@ -1,4 +1,3 @@
-use crate::preparation_budget::CandidatePreparationBudget;
 use std::{
     any::Any,
     fmt,
@@ -8,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker, ready},
 };
@@ -36,51 +35,19 @@ use crate::quic_provider::{
 /// In-progress connection attempt future
 #[derive(Debug)]
 pub(crate) struct Connecting {
-    preparation_budget: Option<CandidatePreparationBudget>,
     conn: Option<ConnectionRef>,
     connected: oneshot::Receiver<bool>,
     handshake_data_ready: Option<oneshot::Receiver<()>>,
 }
 
-/// Cleanup access to one original handshake. It exposes no stream or data API.
-pub(crate) struct ConnectingCleanup(Connection);
-impl ConnectingCleanup {
-    pub(crate) fn abort(&self) {
-        self.0.close(VarInt::from_u32(0), &[]);
-    }
-    pub(crate) async fn wait_termination(&self) {
-        self.0.wait_driver_termination_current().await;
-    }
-}
-
 impl Connecting {
-    pub(crate) fn preparation_budget(&self) -> Option<CandidatePreparationBudget> {
-        self.preparation_budget.clone()
-    }
-    pub(crate) fn driver_termination(&self) -> Arc<DriverTermination> {
-        self.conn
-            .as_ref()
-            .expect("original connecting handle")
-            .shared
-            .driver_termination
-            .clone()
-    }
-    pub(crate) fn cleanup_current(&self) -> ConnectingCleanup {
-        ConnectingCleanup(Connection(
-            self.conn
-                .as_ref()
-                .expect("original connecting handle")
-                .clone(),
-        ))
-    }
-    pub(crate) fn new(
+    pub(super) fn new(
         handle: ConnectionHandle,
         conn: crate::quic_proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
-        preparation_budget: Option<CandidatePreparationBudget>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -93,12 +60,11 @@ impl Connecting {
             on_connected_send,
             socket,
             runtime.clone(),
-            preparation_budget.clone(),
         );
 
         let driver = ConnectionDriver(conn.clone());
         runtime.spawn(Box::pin(
-            async move {
+            async {
                 if let Err(e) = driver.await {
                     tracing::error!("I/O error: {e}");
                 }
@@ -107,7 +73,6 @@ impl Connecting {
         ));
 
         Self {
-            preparation_budget,
             conn: Some(conn),
             connected: on_connected_recv,
             handshake_data_ready: Some(on_handshake_data_recv),
@@ -273,52 +238,6 @@ impl Future for ZeroRttAccepted {
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
 struct ConnectionDriver(ConnectionRef);
-#[derive(Debug, Default)]
-pub(crate) struct DriverTermination {
-    exited: AtomicBool,
-    changed: Notify,
-}
-impl DriverTermination {
-    pub(crate) async fn wait(&self) {
-        loop {
-            let changed = self.changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            if self.exited.load(Ordering::Acquire) {
-                return;
-            }
-            changed.await;
-        }
-    }
-}
-
-impl Drop for ConnectionDriver {
-    fn drop(&mut self) {
-        let mut state = self.0.state.lock("driver_exit");
-        if state.error.is_none() {
-            state.terminate(ConnectionError::LocallyClosed, &self.0.shared);
-        }
-        // Public connection and stream handles may outlive physical I/O. None
-        // of them may retain a socket, writable future, or queued migration.
-        state.conn_events.close();
-        while state.conn_events.try_recv().is_ok() {}
-        state.io_poller.take();
-        state.socket.take();
-        state.timer.take();
-        state.driver.take();
-        let handle = state.handle;
-        let endpoint_events = state.endpoint_events.clone();
-        drop(state);
-        self.0
-            .shared
-            .driver_termination
-            .exited
-            .store(true, Ordering::Release);
-        self.0.shared.driver_termination.changed.notify_waiters();
-        // CID retirement and endpoint idleness follow physical driver cleanup.
-        let _ = endpoint_events.send((handle, EndpointEvent::drained()));
-    }
-}
 
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
@@ -333,12 +252,7 @@ impl Future for ConnectionDriver {
             conn.terminate(e, &self.0.shared);
             return Poll::Ready(Ok(()));
         }
-        let mut keep_going = match conn.drive_transmit(cx) {
-            Ok(keep_going) => keep_going,
-            Err(error) => {
-                return Poll::Ready(Err(error));
-            }
-        };
+        let mut keep_going = conn.drive_transmit(cx)?;
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
@@ -380,6 +294,13 @@ impl Future for ConnectionDriver {
 pub(crate) struct Connection(ConnectionRef);
 
 impl Connection {
+    pub(crate) fn supports_reliable_reset(&self) -> bool {
+        self.0
+            .state
+            .lock("supports_reliable_reset")
+            .inner
+            .supports_reliable_reset()
+    }
     /// Initiate a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -447,10 +368,6 @@ impl Connection {
     /// Despite the return type's name, closed connections are often not an error condition at the
     /// application layer. Cases that might be routine include [`ConnectionError::LocallyClosed`]
     /// and [`ConnectionError::ApplicationClosed`].
-    pub(crate) async fn wait_driver_termination_current(&self) {
-        self.0.shared.driver_termination.wait().await;
-    }
-
     pub(crate) async fn closed(&self) -> ConnectionError {
         {
             let conn = self.0.state.lock("closed");
@@ -570,15 +487,6 @@ impl Connection {
     /// Not necessarily the maximum size of received datagrams.
     ///
     /// [`send_datagram()`]: Connection::send_datagram
-    /// Capability derived from both actual handshake transport parameters.
-    pub(crate) fn supports_reliable_reset(&self) -> bool {
-        self.0
-            .state
-            .lock("supports_reliable_reset")
-            .inner
-            .supports_reliable_reset()
-    }
-
     pub(crate) fn max_datagram_size(&self) -> Option<usize> {
         self.0
             .state
@@ -986,11 +894,9 @@ impl ConnectionRef {
         on_connected: oneshot::Sender<bool>,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
-        preparation_budget: Option<CandidatePreparationBudget>,
     ) -> Self {
         Self(Arc::new(ConnectionInner {
             state: Mutex::new(State {
-                _preparation_budget: preparation_budget,
                 inner: conn,
                 driver: None,
                 handle,
@@ -1005,8 +911,8 @@ impl ConnectionRef {
                 blocked_readers: FxHashMap::default(),
                 stopped: FxHashMap::default(),
                 error: None,
-                io_poller: Some(socket.clone().create_io_poller()),
-                socket: Some(socket),
+                io_poller: socket.clone().create_io_poller(),
+                socket,
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
@@ -1068,15 +974,11 @@ pub(crate) struct Shared {
     datagram_received: Notify,
     datagrams_unblocked: Notify,
     closed: Notify,
-    driver_termination: Arc<DriverTermination>,
     /// Number of live handles that can used to initiate or handle I/O; excludes the driver
     ref_count: AtomicUsize,
 }
 
 pub(crate) struct State {
-    // The driver and all original I/O borrows keep failed incoming ownership
-    // alive even after the endpoint removes its CID routing metadata.
-    _preparation_budget: Option<CandidatePreparationBudget>,
     pub(crate) inner: crate::quic_proto::Connection,
     driver: Option<Waker>,
     handle: ConnectionHandle,
@@ -1092,8 +994,8 @@ pub(crate) struct State {
     pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
-    socket: Option<Arc<dyn AsyncUdpSocket>>,
-    io_poller: Option<Pin<Box<dyn UdpPoller>>>,
+    socket: Arc<dyn AsyncUdpSocket>,
+    io_poller: Pin<Box<dyn UdpPoller>>,
     runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
@@ -1105,8 +1007,10 @@ impl State {
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let socket = self.socket.as_ref().expect("live connection socket");
-        let max_datagrams = socket.max_transmit_segments().min(MAX_TRANSMIT_SEGMENTS);
+        let max_datagrams = self
+            .socket
+            .max_transmit_segments()
+            .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
             // Retry the last transmit, or get a new one.
@@ -1131,21 +1035,17 @@ impl State {
                 }
             };
 
-            if self
-                .io_poller
-                .as_mut()
-                .expect("live connection poller")
-                .as_mut()
-                .poll_writable(cx)?
-                .is_pending()
-            {
+            if self.io_poller.as_mut().poll_writable(cx)?.is_pending() {
                 // Retry after a future wakeup
                 self.buffered_transmit = Some(t);
                 return Ok(false);
             }
 
             let len = t.size;
-            let retry = match socket.try_send(&udp_transmit(&t, &self.send_buffer[..len])) {
+            let retry = match self
+                .socket
+                .try_send(&udp_transmit(&t, &self.send_buffer[..len]))
+            {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
                 Err(e) => return Err(e),
@@ -1173,10 +1073,6 @@ impl State {
 
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
-            if event.is_drained() {
-                // The driver emits this only after releasing its physical I/O.
-                continue;
-            }
             // If the endpoint driver is gone, noop.
             let _ = self.endpoint_events.send((self.handle, event));
         }
@@ -1191,8 +1087,8 @@ impl State {
         loop {
             match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Rebind(socket))) => {
-                    self.io_poller = Some(socket.clone().create_io_poller());
-                    self.socket = Some(socket);
+                    self.socket = socket;
+                    self.io_poller = self.socket.clone().create_io_poller();
                     self.inner.local_address_changed();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
@@ -1366,8 +1262,8 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
-        if self.socket.is_some() && !self.inner.is_drained() {
-            // Construction did not reach a driver owner; ensure endpoint cleanup.
+        if !self.inner.is_drained() {
+            // Ensure the endpoint can tidy up
             let _ = self
                 .endpoint_events
                 .send((self.handle, crate::quic_proto::EndpointEvent::drained()));

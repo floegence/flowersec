@@ -112,7 +112,6 @@ mod tracking {
 #[cfg(any())]
 pub(crate) use tracking::Mutex;
 
-#[cfg(not(any()))]
 mod non_tracking {
     use super::*;
 
@@ -159,5 +158,4 @@ mod non_tracking {
     }
 }
 
-#[cfg(not(any()))]
 pub(crate) use non_tracking::Mutex;

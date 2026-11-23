@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 func applicationTestPlan(t *testing.T, f *executorFixture, config SessionPlanConfig, accounts ...resourcev4.Account) *SessionPlan {
@@ -40,36 +39,6 @@ func applicationTestPlan(t *testing.T, f *executorFixture, config SessionPlanCon
 			return
 		}
 		if err := p.Retire(); err != nil {
-			p.mu.Lock()
-			t.Logf("application retirement state: closed=%t running=%t rpc_preparing=%t registration_preparing=%t started=%t", p.closed, p.running, p.rpcPreparing, p.registrationPreparing, p.started)
-			rpc := p.rpc
-			p.mu.Unlock()
-			if rpc != nil {
-				rpc.mu.Lock()
-				if !rpc.retired {
-					var first, future, caller int
-					for _, owner := range rpc.firstFuture.owners {
-						if !owner.CleanupComplete() {
-							first++
-						}
-					}
-					for channelIndex, channel := range rpc.futureChannels {
-						for ownerIndex, owner := range channel.owners {
-							if !owner.CleanupComplete() {
-								future++
-								t.Logf("RPC pending future: channel=%d owner=%d", channelIndex, ownerIndex)
-							}
-						}
-					}
-					for _, owner := range rpc.shortCaller {
-						if !owner.CleanupComplete() {
-							caller++
-						}
-					}
-					t.Logf("RPC retirement state: closed=%t first_binding=%t management=%t management_calls=%d first_owners=%d future_owners=%d caller_owners=%d completion=%t inputs=%t routes=%t incoming=%t outgoing=%t", rpc.closed, rpc.firstBinding, rpc.management != nil, rpc.managementCalls, first, future, caller, rpc.completionFloor.CleanupComplete(), rpc.inputs.CleanupComplete(), rpc.routes.CleanupComplete(), rpc.incoming.CleanupComplete(), rpc.outgoing.CleanupComplete())
-				}
-				rpc.mu.Unlock()
-			}
 			t.Error(err)
 		}
 	})
@@ -159,21 +128,6 @@ func TestSessionApplicationRetainsLateLeaseAndActualReleaseTail(t *testing.T) {
 		returned <- p.authorize(context.Background(), ApplicationBinding{}, func() error { return nil })
 	}()
 	<-entered
-	host := newEnvironmentSession(nil, 0, context.Background())
-	host.application = p
-	otherRelease := make(chan struct{})
-	var otherOnce sync.Once
-	defer otherOnce.Do(func() { close(otherRelease) })
-	otherTask, err := f.executor.TrySubmit(ApplicationShort, f.reserve(t, 1, f.executor.TaskCharge()), f.reserve(t, 1, resourcev4.Vector{resourcev4.SDKBytes: 128}), func() { <-otherRelease })
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := f.root.Snapshot().Charged
-	if status := host.CleanupStatus(); status.PendingCallbacks != 1 || status.CoreCleanup != protocolv4.V4CoreCleanupPending || f.root.Snapshot().Charged != before {
-		t.Fatal("passive Session status lost its callback or counted another owner", status)
-	}
-	otherOnce.Do(func() { close(otherRelease) })
-	<-otherTask.Done()
 	p.Close()
 	f.executor.Close()
 	if f.executor.Snapshot().Running != 1 {
@@ -191,15 +145,6 @@ func TestSessionApplicationRetainsLateLeaseAndActualReleaseTail(t *testing.T) {
 	cleanup := make(chan error, 1)
 	go func() { cleanup <- p.releaseAfterCleanup(context.Background()) }()
 	<-releasing
-	// The real Completion callback still runs after transport core/provider
-	// exit. The passive projection must distinguish those original facts.
-	host.admission = &SessionAdmissionReservation{core: &SessionCorePlan{cleaned: true}, prepared: &PreparedCarrier{&preparedCarrier{complete: true}}}
-	close(host.watchDone)
-	host.closed, host.cleanupDeadline = true, time.Now().Add(-time.Second)
-	before = f.root.Snapshot().Charged
-	if status := host.CleanupStatus(); status.Status != protocolv4.V4CleanupStateCleanupIncomplete || status.CoreCleanup != protocolv4.V4CoreCleanupComplete || status.PendingCallbacks != 1 || status.Validate() != nil || f.root.Snapshot().Charged != before {
-		t.Fatal("release callback was confused with unfinished core cleanup", status)
-	}
 	if err := p.Retire(); !errors.Is(err, cryptov4.ErrCapacity) {
 		t.Fatal("refunded running release", err)
 	}
@@ -212,9 +157,6 @@ func TestSessionApplicationRetainsLateLeaseAndActualReleaseTail(t *testing.T) {
 	}
 	if err := p.Retire(); err != nil {
 		t.Fatal(err)
-	}
-	if status := host.CleanupStatus(); status.PendingCallbacks != 0 {
-		t.Fatal("exited callback remained pending", status)
 	}
 	lease.mu.Lock()
 	defer lease.mu.Unlock()

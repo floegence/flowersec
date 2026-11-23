@@ -2914,22 +2914,7 @@ impl Connection {
                     match self.rem_cids.insert(frame) {
                         Ok(None) => {}
                         Ok(Some((retired, reset_token))) => {
-                            let pending_retired =
-                                &mut self.spaces[SpaceId::Data].pending.retire_cids;
-                            /// Ensure `pending_retired` cannot grow without bound. Limit is
-                            /// somewhat arbitrary but very permissive.
-                            const MAX_PENDING_RETIRED_CIDS: u64 = CidQueue::LEN as u64 * 10;
-                            // We don't bother counting in-flight frames because those are bounded
-                            // by congestion control.
-                            if (pending_retired.len() as u64)
-                                .saturating_add(retired.end.saturating_sub(retired.start))
-                                > MAX_PENDING_RETIRED_CIDS
-                            {
-                                return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(
-                                    "queued too many retired CIDs",
-                                ));
-                            }
-                            pending_retired.extend(retired);
+                            self.spaces[SpaceId::Data].pending.retire_cids(retired)?;
                             self.set_reset_token(reset_token);
                         }
                         Err(InsertError::ExceedsLimit) => {
@@ -2942,8 +2927,7 @@ impl Connection {
                             // was retired all at once via retire_prior_to.
                             self.spaces[SpaceId::Data]
                                 .pending
-                                .retire_cids
-                                .push(frame.sequence);
+                                .retire_cids(frame.sequence..frame.sequence.saturating_add(1))?;
                             continue;
                         }
                     };
@@ -3688,11 +3672,7 @@ impl Connection {
                 .as_ref()
                 .is_some_and(|(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
-            || self
-                .datagrams
-                .outgoing
-                .front()
-                .is_some_and(|x| x.size(true) <= max_size)
+            || self.datagrams.outgoing.can_send_1rtt(max_size)
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned

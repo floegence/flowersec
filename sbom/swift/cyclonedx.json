@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:e74b623b-8d4d-5abd-8813-26d142247d43",
+  "serialNumber": "urn:uuid:a39ae13e-3e69-5052-8f2b-c91e97adf989",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "Flowersec",
-      "version": "6.1.0",
-      "purl": "pkg:swift/Flowersec@6.1.0",
-      "bom-ref": "pkg:swift/Flowersec@6.1.0"
+      "version": "7.0.0",
+      "purl": "pkg:swift/Flowersec@7.0.0",
+      "bom-ref": "pkg:swift/Flowersec@7.0.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "05540034737bbbe556f25fde9a5d29813e0c91e1482bd35dab9b11c746e7c030"
+        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
       }
     ]
   },
@@ -134,9 +134,9 @@
     {
       "type": "library",
       "name": "swift-nio",
-      "version": "2.103.0",
-      "purl": "pkg:swift/swift-nio@2.103.0",
-      "bom-ref": "pkg:swift/swift-nio@2.103.0",
+      "version": "2.101.3",
+      "purl": "pkg:swift/swift-nio@2.101.3",
+      "bom-ref": "pkg:swift/swift-nio@2.101.3",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -162,9 +162,9 @@
     {
       "type": "library",
       "name": "swift-nio-ssl",
-      "version": "2.37.5",
-      "purl": "pkg:swift/swift-nio-ssl@2.37.5",
-      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.5",
+      "version": "2.37.2",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -180,34 +180,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-sodium",
-      "version": "0.11.0",
-      "purl": "pkg:swift/swift-sodium@0.11.0",
-      "bom-ref": "pkg:swift/swift-sodium@0.11.0",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/jedisct1/swift-sodium.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -246,12 +218,11 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:swift/Flowersec@6.1.0",
+      "ref": "pkg:swift/Flowersec@7.0.0",
       "dependsOn": [
         "pkg:swift/swift-crypto@4.5.1",
-        "pkg:swift/swift-nio-ssl@2.37.5",
-        "pkg:swift/swift-nio@2.103.0",
-        "pkg:swift/swift-sodium@0.11.0"
+        "pkg:swift/swift-nio-ssl@2.37.2",
+        "pkg:swift/swift-nio@2.101.3"
       ]
     },
     {
@@ -273,7 +244,7 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio@2.103.0",
+      "ref": "pkg:swift/swift-nio@2.101.3",
       "dependsOn": [
         "pkg:swift/swift-atomics@1.3.1",
         "pkg:swift/swift-collections@1.6.0",
@@ -281,14 +252,10 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-ssl@2.37.5",
+      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
       "dependsOn": [
-        "pkg:swift/swift-nio@2.103.0"
+        "pkg:swift/swift-nio@2.101.3"
       ]
-    },
-    {
-      "ref": "pkg:swift/swift-sodium@0.11.0",
-      "dependsOn": []
     },
     {
       "ref": "pkg:swift/swift-system@1.7.5",

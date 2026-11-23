@@ -9,10 +9,9 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 type sendWaitSlot struct {
@@ -43,11 +42,10 @@ type SendQueue struct {
 	writeOwner            *StreamOwnership
 	rawUsed               bool
 	rpcBatch              *RPCBatchWriter
-	responsePublication   *rpcv4.Publication
-	responseTail          uint64
 	methodTails           int
 	methodWaiters         int
 	storage               []byte
+	operationStorage      []byte
 	maxOperationBytes     int
 	head, size            int
 	chunk                 int
@@ -63,11 +61,10 @@ type SendQueue struct {
 }
 
 // SendQueueCharge includes the application ring, all fixed FIFO/wait slots,
-// the maximum immutable operation staging for each slot, deadline/result
-// metadata, and one original pump task. Stable requests share these slots with
-// ordinary writers and observers; terminal compact metadata transfers to the
-// caller. Runtime channels/stacks/allocator overhead and the separate
-// SendFlow/record/crypto/provider copy remain profile costs.
+// immutable operation staging for each slot, deadline/result metadata, and
+// one original pump task. Stable requests share these slots with ordinary
+// writers and observers; terminal compact metadata transfers to the caller. Runtime channels/stacks/allocator overhead and
+// the separate SendFlow/record/crypto/provider copy remain profile costs.
 func SendQueueCharge(capacity uint64, waiters uint32) (resourcev4.Vector, error) {
 	if capacity == 0 || capacity > uint64(math.MaxInt) || waiters == 0 || uint64(waiters) > uint64(math.MaxInt) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
@@ -100,7 +97,7 @@ func NewSendQueue(flow *SendFlow, capacity uint64, waiters uint32, chunk int, re
 	if err != nil {
 		return nil, err
 	}
-	q := &SendQueue{flow: flow, completion: flow.completion, reservation: owned, storage: make([]byte, int(capacity)), maxOperationBytes: int(capacity), chunk: chunk, accepted: flow.frontier.Offset, published: flow.frontier.Offset, slots: make([]sendWaitSlot, int(waiters)), first: -1, last: -1, wake: make(chan struct{}, 1), writeDone: make(chan struct{}), done: make(chan struct{})}
+	q := &SendQueue{flow: flow, completion: flow.completion, reservation: owned, storage: make([]byte, int(capacity)), operationStorage: make([]byte, int(capacity)*int(waiters)), maxOperationBytes: int(capacity), chunk: chunk, accepted: flow.frontier.Offset, published: flow.frontier.Offset, slots: make([]sendWaitSlot, int(waiters)), first: -1, last: -1, wake: make(chan struct{}, 1), writeDone: make(chan struct{}), done: make(chan struct{})}
 	for i := range q.slots {
 		q.slots[i].wake = make(chan struct{}, 1)
 	}
@@ -191,13 +188,6 @@ func (q *SendQueue) writeAdapterOwned(ctx context.Context, input []byte, transfe
 			return q.acceptLocked(&request)
 		}
 		wake, closed := q.slots[slot].wake, q.flow.writer.engine.Done()
-		// The FIFO/space predicate above is current under the queue gate.
-		// Discard only an older hint before parking. Space/FIFO transitions
-		// take this same gate and will publish their next wake after unlock.
-		select {
-		case <-wake:
-		default:
-		}
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
@@ -476,7 +466,7 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		q.mu.Unlock()
 		return RecordWriteResult{}, 0, ErrFlowClosed
 	}
-	n := min(q.size, q.chunk, int(min(credit, uint64(math.MaxInt))))
+	n := min(q.size, len(q.storage)-q.head, q.chunk, int(min(credit, uint64(math.MaxInt))))
 	fin := q.sealed && n == q.size
 	if n == 0 && !fin {
 		pending := q.size != 0
@@ -487,17 +477,9 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		return RecordWriteResult{}, 0, nil
 	}
 	q.pumping = true
-	first := min(n, len(q.storage)-q.head)
-	input, wrapped := q.storage[q.head:q.head+first], q.storage[:n-first]
-	// Capture the original final-response responsibility before provider I/O.
-	// Its bounded accounting must not wait on the queue's publication-return
-	// gate. pumping retains the ring and this reference until that tail exits.
-	var publishedResponse func()
-	if q.responsePublication != nil && q.published+uint64(n) >= q.responseTail {
-		publishedResponse = q.responsePublication.ObserveResponseHandoff
-	}
+	input := q.storage[q.head : q.head+n]
 	q.mu.Unlock()
-	result, err := flow.writeParts(ctx, input, wrapped, fin, q, publishedResponse)
+	result, err := flow.write(ctx, input, fin, q)
 	q.mu.Lock()
 	if q.closed {
 		err = q.failure
@@ -505,15 +487,10 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 	fatal := err != nil && (result.Submitted || !sendQueueBackpressure(err))
 	published := 0
 	if result.Complete {
-		clear(q.storage[q.head : q.head+first])
-		clear(q.storage[:n-first])
+		clear(q.storage[q.head : q.head+n])
 		q.head = (q.head + n) % len(q.storage)
 		q.size -= n
 		q.published += uint64(n)
-		if publishedResponse != nil {
-			q.responsePublication = nil
-			q.responseTail = 0
-		}
 		published = n
 		q.finComplete = fin && err == nil
 		q.wakeWriterLocked()
@@ -565,8 +542,6 @@ func (q *SendQueue) stopFromFlow(cause error) {
 }
 
 func (q *SendQueue) closeLocked(cause error) {
-	q.responsePublication = nil
-	q.responseTail = 0
 	q.completion.stop(cause)
 	if q.finComplete {
 		// A later cleanup/Stop cannot turn an already completed FIN and its
@@ -605,6 +580,8 @@ func (q *SendQueue) cleanupLocked() {
 	}
 	clear(q.storage)
 	q.storage = nil
+	clear(q.operationStorage)
+	q.operationStorage = nil
 	q.size = 0
 	q.cleaned = true
 	close(q.done)

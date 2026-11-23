@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 func (i *unaryInvocation) checkRequestTime(begun bool) error {
@@ -24,11 +24,6 @@ func (i *unaryInvocation) checkRequestTimeAt(now timev4.Sample, begun bool) erro
 	}
 	if begun {
 		return nil
-	}
-	if i.preparation != nil {
-		if err := i.preparation.CheckAt(now); err != nil {
-			return err
-		}
 	}
 	p, h := i.policy, i.request.Fields()
 	horizon := p.MessageLifetimeMS
@@ -50,9 +45,8 @@ func (i *unaryInvocation) checkRequestTimeAt(now timev4.Sample, begun bool) erro
 // contract while a publisher turn is outside the network lock. No close or
 // completed-result cleanup can return these live responsibilities early.
 func (i *unaryInvocation) WithRequestPublication(h protocolv4.ApplicationHeader, action func() error) (err error) {
-	i.advanceControllerRoute()
 	i.mu.Lock()
-	if i.cleaned || i.preparing || i.canceled || i.routeRevoked || i.request != h || action == nil {
+	if i.cleaned || i.preparing || i.canceled || i.request != h || action == nil {
 		i.mu.Unlock()
 		return cryptov4.ErrClosed
 	}
@@ -91,31 +85,14 @@ func (i *unaryInvocation) WithRequestPublication(h protocolv4.ApplicationHeader,
 		}
 		i.mu.Lock()
 		defer i.mu.Unlock()
-		if i.canceled || i.cleaned || i.routeRevoked {
+		if i.canceled || i.cleaned {
 			return cryptov4.ErrClosed
 		}
 		if err := i.ctx.Err(); err != nil {
 			return err
 		}
-		begun := i.publication.Progress().HeaderAccepted
-		if services.draining.Load() && !begun {
-			return cryptov4.ErrClosed
-		}
-		if err := i.checkRequestTimeAt(now, begun); err != nil {
+		if err := i.checkRequestTimeAt(now, i.publication.Progress().HeaderAccepted); err != nil {
 			return err
-		}
-		publish := func() error {
-			transferred = true
-			return action()
-		}
-		handoff := func() error {
-			if begun {
-				// An accepted child keeps its original publication responsibility
-				// after its application's callback exits. Only new BEGIN needs
-				// the still-live origin, not its already accepted suffix.
-				return publish()
-			}
-			return withApplicationHandoff(i.ctx, publish)
 		}
 		if i.fixedResultRead {
 			if services.resultReadBinding.Type != h.Fields().Type || services.resultReadBinding.Contract != h.Fields().ServiceContractDigest {
@@ -124,10 +101,12 @@ func (i *unaryInvocation) WithRequestPublication(h protocolv4.ApplicationHeader,
 			if err := i.metadata.Check(); err != nil {
 				return err
 			}
-			return handoff()
+			transferred = true
+			return action()
 		}
 		return i.route.WithRegistered(func() error {
-			return i.controller.withPublication(begun, handoff)
+			transferred = true
+			return action()
 		})
 	})
 }

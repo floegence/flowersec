@@ -60,22 +60,34 @@ pub(crate) use web_time::{Duration, Instant};
 #[cfg(any())]
 pub(crate) use crate::quic_proto::BloomTokenLog;
 pub(crate) use crate::quic_proto::{
-    ClientConfig, ConnectionError, EndpointConfig, IdleTimeout, ServerConfig, TransportConfig,
-    VarInt, congestion, crypto,
+    AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream, ConfigError,
+    ConnectError, ConnectionClose, ConnectionError, ConnectionId, ConnectionIdGenerator,
+    ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats, FrameType, IdleTimeout,
+    MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats, ServerConfig, Side, StdSystemTime,
+    StreamId, TimeSource, TokenLog, TokenMemoryCache, TokenReuseError, TokenStore, Transmit,
+    TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
+    VarIntBoundsExceeded, Written, congestion, crypto,
 };
 #[cfg(any())]
 pub(crate) use crate::quic_proto::{QlogConfig, QlogStream};
 
-pub(crate) use crate::quic_provider::connection::{Connection, SendDatagramError};
-pub(crate) use crate::quic_provider::endpoint::Endpoint;
-pub(crate) use crate::quic_provider::recv_stream::{ReadError, RecvStream};
+pub(crate) use crate::quic_provider::connection::{
+    AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagram,
+    SendDatagramError, ZeroRttAccepted,
+};
+pub(crate) use crate::quic_provider::endpoint::{Accept, Endpoint, EndpointStats};
+pub(crate) use crate::quic_provider::incoming::{Incoming, IncomingFuture, RetryError};
+pub(crate) use crate::quic_provider::recv_stream::{
+    ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
+};
 #[cfg(any())]
 pub(crate) use crate::quic_provider::runtime::AsyncStdRuntime;
 #[cfg(any())]
 pub(crate) use crate::quic_provider::runtime::SmolRuntime;
-#[cfg(all())]
 pub(crate) use crate::quic_provider::runtime::TokioRuntime;
-pub(crate) use crate::quic_provider::runtime::{AsyncUdpSocket, Runtime, UdpPoller};
+pub(crate) use crate::quic_provider::runtime::{
+    AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_runtime,
+};
 pub(crate) use crate::quic_provider::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]

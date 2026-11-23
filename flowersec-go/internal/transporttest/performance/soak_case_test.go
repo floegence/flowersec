@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
 )
 
 func TestProductionSoakContractIsFrozen(t *testing.T) {

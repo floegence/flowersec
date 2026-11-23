@@ -7,9 +7,9 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type ContentObservation = ledgerv4.SQLiteContentObservation

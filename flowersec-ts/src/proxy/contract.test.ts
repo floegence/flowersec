@@ -3,8 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import type { V4Session } from "../v4/public.js";
-import type { ProxyStream } from "./stream.js";
+import type { ByteStream, Session } from "../public/contract.js";
 import {
   PROXY_RUNTIME_SCOPE,
   assertProxyRuntimeScope,
@@ -26,9 +25,9 @@ import {
 describe("proxy v2 public contract", () => {
   it("exports the complete runtime and browser bridge API using portable session types", () => {
     expect(PROXY_RUNTIME_SCOPE).toEqual({ name: "proxy.runtime", version: 2 });
-    expectTypeOf<ProxyRuntimeOptions["session"]>().toEqualTypeOf<V4Session>();
+    expectTypeOf<ProxyRuntimeOptions["session"]>().toEqualTypeOf<Session>();
     expectTypeOf<Awaited<ReturnType<ProxyRuntime["openWebSocketStream"]>>["stream"]>()
-      .toEqualTypeOf<ProxyStream>();
+      .toEqualTypeOf<ByteStream>();
 
     expect(createProxyRuntime).toBeTypeOf("function");
     expect(createProxyServiceWorkerScript).toBeTypeOf("function");

@@ -4,11 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -30,19 +36,19 @@ var requiredPortableCapabilityIDs = []string{
 }
 
 var requiredSharedFixtureIDs = []string{
-	"transport_v4_corpus",
-	"transport_v4_signatures",
-	"transport_v4_profile_dh",
-	"transport_v4_noise",
-	"transport_v4_ready",
-	"transport_v4_records",
-	"transport_v4_rekey",
-	"transport_v4_resources",
-	"transport_v4_api_results",
-	"idna",
-	"rpc_error",
-	"rpc_malformed_envelopes",
-	"rpc_notifications",
+	"artifact_admission_v5",
+	"capability_v5",
+	"controller_v5",
+	"crypto_v5",
+	"datagram_v5",
+	"handshake_v5",
+	"idna_v5",
+	"open_unicode_v5",
+	"rpc_error_v5",
+	"rpc_malformed_envelopes_v5",
+	"rpc_notifications_v5",
+	"session_handlers_v5",
+	"session_wire_v5",
 }
 
 var retiredProductionCarrierCapabilityIDs = []string{
@@ -65,7 +71,7 @@ var expectedServerParityEntrypoints = map[string]string{
 	"go/endpoint-client/webtransport/tunnel/connect":                   "flowersec.Connect",
 	"go/direct-server/webtransport/direct/accept":                      "flowersec.NewAcceptor/NewWebTransportDirectListener",
 	"go/tunnel-runtime/webtransport/tunnel/pair-forward":               "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
-	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v6/controlplane",
+	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v7/controlplane",
 	"go/proxy-server/carrier-neutral/direct/proxy":                     "flowersec.NewProxyServer",
 	"node-typescript/endpoint-client/websocket/direct/connect":         "@floegence/flowersec-core/node connect",
 	"node-typescript/endpoint-client/websocket/tunnel/connect":         "@floegence/flowersec-core/node connect",
@@ -89,7 +95,7 @@ var expectedServerParityEntrypoints = map[string]string{
 
 var expectedPortableServerEntrypoints = map[string]map[string]string{
 	"controlplane_issue_authorize": {
-		"go": "flowersec-go/v6/controlplane",
+		"go": "flowersec-go/v7/controlplane",
 	},
 	"server_admission_paths": {
 		"go":         "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct",
@@ -444,39 +450,42 @@ func verifyParity(repoRoot string) error {
 	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, m.ServerParityContract); err != nil {
 		return err
 	}
-	registryIDs, err := loadRegistryIDs(repoRoot)
+	entries, err := loadParityRegistry(repoRoot)
 	if err != nil {
 		return err
 	}
+	registryIDs := entries.ids()
+	referenced := make(map[string]bool)
 	for _, capability := range m.PortableCapabilities {
 		for _, language := range m.Languages {
 			implementation := capability.Implementations[language]
 			if implementation.Status == "supported" {
-				if err := requireCapabilityConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
+				if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
 					return err
 				}
+				referenced[implementation.TestIDs[0]] = true
 			}
 		}
 	}
 	if err := validateServerParityRegistry(m.ServerParityContract, registryIDs); err != nil {
 		return err
 	}
-	for _, capability := range m.RuntimeSpecificCapabilities {
-		if err := requireCapabilityConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
-			return err
+	for _, unit := range m.ServerParityContract.Units {
+		if unit.Status == "supported" {
+			referenced[unit.TestIDs[0]] = true
 		}
 	}
-	for _, fixture := range m.SharedFixtures {
-		if _, err := os.Stat(filepath.Join(repoRoot, fixture.Path)); err != nil {
-			return fmt.Errorf("shared fixture %s path %q: %w", fixture.ID, fixture.Path, err)
+	for _, capability := range m.RuntimeSpecificCapabilities {
+		if err := requireRegistryConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
+			return err
 		}
-		for _, language := range m.Languages {
-			for _, consumer := range fixture.Consumers[language] {
-				if err := requireRegistryConsumers(registryIDs, "shared fixture "+fixture.ID+" language "+language, []string{consumer}); err != nil {
-					return err
-				}
-			}
-		}
+		referenced[capability.TestIDs[0]] = true
+	}
+	if err := verifySharedParityFixtures(repoRoot, m, registryIDs); err != nil {
+		return err
+	}
+	if err := entries.verifyVitestSources(repoRoot, referenced); err != nil {
+		return err
 	}
 	if err := verifyInteropMatrix(repoRoot, m); err != nil {
 		return err
@@ -484,7 +493,60 @@ func verifyParity(repoRoot string) error {
 	if err := verifyConnectionControllerRecovery(repoRoot); err != nil {
 		return err
 	}
-	fmt.Printf("language parity OK: %d capabilities across %d languages on %s\n", len(m.PortableCapabilities), len(m.Languages), m.DeploymentProfiles.ApplicationWire)
+	fmt.Printf("parity source contracts OK: %d capabilities, %d shared fixtures, %d languages on %s\n", len(m.PortableCapabilities), len(m.SharedFixtures), len(m.Languages), m.DeploymentProfiles.ApplicationWire)
+	return nil
+}
+
+func verifySharedParityFixtures(repoRoot string, manifest *capabilityManifest, registryIDs map[string]struct{}) error {
+	registry, err := loadTransportV5Registry(repoRoot)
+	if err != nil {
+		return err
+	}
+	if manifest.DeploymentProfiles.ApplicationWire != registry.Profiles.Session {
+		return fmt.Errorf("deployment profiles must use wire registry session %s", registry.Profiles.Session)
+	}
+	var shared []transportV3Fixture
+	paths := make(map[string]bool)
+	for _, fixture := range manifest.SharedFixtures {
+		index := slices.IndexFunc(registry.WireFixtures, func(registered transportV3Fixture) bool {
+			return fixture.ID == fmt.Sprintf("%s_v%d", registered.ID, registry.Version) && fixture.Path == registered.Path
+		})
+		if index < 0 {
+			return fmt.Errorf("shared fixture %s at %s does not match its current wire registry entry", fixture.ID, fixture.Path)
+		}
+		registered := registry.WireFixtures[index]
+		shared = append(shared, registered)
+		paths[fixture.Path] = true
+		for _, language := range manifest.Languages {
+			id := "protocol/" + language
+			if registered.ID == "controller" {
+				id = "controller/" + language
+			}
+			consumers := fixture.Consumers[language]
+			if !slices.Equal(consumers, []string{id}) {
+				return fmt.Errorf("shared fixture %s must use test %s", fixture.ID, id)
+			}
+			if err := requireRegistryConsumers(registryIDs, "shared fixture "+fixture.ID, consumers); err != nil {
+				return err
+			}
+		}
+	}
+	registry.WireFixtures = shared
+	if err := verifyTransportV5Consumers(repoRoot, registry); err != nil {
+		return err
+	}
+	for _, generation := range registry.FixtureGeneration {
+		if !slices.ContainsFunc(generation.Outputs, func(path string) bool { return paths[path] }) {
+			continue
+		}
+		args := generation.CheckCommand
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoRoot
+		cmd.Env = append(os.Environ(), "FLOWERSEC_TRANSPORT_REGISTRY_PATH="+filepath.Join(repoRoot, transportV5ContractPath))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("parity fixture producer %s: %w\n%s", generation.Producer, err, output)
+		}
+	}
 	return nil
 }
 
@@ -496,10 +558,6 @@ func verifyRequiredServerParityComplete(repoRoot string) error {
 	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, m.ServerParityContract); err != nil {
 		return err
 	}
-	runtimes, carriers, err := nativeServerProfileDimensions(m)
-	if err != nil {
-		return err
-	}
 	registryIDs, err := loadRegistryIDs(repoRoot)
 	if err != nil {
 		return err
@@ -507,20 +565,7 @@ func verifyRequiredServerParityComplete(repoRoot string) error {
 	if err := validateRequiredServerParityCompletionContract(m.ServerParityContract, registryIDs); err != nil {
 		return err
 	}
-	var matrix interopMatrix
-	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
-		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
-	}
-	if !slices.Equal(matrix.ServerRuntimes, runtimes) {
-		return fmt.Errorf("interop matrix server_runtimes must match native-server-core claimed runtimes")
-	}
-	if err := validateDirectInteropCells(matrix, registryIDs, carriers); err != nil {
-		return err
-	}
-	if err := validateClientInteropProfiles(matrix.ClientProfiles, registryIDs); err != nil {
-		return err
-	}
-	return validateTunnelInteropTopologies(matrix, registryIDs, runtimes, carriers)
+	return verifyInteropMatrix(repoRoot, m)
 }
 
 func nativeServerProfileDimensions(capabilities *capabilityManifest) ([]string, []string, error) {
@@ -542,48 +587,106 @@ func validateRequiredServerParityCompletionContract(contract *serverParityContra
 	return validateServerParityRegistry(contract, registryIDs)
 }
 
+type parityRegistryEntry struct {
+	vitestFile  string
+	vitestTitle string
+}
+
+type parityRegistry map[string]parityRegistryEntry
+
+func (entries parityRegistry) ids() map[string]struct{} {
+	ids := make(map[string]struct{}, len(entries))
+	for id := range entries {
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
+func (entries parityRegistry) verifyVitestSources(root string, referenced map[string]bool) error {
+	var failures []error
+	for _, id := range slices.Sorted(maps.Keys(referenced)) {
+		entry := entries[id]
+		if entry.vitestFile == "" {
+			continue
+		}
+		if !filepath.IsLocal(entry.vitestFile) || !strings.HasPrefix(entry.vitestFile, "src/") {
+			return fmt.Errorf("parity test %s has invalid source %s", id, entry.vitestFile)
+		}
+		source, err := os.ReadFile(filepath.Join(root, "flowersec-ts", entry.vitestFile))
+		if err != nil {
+			return err
+		}
+		for _, previous := range []string{"transport_v2", "transport_v3", "transport_v4"} {
+			if strings.Contains(string(source), "testdata/"+previous+"/") {
+				failures = append(failures, fmt.Errorf("parity test %s reads archived %s vectors in %s", id, previous, entry.vitestFile))
+			}
+		}
+		if entry.vitestTitle != "" && !strings.Contains(string(source), strconv.Quote(entry.vitestTitle)) && !strings.Contains(string(source), "'"+entry.vitestTitle+"'") {
+			failures = append(failures, fmt.Errorf("parity test %s title %q is absent from %s", id, entry.vitestTitle, entry.vitestFile))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
-	source, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"))
+	entries, err := loadParityRegistry(repoRoot)
+	return entries.ids(), err
+}
+
+func loadParityRegistry(repoRoot string) (parityRegistry, error) {
+	registry, err := parser.ParseFile(token.NewFileSet(), filepath.Join(repoRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("read test registry: %w", err)
+		return nil, fmt.Errorf("parse test registry: %w", err)
 	}
-	ids := make(map[string]struct{})
-	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|installedVitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"`)
-	for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
-		ids[match[1]] = struct{}{}
+	entries := make(parityRegistry)
+	for _, decl := range registry.Decls {
+		function, ok := decl.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "registryForOS" {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			name, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			switch name.Name {
+			case "commandEntry", "commandEntryWithEnvironment", "vitestEntry", "browserSmokeEntry", "browserCompatibilityEntry", "performanceCapacityEntry", "privilegedGoTestEntry":
+				if id, ok := registryStringLiteral(call.Args[0]); ok {
+					entry := parityRegistryEntry{}
+					if name.Name == "vitestEntry" && len(call.Args) == 4 {
+						entry.vitestFile, _ = registryStringLiteral(call.Args[2])
+						entry.vitestTitle, _ = registryStringLiteral(call.Args[3])
+					} else if name.Name == "commandEntry" && len(call.Args) == 7 {
+						script, _ := registryStringLiteral(call.Args[4])
+						option, _ := registryStringLiteral(call.Args[5])
+						if script == "scripts/server-parity-native-addon.mjs" && option == "--test-title" {
+							entry.vitestFile = "src/node/nativeRawQuic.integration.test.ts"
+							entry.vitestTitle, _ = registryStringLiteral(call.Args[6])
+						}
+					}
+					entries[id] = entry
+				}
+			}
+			return true
+		})
 	}
-	if len(ids) == 0 {
+	if len(entries) == 0 {
 		return nil, errors.New("test registry has no stable IDs")
 	}
-	return ids, nil
+	return entries, nil
 }
 
-// A capability can require independent runtime checks, such as macOS and iOS.
-func requireCapabilityTestIDs(owner string, ids []string) error {
-	if len(ids) == 0 {
-		return fmt.Errorf("%s requires at least one stable test_id", owner)
+func registryStringLiteral(arg ast.Expr) (string, bool) {
+	literal, ok := arg.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
 	}
-	if err := requireUnique(owner+" test_ids", ids); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			return fmt.Errorf("%s has an empty test_id", owner)
-		}
-	}
-	return nil
-}
-
-func requireCapabilityConsumers(registryIDs map[string]struct{}, owner string, ids []string) error {
-	if err := requireCapabilityTestIDs(owner, ids); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if _, ok := registryIDs[id]; !ok {
-			return fmt.Errorf("%s references unknown registry test_id %q", owner, id)
-		}
-	}
-	return nil
+	value, err := strconv.Unquote(literal.Value)
+	return value, err == nil
 }
 
 func requireRegistryConsumers(registryIDs map[string]struct{}, owner string, consumers []string) error {
@@ -713,8 +816,8 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
 	}
-	if matrix.Version != 3 {
-		return fmt.Errorf("%s must declare version 3", interopMatrixPath)
+	if matrix.Version != 5 {
+		return fmt.Errorf("%s must declare version 5", interopMatrixPath)
 	}
 	if !slices.Equal(matrix.Languages, capabilities.Languages) {
 		return fmt.Errorf("%s languages must match %s", interopMatrixPath, capabilityManifestPath)
@@ -746,6 +849,9 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 		return err
 	}
 	if err := validateTunnelInteropTopologies(matrix, registryIDs, runtimes, carriers); err != nil {
+		return err
+	}
+	if err := validateClientInteropProfiles(matrix.ClientProfiles, registryIDs); err != nil {
 		return err
 	}
 	cellIDs := make([]string, 0, len(matrix.DirectCells)+len(matrix.TunnelTopologies))
@@ -781,7 +887,7 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("%s interop matrix OK: %d direct cells, %d client profiles, %d tunnel topologies, %d cases\n", capabilities.DeploymentProfiles.ApplicationWire, len(matrix.DirectCells), len(matrix.ClientProfiles), len(matrix.TunnelTopologies), len(matrix.Cases))
+	fmt.Printf("%s interop declarations OK: %d direct cells, %d client profiles, %d tunnel topologies, %d cases\n", capabilities.DeploymentProfiles.ApplicationWire, len(matrix.DirectCells), len(matrix.ClientProfiles), len(matrix.TunnelTopologies), len(matrix.Cases))
 	return nil
 }
 
@@ -812,6 +918,10 @@ func validateClientInteropProfiles(profiles []clientInteropProfile, registryIDs 
 		}
 		if err := requireRegistryConsumers(registryIDs, "interop client profile "+profile.ID, profile.TestIDs); err != nil {
 			return err
+		}
+		client := map[string]string{"typescript-browser": "browser", "swift": "swift"}[profile.Client]
+		if profile.TestIDs[0] != "connector/"+client+"-v5/interop/"+client+"-go/wss/"+profile.Path {
+			return fmt.Errorf("interop client profile %s must bind its current executable", profile.ID)
 		}
 		delete(expected, profile.ID)
 	}
@@ -855,6 +965,9 @@ func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]str
 			}
 			if err := requireRegistryConsumers(registryIDs, "interop cell "+cell.ID, cell.TestIDs); err != nil {
 				return err
+			}
+			if cell.TestIDs[0] != "interop/v5/native/direct/go-baseline" {
+				return fmt.Errorf("interop cell %s must bind its current direct matrix executable", cell.ID)
 			}
 		case "unsupported":
 			if len(cell.TestIDs) != 0 {
@@ -911,7 +1024,7 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 			}
 		}
 		expectedCases := slices.Clone(tunnelInteropCases)
-		if topology.IngressCarrierA == "raw-quic" && topology.IngressCarrierB == "raw-quic" {
+		if topology.IngressCarrierA != "websocket" {
 			expectedCases = append(expectedCases, "datagram", "datagram-forwarding")
 		}
 		if !slices.Equal(topology.Cases, expectedCases) {
@@ -924,6 +1037,9 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 			}
 			if err := requireRegistryConsumers(registryIDs, "tunnel topology "+topology.ID, topology.TestIDs); err != nil {
 				return err
+			}
+			if topology.TestIDs[0] != "interop/v5/native/tunnel/go-baseline" {
+				return fmt.Errorf("tunnel topology %s must bind its current tunnel matrix executable", topology.ID)
 			}
 		case "unsupported":
 			if len(topology.TestIDs) != 0 {
@@ -966,18 +1082,17 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 }
 
 func generatedTunnelTopologyDimensions(runtimes, carriers []string) map[string]tunnelInteropTopology {
-	topologies := make(map[string]tunnelInteropTopology, len(runtimes)*len(runtimes)*len(carriers)*len(carriers))
-	for _, carrierA := range carriers {
-		for _, carrierB := range carriers {
-			for endpointAIndex, endpointA := range runtimes {
-				for relayIndex, relay := range runtimes {
-					endpointB := runtimes[(endpointAIndex+relayIndex)%len(runtimes)]
-					carrierPair := parityCarrierID(carrierA)
-					if carrierA != carrierB {
-						carrierPair += "_to_" + parityCarrierID(carrierB)
-					}
-					id := strings.Join([]string{parityRuntimeID(endpointA), "via", parityRuntimeID(relay), "to", parityRuntimeID(endpointB), carrierPair, "tunnel"}, "_")
-					topologies[id] = tunnelInteropTopology{ID: id, EndpointA: endpointA, IngressCarrierA: carrierA, TunnelRuntime: relay, EndpointB: endpointB, IngressCarrierB: carrierB}
+	topologies := make(map[string]tunnelInteropTopology, len(runtimes)*len(runtimes)*len(carriers))
+	for _, carrier := range carriers {
+		for endpointAIndex, endpointA := range runtimes {
+			for relayIndex, relay := range runtimes {
+				endpointB := runtimes[(endpointAIndex+relayIndex)%len(runtimes)]
+				id := strings.Join([]string{
+					parityRuntimeID(endpointA), "via", parityRuntimeID(relay), "to", parityRuntimeID(endpointB), parityCarrierID(carrier), "tunnel",
+				}, "_")
+				topologies[id] = tunnelInteropTopology{
+					ID: id, EndpointA: endpointA, IngressCarrierA: carrier,
+					TunnelRuntime: relay, EndpointB: endpointB, IngressCarrierB: carrier,
 				}
 			}
 		}
@@ -1144,7 +1259,7 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, capabilityManifestPath), &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", capabilityManifestPath, err)
 	}
-	if m.Version != 3 {
+	if m.Version != 5 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
 	}
 	if err := validateServerParityContract(m.ServerParityContract); err != nil {
@@ -1156,8 +1271,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"}) {
 		return nil, fmt.Errorf("capability_layers must be [portable_core server_integration control_plane sdk_profile language_convenience]")
 	}
-	if len(m.Languages) == 0 || len(m.PortableCapabilities) == 0 {
-		return nil, errors.New("capability manifest languages and portable_capabilities must not be empty")
+	if !slices.Equal(m.Languages, []string{"go", "typescript", "swift", "rust"}) || len(m.PortableCapabilities) == 0 {
+		return nil, errors.New("capability manifest must declare go, typescript, swift and rust and their portable capabilities")
 	}
 	if err := requireUnique("capability languages", m.Languages); err != nil {
 		return nil, err
@@ -1182,8 +1297,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			}
 			switch implementation.Status {
 			case "supported":
-				if err := requireCapabilityTestIDs("capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
-					return nil, err
+				if len(implementation.TestIDs) != 1 {
+					return nil, fmt.Errorf("capability %s language %s supported status requires exactly one test_id", capability.ID, language)
 				}
 				if capability.Layer != "portable_core" && strings.TrimSpace(implementation.Entrypoint) == "" {
 					return nil, fmt.Errorf("capability %s language %s supported status requires an entrypoint", capability.ID, language)
@@ -1239,8 +1354,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		if _, ok := knownLanguages[capability.Owner]; !ok {
 			return nil, fmt.Errorf("runtime-specific capability %s has unknown owner %s", capability.ID, capability.Owner)
 		}
-		if err := requireCapabilityTestIDs("runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
-			return nil, err
+		if len(capability.TestIDs) != 1 {
+			return nil, fmt.Errorf("runtime-specific capability %s requires exactly one test_id", capability.ID)
 		}
 	}
 	if err := requireUnique("runtime-specific capability ids", runtimeIDs); err != nil {
@@ -1255,8 +1370,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			return nil, errors.New("shared fixture id and path must not be empty")
 		}
 		fixtureIDs = append(fixtureIDs, fixture.ID)
-		for language, consumers := range fixture.Consumers {
-			if len(consumers) != 1 {
+		for _, language := range m.Languages {
+			consumers, ok := fixture.Consumers[language]
+			if !ok || len(consumers) != 1 {
 				return nil, fmt.Errorf("shared fixture %s must name exactly one test_id consumer for %s", fixture.ID, language)
 			}
 			if err := requireUnique("shared fixture consumers ("+fixture.ID+":"+language+")", consumers); err != nil {
@@ -1347,8 +1463,8 @@ func validateServerParityContract(contract *serverParityContract) error {
 }
 
 func validateDeploymentProfiles(contract deploymentProfilesContract, parity *serverParityContract) error {
-	if contract.Version != 3 || contract.ApplicationWire != "flowersec/4" {
-		return errors.New("deployment_profiles must declare version 3 and the flowersec/4 application wire")
+	if contract.Version != 5 || contract.ApplicationWire != "flowersec/5" {
+		return errors.New("deployment_profiles must declare version 5 and the flowersec/5 application wire")
 	}
 	expected := []deploymentProfile{
 		{
@@ -1461,8 +1577,8 @@ func validateDeploymentProfileCapabilityBindings(contract deploymentProfilesCont
 }
 
 func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, parity *serverParityContract) error {
-	if contract.Version != 3 || contract.ApplicationWire != "flowersec/4" {
-		return errors.New("deployment profiles must use the current flowersec/4 application wire")
+	if contract.Version != 5 || contract.ApplicationWire != "flowersec/5" {
+		return errors.New("deployment profiles must use the current flowersec/5 application wire")
 	}
 	runtimeOwners := map[string]string{
 		"go/native":          "go",

@@ -1,61 +1,25 @@
 package sessionv4
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"runtime"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
-func TestSessionStreamFactoryRawReadsRenewOnlyOriginalWindow(t *testing.T) {
-	for _, framing := range []string{"stream", "messages"} {
-		t.Run(framing, func(t *testing.T) {
-			cores, _, ctx := factoryCorePair(t, framing, factoryStreamConfig())
-			streams := factoryOpenPair(t, cores, ctx)
-			for role := range 2 {
-				payload := bytes.Repeat([]byte("bounded-credit"), 100)
-				written := make(chan error, 1)
-				go func() {
-					_, err := streams[role].WriteAll(ctx, payload)
-					written <- err
-				}()
-				got := make([]byte, len(payload))
-				for at := 0; at < len(got); {
-					read, err := streams[1-role].ReadInto(ctx, got[at:])
-					if err != nil || read.Progress.Filled == 0 {
-						t.Fatalf("read: %+v, %v", read, err)
-					}
-					at += int(read.Progress.Filled)
-					if used := cores[1-role].plan.receivePool.Outstanding(); used > 64 {
-						t.Fatalf("original window expanded: %d", used)
-					}
-				}
-				if err := <-written; err != nil {
-					t.Fatal(err)
-				}
-				if !bytes.Equal(got, payload) {
-					t.Fatal("raw multi-window payload changed")
-				}
-			}
-		})
-	}
+func factoryStreamConfig() SessionStreamConfig {
+	return SessionStreamConfig{ReceivePoolBytes: 128, ReceiveBytes: 64, InitialReceiveLimit: 64,
+		SendBytes: 64, QueueBytes: 64, WriteWaiters: 2, MaxPlaintext: 128, Chunk: 64, RuntimeBytes: 16384}
 }
 
-func factoryCorePair(t *testing.T, framing string, stream SessionStreamConfig, resources ...func(*resourcev4.Config)) ([2]*SessionCore, *[2]initialCoreFixture, context.Context) {
+func factoryCorePair(t *testing.T, framing string, stream SessionStreamConfig) ([2]*SessionCore, *[2]initialCoreFixture, context.Context) {
 	t.Helper()
 	var fixtures [2]initialCoreFixture
 	pair, configs := initialTestPairPrepared(t, protocolv4.DHProfileX25519, framing, 4,
-		initialCorePrepareWithResources(t, &fixtures, framing == "messages", func(c *SessionCoreConfig) { c.Streams = stream }, func(c *resourcev4.Config) {
-			for _, configure := range resources {
-				configure(c)
-			}
-		}))
+		initialCorePrepareConfig(t, &fixtures, framing == "messages", func(c *SessionCoreConfig) { c.Streams = stream }))
 	results := startInitialCorePair(pair, configs, &fixtures)
 	var cores [2]*SessionCore
 	for role := range 2 {
@@ -88,22 +52,6 @@ type factoryStreamResult struct {
 	err    error
 }
 
-func waitFactoryReceiveWindow(ctx context.Context, stream *StreamOwnership) error {
-	f := stream.flow.receive
-	for {
-		f.pool.mu.Lock()
-		filled := uint64(f.size) == f.capacity && f.observed.Offset == f.limit
-		f.pool.mu.Unlock()
-		if filled {
-			return nil
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		runtime.Gosched()
-	}
-}
-
 func factoryOpenPair(t *testing.T, cores [2]*SessionCore, ctx context.Context) [2]*StreamOwnership {
 	t.Helper()
 	done := make(chan factoryStreamResult, 1)
@@ -113,15 +61,15 @@ func factoryOpenPair(t *testing.T, cores [2]*SessionCore, ctx context.Context) [
 	}()
 	h, err := cores[1].Admission().NextPending(ctx)
 	if err != nil {
-		t.Fatalf("pending OPEN: %v; runtime causes: %v / %v; active: %d / %d", err, cores[0].Runtime().Err(), cores[1].Runtime().Err(), cores[0].Admission().Usage().Active, cores[1].Admission().Usage().Active)
+		t.Fatal(err)
 	}
 	peer, err := cores[1].AcceptStream(ctx, h)
 	if err != nil {
-		t.Fatalf("accept OPEN: %v; runtime causes: %v / %v; active: %d / %d", err, cores[0].Runtime().Err(), cores[1].Runtime().Err(), cores[0].Admission().Usage().Active, cores[1].Admission().Usage().Active)
+		t.Fatal(err)
 	}
 	local := <-done
 	if local.err != nil {
-		t.Fatalf("outgoing OPEN: %v; runtime causes: %v / %v; active: %d / %d", local.err, cores[0].Runtime().Err(), cores[1].Runtime().Err(), cores[0].Admission().Usage().Active, cores[1].Admission().Usage().Active)
+		t.Fatal(local.err)
 	}
 	streams := [2]*StreamOwnership{local.stream, peer}
 	t.Cleanup(func() {

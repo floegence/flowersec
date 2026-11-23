@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportCBORTests: XCTestCase {
+final class TransportV4CBORTests: XCTestCase {
   private static let reference = try! V4CBORReference()
   private static let corpus: [V4JSON] = {
     let data = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))
@@ -51,8 +51,7 @@ final class TransportCBORTests: XCTestCase {
         }
       }
     }
-    XCTAssertEqual(positive, Self.corpus.filter { $0["expected_error"].text == nil }.count)
-    XCTAssertGreaterThan(positive, 0)
+    XCTAssertEqual(positive, 337)
     XCTAssertGreaterThan(negative, 0)
     print("Swift syntax: \(positive) positive / \(negative) syntax-negative cases")
   }

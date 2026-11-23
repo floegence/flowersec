@@ -6,7 +6,6 @@ package protocolv4
 // must still pass the live namespace and durable admission gates.
 type ActivationConfiguration struct {
 	Rules            *NamespaceRules
-	Binding          ActivationTrustBinding
 	Key              [32]byte
 	Delegation, Once []byte
 }
@@ -15,14 +14,9 @@ func (t *NamespaceTrustStore) ResolveActivation(parent *Credential, signingKeyID
 	if parent == nil || parent.scope.Schema != "Artifact" || signingKeyID == "" {
 		return ActivationConfiguration{}, CBORFailure("activation_authority_owner")
 	}
-	sample, sampleErr := t.sampleCurrent()
-	if sampleErr != nil {
-		err := sampleErr
-		return ActivationConfiguration{}, err
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return ActivationConfiguration{}, err
 	}
 	c := &t.configurations[t.count-1]
@@ -45,7 +39,7 @@ func (t *NamespaceTrustStore) ResolveActivation(parent *Credential, signingKeyID
 				return ActivationConfiguration{}, CBORFailure("configuration_capacity")
 			}
 			d, o := copy(delegationOut, delegation), copy(onceOut, once)
-			return ActivationConfiguration{Rules: t.rules, Binding: b, Key: b.Key, Delegation: delegationOut[:d:d], Once: onceOut[:o:o]}, nil
+			return ActivationConfiguration{Rules: t.rules, Key: b.Key, Delegation: delegationOut[:d:d], Once: onceOut[:o:o]}, nil
 		}
 	}
 	return ActivationConfiguration{}, CBORFailure("activation_delegation_authority")

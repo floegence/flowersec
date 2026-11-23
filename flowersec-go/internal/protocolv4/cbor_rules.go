@@ -221,7 +221,7 @@ func (d *Decoder) walkRules(index int, f *wireField, context *wireContext, rules
 	}
 	n := d.nodes[index]
 	if f.TextFormat != "" {
-		if err := rules.textFormat(f.TextFormat, string(d.ruleBytes(index, true)), d.idnaWorkspace()); err != nil {
+		if err := rules.textFormat(f.TextFormat, string(d.ruleBytes(index, true)), &d.idna); err != nil {
 			return err
 		}
 	}
@@ -496,11 +496,6 @@ func (d *Decoder) checkRule(root int, field *wireField, context *wireContext, ru
 			if !ok || target == 0 || s != target {
 				return CBORFailure("error_scope")
 			}
-		case "none":
-			// The normal/non-error registry entry is not legal in an
-			// ERROR frame. Keep map and record decoders on the same
-			// fail-closed error category.
-			return CBORFailure("error_scope")
 		default:
 			return CBORFailure("registry_unresolved")
 		}
@@ -516,7 +511,7 @@ func (d *Decoder) checkRule(root int, field *wireField, context *wireContext, ru
 		if v < 0 || d.nodes[v].major != 3 {
 			return CBORFailure("field_type")
 		}
-		if err := rules.textFormat(rule.Format, string(d.ruleBytes(v, true)), d.idnaWorkspace()); err != nil {
+		if err := rules.textFormat(rule.Format, string(d.ruleBytes(v, true)), &d.idna); err != nil {
 			return err
 		}
 	case "origin_endpoint":

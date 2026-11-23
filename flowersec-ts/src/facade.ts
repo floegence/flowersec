@@ -1,112 +1,67 @@
-// The public contract exposes one current set of original runtime owners.
-export type { V4AdmissionOffer as AdmissionOffer } from "./v4/admissionOffer.js";
-export { V4DuplexBridge as DuplexBridge, V4DuplexBridgeError as DuplexBridgeError } from "./v4/duplexBridge.js";
-export type { V4DuplexBridgeOptions as DuplexBridgeOptions, V4DuplexBridgeProgress as DuplexBridgeProgress, V4DuplexBridgeDirectionProgress as DuplexBridgeDirectionProgress, V4DuplexBridgeResult as DuplexBridgeResult, V4DuplexBridgeFailure as DuplexBridgeFailure } from "./v4/duplexBridge.js";
-export { V4OperationResultRead as OperationResultRead } from "./v4/operationResultRead.js";
-export type { V4OperationResultReadOptions as OperationResultReadOptions, V4OperationResultReadResult as OperationResultReadResult } from "./v4/operationResultRead.js";
-export type { OperationOptions, JsonObject, JsonPrimitive, JsonValue } from "./public/contract.js";
-export { SessionError } from "./public/contract.js";
-export { V4UnreliableMessageError as UnreliableMessageError } from "./v4/unreliable.js";
-export type { V4UnreliableMessages as UnreliableMessages, V4UnreliableMessage as UnreliableMessage, V4UnreliableSendOptions as UnreliableSendOptions, V4UnreliableSendResult as UnreliableSendResult, V4UnreliableReceiveStatus as UnreliableReceiveStatus, V4UnreliableMessageErrorCode as UnreliableMessageErrorCode } from "./v4/unreliable.js";
-export { createStreamMetadata, createStreamMetadataEnvelope, StreamMetadataError } from "./public/streamMetadata.js";
-export type { RawStreamMetadataContract, RawStreamMetadataField, StreamMetadata } from "./public/streamMetadata.js";
-export { asWebStreams, V4WebStreamError as WebStreamError } from "./v4/webStreams.js";
-export type { V4WebStreams as WebStreams, V4WebStreamsOptions as WebStreamsOptions, V4WebStreamFailure as WebStreamFailure } from "./v4/webStreams.js";
-export type { V4LiveAuthorizationConfig as LiveAuthorizationConfig, V4LiveAuthorizationProvider as LiveAuthorizationProvider, V4LiveAuthorizationRequest as LiveAuthorizationRequest } from "./v4/runtime/liveAuthorization.js";
-export { V4Session as Session, V4TransportEnvironment as TransportEnvironment, V4ConnectionMaterial as ConnectionMaterial, V4ReaderCursor as ReaderCursor, V4WriteOperation as WriteOperation, V4OperationHandle as OperationHandle } from "./v4/public.js";
-export type { V4StreamOwner as Stream, V4ConnectionMaterialSource as ConnectionMaterialSource } from "./v4/public.js";
-export { V4ConnectionController as ConnectionController } from "./v4/controller.js";
-export type { V4ControllerConfig as ConnectionControllerOptions, V4ControllerStatus as ConnectionSnapshot, V4ControllerReplaceOptions as ConnectionReplaceOptions, V4ControllerReplaceResult as ConnectionReplaceResult, V4ControllerDispatchOptions as ConnectionDispatchOptions } from "./v4/controller.js";
-export { V4ControllerNotificationSubscription as ControllerNotificationSubscription } from "./v4/controllerNotifications.js";
-export type { V4ControllerNotifications as ControllerNotifications, V4ControllerNotificationObservation as ControllerNotificationObservation,
-  V4ControllerNotificationSourcePhase as ControllerNotificationSourcePhase, V4ControllerNotificationGapReason as ControllerNotificationGapReason,
-  V4ControllerNotificationGap as ControllerNotificationGap, V4ControllerNotificationEvent as ControllerNotificationEvent,
-  V4ControllerNotificationObservationStatus as ControllerNotificationObservationStatus, V4ControllerNotificationSubscriptionOptions as ControllerNotificationSubscriptionOptions,
-  V4ControllerNotificationHandler as ControllerNotificationHandler } from "./v4/controllerNotifications.js";
-export { createV4TransportEnvironment as createTransportEnvironment } from "./v4/runtime/environment.js";
-export { diagnosticDimensions, diagnosticMetrics } from "./v4/diagnostics.js";
-export type { DiagnosticCounts, DiagnosticEvent, DiagnosticFields, DiagnosticMetric, DiagnosticSink, DiagnosticSinkOptions } from "./v4/diagnostics.js";
-export type { V4EnvironmentConfig as EnvironmentConfig, V4EnvironmentClockConfig as EnvironmentClockConfig, V4NamespaceOptions as NamespaceOptions, V4CredentialPolicy as CredentialPolicy, V4CredentialProvider as CredentialProvider, V4CredentialBuffers as CredentialBuffers, V4CredentialLengths as CredentialLengths } from "./v4/runtime/environment.js";
-export { ResourceRoot, ResourceVector } from "./v4/runtime/resources.js";
-export type { ResourceRootConfig, ApplicationResourceProfile, ApplicationResourceLimits } from "./v4/runtime/resources.js";
-export { V4ServiceClient as ServiceClient } from "./v4/serviceClient.js";
-export { createV4ServiceClient as createServiceClient } from "./v4/serviceFactory.js";
-export { V4ServiceDefinition as ServiceDefinition, V4MethodDefinition as MethodDefinition } from "./v4/serviceDefinition.js";
-export { V4MessageStreamDefinition as MessageStreamDefinition, v4BytesMessageCodec as bytesMessageCodec, v4UTF8MessageCodec as utf8MessageCodec, v4ApplicationMessageCodec as applicationMessageCodec } from "./v4/messageDefinition.js";
-export { V4TypedMessageStream as TypedMessageStream, V4MessageStreamError as MessageStreamError } from "./v4/messageStream.js";
-export { V4StreamRegistration as StreamRegistration } from "./v4/streamHandlers.js";
-export type { V4AuthenticatedContext as AuthenticatedContext, V4ApplicationContext as ApplicationContext, V4StreamRegistrationOptions as StreamRegistrationOptions, V4RawStreamHandler as StreamHandler, V4StreamOpenAuthorizer as StreamOpenAuthorizer } from "./v4/streamHandlers.js";
-export type { V4CleanupStatus as CleanupStatus, V4LifecycleObjectKind as LifecycleObjectKind, V4LifecycleState as LifecycleState, V4LifecycleReason as LifecycleReason, V4LifecycleResult as LifecycleResult, V4OperationStatus as OperationStatus, V4ReadProgress as ReadProgress, V4ReadResult as ReadResult, V4WriteProgress as WriteProgress } from "./v4/public.js";
-export { connect, connectMaterial, createConnectionController, serve } from "./v4/entrypoints.js";
-export { ClockRate } from "./v4/runtime/timeArithmetic.js";
-export { V4LivenessError as LivenessError } from "./v4/liveness.js";
-export type { V4LivenessResult as LivenessResult, V4LivenessFailure as LivenessFailure, V4AutomaticLivenessPolicy as AutomaticLivenessPolicy } from "./v4/liveness.js";
-export { V4DrainOperation as DrainOperation, V4DrainError as DrainError } from "./v4/drain.js";
-export type { V4DrainOptions as DrainOptions, V4DrainOutcome as DrainOutcome, V4DrainResult as DrainResult } from "./v4/drain.js";
-export { V4ServiceError as ServiceError } from "./v4/serviceHandlers.js";
-export type { V4OutputInterest as OutputInterest, V4OutputInterestProgress as OutputInterestProgress, V4OutputInterestReason as OutputInterestReason, V4UnaryContext as UnaryContext, V4UnaryHandler as UnaryHandler, V4UnaryAuthorizer as UnaryAuthorizer, V4UnaryHandlerOptions as UnaryHandlerOptions } from "./v4/serviceHandlers.js";
-export type { V4MethodDefinitionOptions as MethodDefinitionOptions, V4ServiceMethods as ServiceMethods, V4ServiceShape as ServiceShape, V4ServiceSemantics as ServiceSemantics, V4ApplicationErrorDefinition as ApplicationErrorDefinition } from "./v4/serviceDefinition.js";
-export { v4UTF8MessageCodec as uTF8MessageCodec } from "./v4/messageDefinition.js";
-export type { V4MessageCodec as MessageCodec, V4MessageDirection as MessageDirection, V4ApplicationMessageCodec as ApplicationMessageCodec } from "./v4/messageDefinition.js";
-export { asTypedMessages } from "./v4/messageStream.js";
-export type { V4MessageStreamOptions as MessageStreamOptions, V4MessageSendOptions as MessageSendOptions, V4MessageReceiveOptions as MessageReceiveOptions, V4MessageSendResult as MessageSendResult, V4MessageReceiveResult as MessageReceiveResult, V4MessageCodecIdentity as MessageCodecIdentity, V4MessageFailure as MessageFailure } from "./v4/messageStream.js";
-export type { V4ApplicationWaitOptions as ApplicationWaitOptions, V4MessageStreamHandler as MessageStreamHandler, V4RawStreamHandler as RawStreamHandler } from "./v4/streamHandlers.js";
-export type { V4ServiceBindOptions as ServiceBindOptions, V4ServiceRefreshOptions as ServiceRefreshOptions, V4ServiceContract as ServiceContract, V4ServiceRefreshResult as ServiceRefreshResult, V4ServiceInfo as ServiceInfo } from "./v4/serviceClient.js";
-export { V4UnaryOperation as UnaryOperation, V4ExecutionUnaryOperation as ExecutionUnaryOperation } from "./v4/unaryOperation.js";
-export type { V4UnaryOptions as UnaryOptions, V4UnaryResult as UnaryResult, V4UnaryStatus as UnaryStatus, V4UnaryStartResult as UnaryStartResult } from "./v4/unaryOperation.js";
-export type { V4ClientServicesConfig as ClientServicesConfig } from "./v4/clientServices.js";
-export { V4OperationReference as OperationReference } from "./v4/operationReference.js";
-export type { V4ExecutionObservation as ExecutionObservation, V4ExecutionManagementResult as ExecutionManagementResult } from "./v4/operationReference.js";
-export { V4OperationReferenceCodec as OperationReferenceCodec, createV4OperationReferenceCodec as createOperationReferenceCodec } from "./v4/operationReferenceCodec.js";
-export type { ServiceBindingTarget } from "./v4/runtime/serviceBindingConfig.js";
-export { V4OperationReferenceStore as OperationReferenceStore, createV4OperationReferenceStore as createOperationReferenceStore } from "./v4/operationReferenceStore.js";
-export type { V4ReferenceStorePolicy as ReferenceStorePolicy, V4ReferenceStoreSave as ReferenceStoreSave, V4ReferenceStoreRecord as ReferenceStoreRecord, V4ReferenceSaveOutcome as ReferenceSaveOutcome, V4ReferenceSaveStatus as ReferenceSaveStatus, V4ReferenceSaveFailure as ReferenceSaveFailure } from "./v4/operationReferenceStore.js";
-export type { V4PrepareAndSaveResult as PrepareAndSaveResult, V4PrepareNotifyAndSaveResult as PrepareNotifyAndSaveResult, V4PrepareStreamAndSaveResult as PrepareStreamAndSaveResult } from "./v4/serviceClient.js";
-export type { RPCExecutionDelegation as ExecutionDelegation } from "./v4/runtime/rpcApplication.js";
-export { V4StaticServiceContracts as StaticServiceContracts, createV4StaticServiceContracts as createStaticServiceContracts } from "./v4/staticServiceContracts.js";
-export type { V4StaticServiceContractInput as StaticServiceContractInput, V4StaticServiceContractOptions as StaticServiceContractOptions } from "./v4/staticServiceContracts.js";
-export { V4ObservationNotifyOperation as ObservationNotifyOperation, V4ExecutionNotifyOperation as ExecutionNotifyOperation } from "./v4/notificationOperation.js";
-export type { V4NotifyOptions as NotifyOptions, V4NotifyStatus as NotifyStatus, V4NotifyStartResult as NotifyStartResult } from "./v4/notificationOperation.js";
-export type { V4NotificationHandler as NotificationHandler, V4NotificationHandlerOptions as NotificationHandlerOptions } from "./v4/serviceHandlers.js";
-export { V4NotificationSubscription as NotificationSubscription } from "./v4/notificationSubscription.js";
-export type { V4Notifications as Notifications, V4NotificationSubscriptionOptions as NotificationSubscriptionOptions, V4ObservationStatus as ObservationStatus, V4NotificationGap as NotificationGap, V4NotificationWaitOptions as NotificationWaitOptions, V4NotificationClosedResult as NotificationClosedResult } from "./v4/notificationSubscription.js";
-export { V4StreamingOperation as StreamingOperation, V4ExecutionStreamingOperation as ExecutionStreamingOperation } from "./v4/streamingOperation.js";
-export type { V4StreamingOptions as StreamingOptions, V4StreamingItem as StreamingItem, V4StreamingStatus as StreamingStatus, V4StreamingAbandonResult as StreamingAbandonResult } from "./v4/streamingOperation.js";
-export type { V4StreamWriter as StreamWriter, V4StreamingHandler as StreamingHandler, V4StreamingHandlerOptions as StreamingHandlerOptions, V4StreamingImplementation as StreamingImplementation } from "./v4/serviceHandlers.js";
-export { V4ByteEventSource as ByteEventSource, v4ByteEventSource as byteEventSource } from "./v4/eventSource.js";
-export type { V4ByteEventPublisher as ByteEventPublisher, V4ByteEventSourceOptions as ByteEventSourceOptions, V4EventPublishResult as EventPublishResult, V4EventSourceDisposer as EventSourceDisposer } from "./v4/eventSource.js";
-export { issueV4Checkpoint as issueCheckpoint } from "./v4/checkpoint.js";
-export type { V4Checkpoint as Checkpoint, V4CheckpointTarget as CheckpointTarget, V4CheckpointIssuanceOptions as CheckpointIssuanceOptions, V4CheckpointResult as CheckpointResult } from "./v4/checkpoint.js";
-export { v4RecoveryProgress as recoveryProgress } from "./v4/resume.js";
-export type { V4ResumeResult as ResumeResult, V4ResumeProgress as ResumeProgress } from "./v4/resume.js";
-export { saveV4StreamContent as saveStreamContent, readV4RetainedContent as readRetainedContent } from "./v4/streamContent.js";
-export type { V4StreamContentDefinition as StreamContentDefinition, V4ContentObservation as ContentObservation } from "./v4/streamContent.js";
-export { V4MaintenanceOwner as MaintenanceOwner, createV4MaintenanceOwner as createMaintenanceOwner } from "./v4/responsePublication.js";
-export type { V4ResponsePublication as ResponsePublication, V4PublicationTransfer as PublicationTransfer } from "./v4/responsePublication.js";
-export type { V4ServiceClientSource as ServiceClientSource, V4ServiceClientGroups as ServiceClientGroups, V4ServiceSourceGroup as ServiceSourceGroup } from "./v4/serviceFactory.js";
-export type { V4ControllerConfig as ControllerConfig, V4ControllerReplaceOptions as ControllerReplaceOptions, V4ControllerReplaceResult as ControllerReplaceResult, V4ControllerStatus as ControllerStatus, V4ControllerInitializationContext as ControllerInitializationContext, V4ControllerStreamDeclaration as ControllerStreamDeclaration } from "./v4/controller.js";
-export { v4ServiceDependency as serviceDependency } from "./v4/serviceDependencies.js";
-export type { V4ServiceDependency as ServiceDependency, V4ServiceDependencies as ServiceDependencies, V4DispatchRequirement as DispatchRequirement, V4InvocationServices as InvocationServices } from "./v4/serviceDependencies.js";
-export type { InitializerWorkloadConfig } from "./v4/runtime/initializerWorkload.js";
-export { ServeHandle, ServeListener, ServeError } from "./v4/serve.js";
-export type { ServeOptions, ServeCallbacks, ServeRequestContext, AuthenticatedRequestContext, AuthorizeApplicationResult, ApplicationAuthorizationLease, ServeReleaseContext, ServeFailure } from "./v4/serve.js";
-export { createHandlerPlan, HandlerPlan } from "./v4/handlerPlan.js";
-export type { HandlerPlanOptions, HandlerServices } from "./v4/handlerPlan.js";
-export type { V4ApplicationProfile as ApplicationProfile, V4ReliableProgress as ReliableProgress, V4BoundStreamInputIsolation as BoundStreamInputIsolation, V4ConsumerTLS13Verification as ConsumerTLS13Verification, V4ConnectionGuaranteeScope as ConnectionGuaranteeScope, V4ConnectionGuaranteeAssumptions as ConnectionGuaranteeAssumptions } from "./generated/transportV4APIResults.js";
-export type { V4ConnectionRequirements as ConnectionRequirements, V4ConnectionGuarantees as ConnectionGuarantees, V4SessionInfo as SessionInfo, V4Direction as Direction, V4ReadTerminal as ReadTerminal, V4WaitStatus as WaitStatus } from "./generated/transportV4APIResults.js";
-export type { V4StreamStatus as StreamStatus, V4ReadCause as ReadCause, V4CleanupState as CleanupState, V4CoreCleanup as CoreCleanup, V4WritePhase as WritePhase, V4WriteTerminalReason as WriteTerminalReason } from "./generated/transportV4APIResults.js";
-export type { V4DuplexEndpointKind as DuplexEndpointKind, V4DuplexOutcome as DuplexOutcome, V4ResponsePublicationState as ResponsePublicationState, V4ResponsePublicationCause as ResponsePublicationCause, V4PublicationTransferResult as PublicationTransferResult, V4ErrorCode as ErrorCode } from "./generated/transportV4APIResults.js";
-export type { V4ErrorScope as ErrorScope, V4RetryDisposition as RetryDisposition, V4TypedError as TypedError, V4ReadMethodFailureReason as ReadMethodFailureReason, V4ReaderCursorSnapshot as ReaderCursorSnapshot, V4ReadMethodFailure as ReadMethodFailure } from "./generated/transportV4APIResults.js";
-export type { V4CloseResult as CloseResult, V4TransferProgress as TransferProgress, V4DuplexSendResult as DuplexSendResult, V4DuplexDirectionResult as DuplexDirectionResult, V4DuplexResult as DuplexResult, V4ResponsePublicationStatus as ResponsePublicationStatus } from "./generated/transportV4APIResults.js";
-export type { V4TopUpWireResult as TopUpWireResult, V4TopUpErrorCode as TopUpErrorCode, V4TopUpErrorScope as TopUpErrorScope, V4TopUpWriteAction as TopUpWriteAction, V4TopUpError as TopUpError } from "./generated/transportV4APIResults.js";
-export { V4ReadMethodError as ReadMethodError } from "./v4/public.js";
+import type { Session as PublicSession } from "./public/contract.js";
+import type {
+  ConnectionControllerSnapshotV3 as CoreConnectionControllerSnapshotV3,
+  ConnectionControllerV3 as CoreConnectionControllerV3,
+} from "./v3/connectionController.js";
 
-export type { ConnectionDiagnostic, ConnectionDiagnosticState, ConnectionDiagnosticState as ConnectionState, ConnectionDiagnosticFailure, ConnectionFailurePhase, ConnectionFailureCode, ConnectionAttemptFacts, ConnectionPhase } from "./v4/connectionDiagnostic.js";
-export { ConnectionError } from "./v4/connectionDiagnostic.js";
-export type { LocalReport, LocalReportCode } from "./v4/localReport.js";
-
-export { V4PreauthorizedPoolSource as PreauthorizedPoolSource, V4TopUpHandle as TopUpHandle } from "./v4/poolSource.js";
-export type { V4PoolSourceConfiguration as PoolSourceConfiguration, V4TopUpOptions as TopUpOptions, V4TopUpState as TopUpState, V4TopUpResult as TopUpResult, V4TopUpControlTransport as TopUpControlTransport, V4TopUpExchangeResult as TopUpExchangeResult } from "./v4/poolSource.js";
-
-export { createV4SessionPoolControl as createSessionPoolControl } from "./v4/poolControl.js";
-export type { V4PoolControlReplyDecoder as PoolControlReplyDecoder } from "./v4/poolControl.js";
+export type {
+  ByteStream,
+  IncomingStream,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  OperationOptions,
+  RpcPeer,
+  RpcResult,
+  SessionErrorCode,
+  UnreliableMessageErrorCode,
+  StreamOpenOptions,
+  UnreliableMessageChannel,
+  UnreliableMessageSendOptions,
+  UnreliableMessageSendResult,
+  SessionTermination,
+  Session,
+} from "./public/contract.js";
+export { SessionError, UnreliableMessageError } from "./public/contract.js";
+export { createStreamMetadata, StreamMetadataError } from "./public/streamMetadata.js";
+export type { StreamMetadata } from "./public/streamMetadata.js";
+export {
+  HandlerRegistrationError,
+  StreamHandlers,
+} from "./public/streamHandlers.js";
+export type {
+  StreamHandler,
+  StreamHandlerOptions,
+} from "./public/streamHandlers.js";
+export {
+  ArtifactHandleV3 as Artifact,
+  ArtifactParseErrorV3 as ArtifactError,
+  createArtifactLeaseV3 as createArtifactLease,
+  parseArtifactV3 as parseArtifact,
+} from "./v3/publicApi.js";
+export type {
+  ArtifactParseErrorCodeV3 as ArtifactErrorCode,
+} from "./v3/publicApi.js";
+export {
+  ArtifactLeaseV3 as ArtifactLease,
+  ArtifactLeaseV3Error as ArtifactLeaseError,
+} from "./v3/artifactLease.js";
+export type {
+  ArtifactSourceResultV3 as ArtifactSourceResult,
+  ArtifactSourceV3 as ArtifactSource,
+  ConnectionDiagnosticV3 as ConnectionDiagnostic,
+  ConnectionControllerFailureV3 as ConnectionControllerFailure,
+  ConnectionControllerStateV3 as ConnectionState,
+} from "./v3/connectionController.js";
+export { connectionDiagnosticV3 as connectionDiagnostic } from "./v3/connectionController.js";
+export type ConnectionController = CoreConnectionControllerV3<PublicSession>;
+export type ConnectionSnapshot = CoreConnectionControllerSnapshotV3<PublicSession>;
+export type ConnectionControllerOptions = Readonly<{ maximumAttempts?: number }>;
+export {
+  ConnectionControllerV3Error as ConnectionControllerError,
+} from "./v3/connectionController.js";
+export { ConnectErrorV3 as ConnectError } from "./v3/security.js";
+export type {
+  PublicConnectErrorCodeV3 as ConnectErrorCode,
+  RetryDispositionV3 as RetryDisposition,
+} from "./v3/security.js";

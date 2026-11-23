@@ -8,15 +8,14 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var ErrNotificationCleanupIncomplete = errors.New("sessionv4: notification cleanup incomplete")
@@ -31,16 +30,13 @@ const (
 // NotificationMethod is trusted local scheduling policy for one exact method
 // definition. Alternate contracts of that method share one subscriber count.
 type NotificationMethod struct {
-	Dependencies []ServiceDependency
-	services     *invocationServices
-	Method       uint32
-	WorkClass    ApplicationWorkClass
+	Method    uint32
+	WorkClass ApplicationWorkClass
 	// ExecutionHandler is the unique business handler for execution semantics.
 	// Observation methods have only independent local subscription callbacks.
 	ExecutionHandler func(context.Context, NotificationRequest) error
 }
 type NotificationDispatchConfig struct {
-	dependencyPreparation              *rpcDependencyPreparation
 	Root                               *resourcev4.Root
 	Owner                              resourcev4.OwnerKey
 	Accounts                           []resourcev4.Account
@@ -62,9 +58,6 @@ type notificationMethod struct {
 // Advance is driven by the existing Environment coordinator, never a polling
 // goroutine or timer for each subscription. Readers only enqueue SDK work.
 type NotificationDispatch struct {
-	controllerVisits                                      uint32
-	declarationPreparing                                  bool
-	closingSamples                                        uint32
 	durableProvider                                       *ServiceDispatch
 	durableCursor                                         int
 	lastExecutionRejection                                string
@@ -86,7 +79,6 @@ type NotificationDispatch struct {
 	runtimeBytes, deliveryRuntimeBytes, waitMS, cleanupMS uint64
 	reservation, planBorrow                               resourcev4.Reference
 	closed, activated, advancing, admitting, cleaned      bool
-	draining                                              atomic.Bool
 	done                                                  chan struct{}
 }
 
@@ -96,9 +88,8 @@ type NotificationDispatch struct {
 // owned; wire length never claims to bound that graph. Both callbacks execute
 // serially under the same original ordinary executor task.
 type NotificationObserver struct {
-	Dependencies []ServiceDependency
-	Decode       func(context.Context, []byte) (any, error)
-	Handle       func(context.Context, any) error
+	Decode func(context.Context, []byte) (any, error)
+	Handle func(context.Context, any) error
 }
 
 type NotificationStatus struct {
@@ -112,8 +103,6 @@ type NotificationStatus struct {
 // waiting. Release is used by the language binding when the caller relinquishes
 // this compact handle; retaining status continues to retain its real charge.
 type NotificationSubscription struct {
-	controller                         *controllerNotificationRoot
-	observation                        NotificationObservationStatus
 	mu                                 sync.Mutex
 	token                              *notificationToken
 	status                             NotificationStatus
@@ -132,26 +121,18 @@ type NotificationSubscription struct {
 }
 
 type notificationToken struct {
-	controllerSource     *controllerNotificationSource
-	identity             uint64
-	closingSamples       uint32
-	services             *invocationServices
-	dispatch             *NotificationDispatch
-	subscription         *NotificationSubscription
-	method               notificationMethod
-	observer             NotificationObserver
-	policy               NotificationPendingPolicy
-	jobs                 [17]*notificationDelivery
-	active               *notificationDelivery
-	serial               uint64
-	closed               bool
-	preparing            bool
-	declarationPreparing bool
-	reservation          resourcev4.Reference
-	dependencies         resourcev4.Reference
+	dispatch     *NotificationDispatch
+	subscription *NotificationSubscription
+	method       notificationMethod
+	observer     NotificationObserver
+	policy       NotificationPendingPolicy
+	jobs         [17]*notificationDelivery
+	active       *notificationDelivery
+	serial       uint64
+	closed       bool
+	reservation  resourcev4.Reference
 }
 type notificationDelivery struct {
-	services                     *invocationServices
 	token                        *notificationToken
 	serial                       uint64
 	payload                      []byte
@@ -164,7 +145,6 @@ type notificationDelivery struct {
 }
 type notificationInvocationKey struct{}
 type notificationInvocation struct {
-	root   *controllerNotificationRoot
 	token  *notificationToken
 	parent *notificationInvocation
 }
@@ -177,19 +157,7 @@ func NotificationDispatchCharge(c NotificationDispatchConfig) (resourcev4.Vector
 		return resourcev4.Vector{}, err
 	}
 	hasExecution := false
-	var dependencies resourcev4.Vector
 	for i, m := range c.Methods {
-		if m.ExecutionHandler == nil && len(m.Dependencies) != 0 {
-			return resourcev4.Vector{}, cryptov4.ErrConfiguration
-		}
-		charge, err := serviceDependenciesCharge(m.Dependencies)
-		if err != nil {
-			return resourcev4.Vector{}, err
-		}
-		dependencies, err = dependencies.Add(charge)
-		if err != nil {
-			return resourcev4.Vector{}, err
-		}
 		hasExecution = hasExecution || m.ExecutionHandler != nil
 		if m.WorkClass > ApplicationResident {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
@@ -205,18 +173,10 @@ func NotificationDispatchCharge(c NotificationDispatchConfig) (resourcev4.Vector
 	}
 	n := uint64(unsafe.Sizeof(NotificationDispatch{})) + uint64(len(c.Methods))*(uint64(unsafe.Sizeof(notificationMethod{}))+128)
 	n += uint64(c.ExecutionSlots) * uint64(unsafe.Sizeof((*notificationExecution)(nil)))
-	charge, err := (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: uint64(1 + len(c.Methods))}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	return charge.Add(dependencies)
+	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: uint64(1 + len(c.Methods))}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 
 func (p *SessionPlan) InstallNotifications(c NotificationDispatchConfig, routes *rpcv4.ContractRoutes, metadata resourcev4.Reference) (*NotificationDispatch, error) {
-	return p.installNotifications(c, routes, metadata, resourcev4.Reference{}, resourcev4.Reference{})
-}
-
-func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes *rpcv4.ContractRoutes, metadata, planBorrow, registryBorrow resourcev4.Reference) (*NotificationDispatch, error) {
 	if p == nil || routes == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -226,7 +186,7 @@ func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes 
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.claimed || p.registrationPreparing || p.notifications != nil || !p.config.Services {
+	if p.closed || p.claimed || p.notifications != nil || !p.config.Services {
 		return nil, cryptov4.ErrTransition
 	}
 	if err := metadata.CheckAllocationScope(c.Root, c.Owner, c.Accounts); err != nil {
@@ -239,12 +199,7 @@ func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes 
 	if err != nil {
 		return nil, err
 	}
-	var borrow resourcev4.Reference
-	if planBorrow == (resourcev4.Reference{}) {
-		borrow, err = p.reservation.Borrow()
-	} else {
-		borrow, err = planBorrow.TakeBorrow()
-	}
+	borrow, err := p.reservation.Borrow()
 	if err != nil {
 		owned.Release()
 		return nil, err
@@ -262,11 +217,7 @@ func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes 
 		d.methods[i] = notificationMethod{method: m, policy: policy}
 	}
 	if c.ExecutionSlots != 0 {
-		if registryBorrow == (resourcev4.Reference{}) {
-			d.registryBorrow, err = c.ExecutionRegistry.Borrow(owned)
-		} else {
-			d.registryBorrow, err = registryBorrow.TakeBorrow()
-		}
+		d.registryBorrow, err = c.ExecutionRegistry.Borrow(owned)
 		if err != nil {
 			borrow.Release()
 			owned.Release()
@@ -275,37 +226,6 @@ func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes 
 		d.executionRegistry = c.ExecutionRegistry
 		d.executions = make([]*notificationExecution, c.ExecutionSlots)
 	}
-	p.registrationPreparing = true
-	p.mu.Unlock()
-	for i, method := range c.Methods {
-		d.methods[i].method.services, err = c.dependencyPreparation.take(notificationDependencyAdmission, i, method.Dependencies, owned)
-		d.methods[i].method.Dependencies = nil
-		if err != nil {
-			break
-		}
-	}
-	p.mu.Lock()
-	p.registrationPreparing = false
-	if err == nil && (p.closed || p.claimed || p.notifications != nil) {
-		err = cryptov4.ErrTransition
-	}
-	if err != nil {
-		for _, installed := range d.methods {
-			installed.method.services.close()
-		}
-		d.registryBorrow.Release()
-		borrow.Release()
-		owned.Release()
-		return nil, err
-	}
-	installed := false
-	defer func() {
-		if !installed {
-			for _, method := range d.methods {
-				method.method.services.close()
-			}
-		}
-	}()
 	for _, method := range d.methods {
 		if method.policy.Semantics != 1 || method.policy.ExecutionMode != 1 {
 			continue
@@ -334,7 +254,6 @@ func (p *SessionPlan) installNotifications(c NotificationDispatchConfig, routes 
 	p.lease.mu.Lock()
 	p.lease.notifications = d
 	p.lease.mu.Unlock()
-	installed = true
 	return d, nil
 }
 
@@ -366,10 +285,6 @@ func (l *ApplicationLease) SetNotificationAccess(namespace string, typeID uint32
 // Lock order is original endpoint -> lease -> notification gate. No application
 // callback executes in the action; Close and revocation share these gates.
 func (d *NotificationDispatch) withAuthority(method uint32, action func(notificationMethod) error) error {
-	return d.withAuthoritySample(method, func(m notificationMethod, _ timev4.Sample) error { return action(m) })
-}
-
-func (d *NotificationDispatch) withAuthoritySample(method uint32, action func(notificationMethod, timev4.Sample) error) error {
 	d.mu.Lock()
 	p := d.plan
 	d.mu.Unlock()
@@ -380,7 +295,7 @@ func (d *NotificationDispatch) withAuthoritySample(method uint32, action func(no
 	if err != nil {
 		return err
 	}
-	return a.WithCurrentAuthorizationSample(func(sample timev4.Sample) error {
+	return a.WithCurrentAuthorization(func() error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if l.revoked || l.authorization != a {
@@ -393,7 +308,7 @@ func (d *NotificationDispatch) withAuthoritySample(method uint32, action func(no
 		}
 		for _, m := range d.methods {
 			if m.method.Method == method && m.allowed {
-				return action(m, sample)
+				return action(m)
 			}
 		}
 		return ErrApplicationAuthorization
@@ -426,16 +341,8 @@ func (d *NotificationDispatch) Subscribe(method uint32, policy NotificationPendi
 	if d == nil || policy > NotificationLatestPending || observer.Decode == nil || observer.Handle == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
-	// Validate the bounded declaration shape without joining a client gate.
-	// Capacity qualification follows the reserved construction token, so Close
-	// and authorization can still observe and retire an in-progress binding.
-	_, err := serviceDependenciesChargeFor(observer.Dependencies, false)
-	if err != nil {
-		return nil, err
-	}
 	var subscription *NotificationSubscription
-	var token *notificationToken
-	err = d.withAuthority(method, func(m notificationMethod) error {
+	err := d.withAuthority(method, func(m notificationMethod) error {
 		if policy == NotificationLatestPending && m.policy.Semantics != 0 {
 			return cryptov4.ErrConfiguration
 		}
@@ -470,76 +377,16 @@ func (d *NotificationDispatch) Subscribe(method uint32, policy NotificationPendi
 		}
 		s := &NotificationSubscription{reservation: refs[1], root: d.root, owner: d.owner, accountCount: d.accountCount, clock: d.clock, waitMS: d.waitMS, runtimeBytes: d.runtimeBytes, identity: d.serial, done: make(chan struct{}), closing: make(chan struct{})}
 		copy(s.accounts[:], d.accounts[:])
-		m.method = NotificationMethod{Method: m.method.Method, WorkClass: m.method.WorkClass}
-		t := &notificationToken{dispatch: d, subscription: s, method: m, policy: policy, reservation: refs[0], preparing: true, identity: d.serial}
+		t := &notificationToken{dispatch: d, subscription: s, method: m, observer: observer, policy: policy, reservation: refs[0]}
 		s.token = t
 		d.tokens[index] = t
-		subscription, token = s, t
+		subscription = s
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	// The reserved token pins its original slot and dispatcher during local
-	// dependency construction. No input or callback can enter it yet.
-	dependencyCharge, err := serviceDependenciesCharge(observer.Dependencies)
-	var dependencyBacking resourcev4.Reference
-	if err == nil && dependencyCharge != (resourcev4.Vector{}) {
-		err = d.withAuthority(method, func(notificationMethod) error {
-			if token.closed || !token.preparing {
-				return rpcv4.ErrClosed
-			}
-			var refs [1]resourcev4.Reference
-			if err := d.reserveLocked([]resourcev4.Vector{dependencyCharge}, refs[:]); err != nil {
-				return err
-			}
-			dependencyBacking = refs[0]
-			return nil
-		})
-	}
-	defer func() { dependencyBacking.Release() }()
-	var services *invocationServices
-	if err == nil {
-		services, err = newInvocationServices(observer.Dependencies, dependencyBacking)
-	}
-	if err == nil {
-		err = d.withAuthority(method, func(notificationMethod) error {
-			if token.closed || !token.preparing {
-				return rpcv4.ErrClosed
-			}
-			observer.Dependencies = nil
-			token.services, token.observer, token.preparing = services, observer, false
-			token.dependencies, dependencyBacking = dependencyBacking, resourcev4.Reference{}
-			return nil
-		})
-	}
-	if err != nil {
-		services.close()
-		d.mu.Lock()
-		token.preparing = false
-		if token.closed {
-			token.advanceLocked(timev4.Sample{})
-		} else {
-			// This token never published a successful subscription or admitted
-			// a callback. Retire it without a caller-visible cleanup window.
-			token.closeLocked(timev4.Mark{}, timev4.ErrUnavailable)
-		}
-		d.cleanupLocked()
-		d.mu.Unlock()
-		_ = subscription.Release()
-		return nil, err
-	}
-	return subscription, nil
+	return subscription, err
 }
 
 func (t *notificationToken) gapLocked(reason string) {
-	if source := t.controllerSource; source != nil {
-		n := source.root
-		n.mu.Lock()
-		n.recordGapLocked(source.generation, source.generation, notificationReason(reason), 1, false)
-		n.mu.Unlock()
-		return
-	}
 	s := t.subscription
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -549,14 +396,7 @@ func (t *notificationToken) gapLocked(reason string) {
 	s.status.LastGap = reason
 }
 
-func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []byte, sample timev4.Sample, contracts ...[32]byte) error {
-	if source := t.controllerSource; source != nil {
-		digest := source.digest
-		if len(contracts) == 1 {
-			digest = contracts[0]
-		}
-		return source.enqueueLocked(deadline, payload, sample, digest)
-	}
+func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []byte) error {
 	d := t.dispatch
 	if t.closed || t.serial == math.MaxUint64 {
 		return rpcv4.ErrClosed
@@ -584,7 +424,7 @@ func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []b
 	if err = d.reserveLocked([]resourcev4.Vector{metadata, d.plan.executor.TaskCharge()}, refs[:]); err != nil {
 		return err
 	}
-	deadline, err = deadline.ForkAt(deadline.Cap(), sample)
+	deadline, err = deadline.Fork(deadline.Cap())
 	if err != nil {
 		for _, ref := range refs {
 			ref.Release()
@@ -611,7 +451,7 @@ func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []b
 		}
 	}
 	t.jobs[index] = j
-	t.advanceLocked(sample)
+	t.advanceLocked()
 	return nil
 }
 
@@ -620,7 +460,7 @@ func (d *NotificationDispatch) Admit(receiver *rpcv4.NotifyReceiver) (err error)
 		return rpcv4.ErrOwner
 	}
 	d.mu.Lock()
-	attached := !d.closed && !d.draining.Load() && (d.channels[0] == receiver || d.channels[1] == receiver)
+	attached := !d.closed && (d.channels[0] == receiver || d.channels[1] == receiver)
 	busy := d.admitting
 	if attached && !busy {
 		d.admitting = true
@@ -668,17 +508,17 @@ func (d *NotificationDispatch) Admit(receiver *rpcv4.NotifyReceiver) (err error)
 		adopted, err = d.admitExecution(m, method, policy)
 		return err
 	}
-	return d.withAuthoritySample(method, func(local notificationMethod, sample timev4.Sample) error {
-		return m.FanoutObservationAt(sample, func(method uint32, policy protocolv4.ServiceContractPolicy, deadline *timev4.Deadline, payload []byte) error {
+	return d.withAuthority(method, func(local notificationMethod) error {
+		return m.FanoutObservation(func(method uint32, policy protocolv4.ServiceContractPolicy, deadline *timev4.Deadline, payload []byte) error {
 			if local.policy.Namespace != policy.Namespace || local.policy.Type != policy.Type || local.policy.Semantics != 0 {
 				return rpcv4.ErrMethod
 			}
-			if err := deadline.CheckAt(sample); err != nil {
+			if err := deadline.Check(); err != nil {
 				return err
 			}
 			for _, t := range d.tokens {
-				if t != nil && !t.closed && !t.preparing && t.method.method.Method == method {
-					if err := t.enqueueLocked(deadline, payload, sample, policy.Digest); err != nil {
+				if t != nil && !t.closed && t.method.method.Method == method {
+					if err := t.enqueueLocked(deadline, payload); err != nil {
 						t.gapLocked("dropped_budget")
 					}
 				}
@@ -688,20 +528,13 @@ func (d *NotificationDispatch) Admit(receiver *rpcv4.NotifyReceiver) (err error)
 	})
 }
 
-func (t *notificationToken) advanceLocked(sample timev4.Sample) {
-	if source := t.controllerSource; source != nil {
-		source.advanceTokenLocked()
-		return
-	}
-	if t.preparing {
-		return
-	}
+func (t *notificationToken) advanceLocked() {
 	d := t.dispatch
 	for index, j := range t.jobs {
 		if j == nil {
 			continue
 		}
-		if !j.canceled && (t.closed || j.deadline.CheckAt(sample) != nil) {
+		if !j.canceled && (t.closed || j.deadline.Check() != nil) {
 			j.canceled = true
 			j.cancel(rpcv4.ErrClosed)
 			if j.queued != nil {
@@ -730,14 +563,28 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 		j.payload = nil
 		j.reservation.Release()
 		j.taskReservation.Release()
-		j.services.releaseInvocation()
-		j.services = nil
 		j.reservation, j.taskReservation = resourcev4.Reference{}, resourcev4.Reference{}
 		j.ctx, j.cancel, j.deadline, j.queued, j.token = nil, nil, nil, nil, nil
 		t.jobs[index] = nil
 	}
-	if !t.closed && t.active == nil && t.services == nil {
-		t.queueNextLocked()
+	if !t.closed && t.active == nil {
+		var next *notificationDelivery
+		for _, j := range t.jobs {
+			if j != nil && !j.canceled && (next == nil || j.serial < next.serial) {
+				next = j
+			}
+		}
+		if next != nil {
+			q, err := d.plan.executor.queueApplication(d.plan.applicationGroup, t.method.method.WorkClass, next.taskReservation, next.reservation, next.run)
+			if err != nil {
+				next.canceled = true
+				next.cancel(err)
+				t.gapLocked("dropped_budget")
+			} else {
+				next.queued = q
+				t.active = next
+			}
+		}
 	}
 	s := t.subscription
 	s.mu.Lock()
@@ -752,7 +599,7 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 			}
 		}
 	}
-	if t.closed && t.closingSamples == 0 && !t.declarationPreparing && s.status.Pending == 0 && s.status.Running == 0 {
+	if t.closed && s.status.Pending == 0 && s.status.Running == 0 {
 		s.status.CleanupComplete = true
 		s.token = nil
 		for i, current := range d.tokens {
@@ -761,10 +608,6 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 				break
 			}
 		}
-		t.services.close()
-		t.services = nil
-		t.dependencies.Release()
-		t.dependencies = resourcev4.Reference{}
 		t.reservation.Release()
 		t.reservation = resourcev4.Reference{}
 		t.observer = NotificationObserver{}
@@ -772,36 +615,6 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 		t.dispatch = nil
 		t.subscription = nil
 		close(s.done)
-	}
-}
-
-func (t *notificationToken) queueNextLocked() {
-	if t.controllerSource != nil {
-		return
-	}
-	d := t.dispatch
-	if !t.closed && !t.preparing && t.active == nil {
-		var next *notificationDelivery
-		for _, j := range t.jobs {
-			if j != nil && !j.canceled && (next == nil || j.serial < next.serial) {
-				next = j
-			}
-		}
-		if next != nil {
-			if err := t.services.retainRegistration(); err != nil {
-				return
-			}
-			next.services = t.services
-			q, err := d.plan.executor.queueApplication(d.plan.applicationGroup, t.method.method.WorkClass, next.taskReservation, next.reservation, next.run)
-			if err != nil {
-				next.canceled = true
-				next.cancel(err)
-				t.gapLocked("dropped_budget")
-			} else {
-				next.queued = q
-				t.active = next
-			}
-		}
 	}
 }
 
@@ -821,11 +634,11 @@ func (j *notificationDelivery) run() {
 			t.gapLocked(reason)
 		}
 	}()
-	err := d.withAuthoritySample(t.method.method.Method, func(_ notificationMethod, sample timev4.Sample) error {
+	err := d.withAuthority(t.method.method.Method, func(notificationMethod) error {
 		if t.closed || j.canceled || j.ctx.Err() != nil {
 			return rpcv4.ErrClosed
 		}
-		if err := j.deadline.CheckAt(sample); err != nil {
+		if err := j.deadline.Check(); err != nil {
 			return err
 		}
 		j.entered = true
@@ -848,21 +661,17 @@ func (j *notificationDelivery) run() {
 		return
 	}
 	defer exit()
-	if err := attachInvocationServices(callCtx, j.services); err != nil {
-		reason, returned = "dependency_unavailable", true
-		return
-	}
 	value, err := t.observer.Decode(callCtx, j.payload)
 	if err != nil {
 		reason = "decode_error"
 		returned = true
 		return
 	}
-	if err = d.withAuthoritySample(t.method.method.Method, func(_ notificationMethod, sample timev4.Sample) error {
+	if err = d.withAuthority(t.method.method.Method, func(notificationMethod) error {
 		if t.closed || j.canceled || j.ctx.Err() != nil {
 			return rpcv4.ErrClosed
 		}
-		return j.deadline.CheckAt(sample)
+		return j.deadline.Check()
 	}); err != nil {
 		reason = "delivery_unavailable"
 		returned = true
@@ -953,8 +762,6 @@ func (d *NotificationDispatch) Advance() {
 	for index := range d.tokens {
 		d.mu.Lock()
 		t := d.tokens[index]
-		controllerSource := t != nil && t.controllerSource != nil
-		preReady := controllerSource && !d.activated && !d.closed
 		var method uint32
 		if t != nil {
 			method = t.method.method.Method
@@ -963,35 +770,7 @@ func (d *NotificationDispatch) Advance() {
 		if t == nil {
 			continue
 		}
-		if preReady {
-			continue
-		}
-		if controllerSource {
-			err := d.withAuthority(method, func(notificationMethod) error { return nil })
-			d.mu.Lock()
-			if d.tokens[index] == t {
-				if err != nil {
-					t.closed = true
-				}
-				t.advanceLocked(timev4.Sample{})
-			}
-			d.mu.Unlock()
-			continue
-		}
-		var sample timev4.Sample
-		err := d.withAuthoritySample(method, func(_ notificationMethod, now timev4.Sample) error { sample = now; return nil })
-		var dependencyErr error
-		d.mu.Lock()
-		var services *invocationServices
-		if d.tokens[index] == t {
-			services = t.services
-			dependencyErr = services.retainRegistration()
-		}
-		d.mu.Unlock()
-		retained := dependencyErr == nil
-		if retained && services != nil && err == nil {
-			dependencyErr = services.requiredReady(context.Background())
-		}
+		err := d.withAuthority(method, func(notificationMethod) error { return nil })
 		d.mu.Lock()
 		if d.tokens[index] == t {
 			if err != nil {
@@ -1005,15 +784,9 @@ func (d *NotificationDispatch) Advance() {
 					}
 				}
 			}
-			t.advanceLocked(sample)
-			if d.tokens[index] == t && t.services == services && dependencyErr == nil {
-				t.queueNextLocked()
-			}
+			t.advanceLocked()
 		}
 		d.mu.Unlock()
-		if retained {
-			services.releaseInvocation()
-		}
 	}
 	d.mu.Lock()
 	d.advancing = false
@@ -1021,132 +794,69 @@ func (d *NotificationDispatch) Advance() {
 	d.mu.Unlock()
 }
 
-// The original close sample precedes this finite gate. It may conservatively
-// precede the winning close, but is never replaced by a later wait or Close.
-func (t *notificationToken) closeLocked(mark timev4.Mark, sampleErr error) {
-	if t.controllerSource != nil {
-		t.closed = true
-		t.advanceLocked(timev4.Sample{})
+func (t *notificationToken) closeLocked() {
+	if t.closed {
 		return
 	}
-	if !t.closed {
-		t.closed = true
-		t.services.close()
-		s := t.subscription
-		s.mu.Lock()
-		s.status.Closed = true
-		s.cleanupError = sampleErr
-		if sampleErr == nil {
-			s.cleanup, s.cleanupError = timev4.NewWindowAt(s.clock, mark, t.dispatch.cleanupMS)
-		}
-		close(s.closing)
-		s.mu.Unlock()
-	}
-	t.advanceLocked(timev4.Sample{})
+	t.closed = true
+	s := t.subscription
+	s.mu.Lock()
+	s.status.Closed = true
+	s.cleanup, s.cleanupError = timev4.NewWindow(s.clock, t.dispatch.cleanupMS)
+	close(s.closing)
+	s.mu.Unlock()
+	t.advanceLocked()
 }
-
 func (s *NotificationSubscription) Close() {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	controller := s.controller
 	t := s.token
-	var d *NotificationDispatch
-	if t != nil {
-		d = t.dispatch
-	}
 	s.mu.Unlock()
-	if controller != nil {
-		controller.Close()
+	if t == nil {
 		return
 	}
-	if d != nil {
-		d.closeSelected(t)
+	// A token's dispatcher is immutable until cleanup; capture it under the
+	// handle gate, and compare the exact token again under the dispatch gate.
+	s.mu.Lock()
+	if s.token != t {
+		s.mu.Unlock()
+		return
 	}
-}
-
-func (d *NotificationDispatch) Close() {
-	if d != nil {
-		d.closeSelected(nil)
-	}
-}
-
-// A nil token closes the original dispatch. A token closes only that exact
-// subscription. The adapter is a bounded local read and runs outside all owner
-// gates; no application callback, waiter or replacement task is started here.
-func (d *NotificationDispatch) closeSelected(token *notificationToken) {
+	d := t.dispatch
+	s.mu.Unlock()
 	d.mu.Lock()
-	if d.cleaned {
-		d.mu.Unlock()
-		return
-	}
-	if token == nil {
-		if d.closed {
-			d.mu.Unlock()
-			return
-		}
-	} else {
-		found := false
-		for _, current := range d.tokens {
-			found = found || current == token
-		}
-		if !found || token.closed {
-			d.mu.Unlock()
-			return
+	defer d.mu.Unlock()
+	for _, current := range d.tokens {
+		if current == t {
+			t.closeLocked()
+			break
 		}
 	}
-	if d.closingSamples == math.MaxUint32 || token != nil && token.closingSamples == math.MaxUint32 {
-		d.closeSelectedLocked(token, timev4.Mark{}, timev4.ErrUnavailable)
-		d.cleanupLocked()
-		d.mu.Unlock()
-		return
-	}
-	d.closingSamples++
-	if token != nil {
-		token.closingSamples++
-	}
-	clock := d.clock
-	d.mu.Unlock()
-	var mark timev4.Mark
-	var sampleErr error = timev4.ErrUnavailable
-	defer func() {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		d.closingSamples--
-		if token != nil {
-			token.closingSamples--
-		}
-		// The real sampling tail has exited, even on panic or Goexit. A
-		// second Close may already have won; its original deadline survives.
-		d.closeSelectedLocked(token, mark, sampleErr)
-		d.cleanupLocked()
-	}()
-	mark, sampleErr = clock.Monotonic()
+	d.cleanupLocked()
 }
-
-func (d *NotificationDispatch) closeSelectedLocked(token *notificationToken, mark timev4.Mark, sampleErr error) {
-	if token != nil {
-		token.closeLocked(mark, sampleErr)
+func (d *NotificationDispatch) Close() {
+	if d == nil {
 		return
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.closed = true
-	for _, method := range d.methods {
-		method.method.services.close()
-	}
 	for _, execution := range d.executions {
 		if execution != nil && execution.started {
 			execution.stopLocked(rpcv4.ErrClosed)
 		}
 	}
-	for _, current := range d.tokens {
-		if current != nil {
-			current.closeLocked(mark, sampleErr)
+	for _, t := range d.tokens {
+		if t != nil {
+			t.closeLocked()
 		}
 	}
+	d.cleanupLocked()
 }
 func (d *NotificationDispatch) cleanupLocked() {
-	if !d.closed || d.cleaned || d.advancing || d.admitting || d.closingSamples != 0 || d.controllerVisits != 0 || d.declarationPreparing {
+	if !d.closed || d.cleaned || d.advancing || d.admitting {
 		return
 	}
 	for _, t := range d.tokens {
@@ -1170,9 +880,6 @@ func (d *NotificationDispatch) cleanupLocked() {
 	d.executionRegistry = nil
 	d.registryBorrow.Release()
 	d.registryBorrow = resourcev4.Reference{}
-	for _, method := range d.methods {
-		method.method.services.close()
-	}
 	d.methods = nil
 	clear(d.channels[:])
 	d.plan = nil
@@ -1208,6 +915,12 @@ func (s *NotificationSubscription) WaitClosed(ctx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
+	for invocation, _ := ctx.Value(notificationInvocationKey{}).(*notificationInvocation); invocation != nil; invocation = invocation.parent {
+		if invocation.token == s.token {
+			s.mu.Unlock()
+			return ErrNotificationCleanupIncomplete
+		}
+	}
 	if s.waiters >= 4 || s.root == nil || s.waitSerial == math.MaxUint64 {
 		s.mu.Unlock()
 		return rpcv4.ErrCapacity
@@ -1233,85 +946,46 @@ func (s *NotificationSubscription) WaitClosed(ctx context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
+	window, err := timev4.NewWindow(s.clock, s.waitMS)
+	if err != nil {
+		ref.Release()
+		s.mu.Unlock()
+		return err
+	}
 	s.waiters++
-	clock, duration := s.clock, s.waitMS
-	done, closing := s.done, s.closing
 	s.mu.Unlock()
 	defer func() { ref.Release(); s.mu.Lock(); s.waiters--; s.mu.Unlock() }()
-	// The admitted waiter pins its original handle before any opaque context
-	// or clock call. Release cannot clear its clock or refund its backing.
-	window, err := timev4.NewWindow(clock, duration)
-	if err != nil {
-		return err
-	}
-	invocation, _ := ctx.Value(notificationInvocationKey{}).(*notificationInvocation)
-	ctxDone := ctx.Done()
-	s.mu.Lock()
-	if s.status.CleanupComplete {
-		s.mu.Unlock()
-		return nil
-	}
-	for current := invocation; current != nil; current = current.parent {
-		if s.token != nil && current.token == s.token || s.controller != nil && current.root == s.controller {
-			s.mu.Unlock()
-			return ErrNotificationCleanupIncomplete
-		}
-	}
-	s.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	var timer *time.Timer
-	defer func() {
-		if timer != nil {
-			timer.Stop()
-		}
-	}()
+	closing := s.closing
 	for {
 		s.mu.Lock()
 		if s.status.CleanupComplete {
 			s.mu.Unlock()
 			return nil
 		}
-		closed, cleanup, cleanupErr := s.status.Closed, s.cleanup, s.cleanupError
-		s.mu.Unlock()
 		left, err := window.RemainingMS()
-		if closed {
-			if cleanupErr != nil {
-				err = cleanupErr
-			} else if remaining, e := cleanup.RemainingMS(); e != nil {
+		if s.status.Closed {
+			if s.cleanupError != nil {
+				err = s.cleanupError
+			} else if remaining, e := s.cleanup.RemainingMS(); e != nil {
 				err = e
 			} else {
 				left = min(left, remaining)
 			}
 			closing = nil
 		}
-		// Sampling may overlap Close or actual callback cleanup. A newly
-		// closed token uses its one original cleanup window on the next pass;
-		// the passive wait's own window is never replaced or extended.
-		s.mu.Lock()
-		complete, newlyClosed := s.status.CleanupComplete, !closed && s.status.Closed
 		s.mu.Unlock()
-		if complete {
-			return nil
-		}
-		if newlyClosed {
-			continue
-		}
 		if err != nil {
 			return ErrNotificationCleanupIncomplete
 		}
-		if timer == nil {
-			timer = time.NewTimer(time.Duration(left) * time.Millisecond)
-		} else {
-			timer.Reset(time.Duration(left) * time.Millisecond)
-		}
+		timer := time.NewTimer(time.Duration(left) * time.Millisecond)
 		select {
-		case <-done:
+		case <-s.done:
+			timer.Stop()
 			return nil
 		case <-closing:
 			timer.Stop()
-		case <-ctxDone:
+		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
 		}

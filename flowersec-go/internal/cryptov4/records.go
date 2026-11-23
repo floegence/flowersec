@@ -13,11 +13,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -52,19 +50,6 @@ type usageProfile struct {
 }
 type usage struct{ calls, blocks, bytes uint64 }
 
-// RekeySafetySnapshot is the immutable projection the Session coordinator uses
-// to join the existing rekey cause. Triggered is based on current key, epoch
-// and persistent Session successful-use watermarks or the current root-age soft
-// window; Deadline is the original epoch deadline and is never extended by this
-// projection.
-type RekeySafetySnapshot struct {
-	Epoch     uint32
-	RootID    uint64
-	RootBorn  timev4.Sample
-	Deadline  uint64
-	Triggered bool
-}
-
 // MaintenanceReserve is the precomputed remaining REKEY responsibility for one
 // direction. Ordinary maintenance cannot consume it. It never raises L0 limits.
 type MaintenanceReserve struct{ Calls, Blocks, Bytes uint64 }
@@ -78,21 +63,10 @@ type TicketGuard interface {
 	UnlockTicket(submitted bool)
 }
 
-// DiagnosticEmitter is implemented by the session-owned bounded diagnostic
-// operation. It keeps record classification independent from sessionv4 while
-// allowing detailed datagram drop events to retain the session correlation ID.
-type DiagnosticEmitter interface {
-	EmitDiagnostic(diagnosticv4.Fields) bool
-}
-
 // Config is assembled by the admitted handshake owner, never from a peer's
 // unauthenticated record. Deadlines must already use the trusted time adapter's
 // conservative local projection. RootBorn is sampled before the actual KDF.
 type Config struct {
-	// Diagnostics borrows the original Environment bank through actual Engine
-	// retirement. Trusted composition owns its reservation and lifetime.
-	Diagnostics                         *diagnosticv4.Counters
-	DiagnosticEvents                    DiagnosticEmitter
 	Profile                             string
 	ApplicationProfile                  string
 	Root, HandshakeHash, ContextDigest  [32]byte
@@ -122,15 +96,13 @@ func (e *TicketError) Error() string { return e.Cause.Error() }
 func (e *TicketError) Unwrap() error { return e.Cause }
 
 type recordKey struct {
-	aead         cipher.AEAD
-	usage        usage
-	reliableUse  usage
-	datagramGood usage
-	next         uint64
-	exhausted    bool
-	replay       replayWindow
-	busy         bool
-	detached     bool
+	aead      cipher.AEAD
+	usage     usage
+	next      uint64
+	exhausted bool
+	replay    replayWindow
+	busy      bool
+	good      usage
 }
 type scopeKeys struct {
 	bootstrap     bool
@@ -141,24 +113,17 @@ type scopeKeys struct {
 	incoming      *IncomingScope
 }
 type epochState struct {
-	number       uint32
-	rootID       uint64
-	born         timev4.Sample
-	root         [32]byte
-	deadline     *timev4.Deadline
-	keys         scopeTable
-	usage        [2]usage
-	reliableUse  [2]usage
-	datagramGood [2]usage
+	number   uint32
+	root     [32]byte
+	deadline *timev4.Deadline
+	keys     scopeTable
+	usage    [2]usage
 }
 type workspace struct {
-	input, output         []byte
-	inputUsed, outputUsed int
-	maintenance           bool
-	sharedInput           bool
-	nativeInput           bool
-	datagram              bool
-	direction             protocolv4.Direction
+	input, output []byte
+	maintenance   bool
+	sharedInput   bool
+	direction     protocolv4.Direction
 }
 
 type epochKeyJob struct {
@@ -186,12 +151,9 @@ type Engine struct {
 	rekey                                 *RekeyRound
 	switching                             *epochSwitch
 	staging                               bool
-	used                                  [2]ordinalbits.Set
+	used                                  [2][]uint64
 	ordinal                               [2]uint64
 	counts                                [2]usage
-	reliableCounts                        [2]usage
-	datagramGood                          [2]usage
-	rootID                                uint64
 	derivations                           uint64
 	ready, closed                         bool
 	initial                               *FinishedHandshake
@@ -209,13 +171,8 @@ type Engine struct {
 	maintenance                           [2]*workspace
 	sharedInput                           *workspace
 	sharedInputReserved                   bool
-	nativeInput                           []*workspace
-	nativeInputCount                      uint32
-	datagrams                             *DatagramQueue
-	datagramWork                          [2]*workspace
 	reliableFlight                        uint32
 	outgoingPackets                       uint32
-	detachedPackets                       uint32
 	invalidTotal, possibleFailures        uint32
 	pause                                 *timev4.Delay
 	receiveDisabled                       bool
@@ -274,13 +231,10 @@ func NewEngine(config Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e.used[0] = ordinalbits.New(streams.Client)
-	e.used[1] = ordinalbits.New(streams.Server)
+	e.used[0] = make([]uint64, (streams.Client+63)/64)
+	e.used[1] = make([]uint64, (streams.Server+63)/64)
 	for i := uint32(0); i < config.WorkSlots+2; i++ {
-		// Every position's complete input/output capacity is already included
-		// in EngineCharge. Key derivation and an idle service position need no
-		// record bytes; allocate those arrays only on its first actual record.
-		w := &workspace{maintenance: i >= config.WorkSlots}
+		w := &workspace{input: make([]byte, int(config.MaxFrame)+protocolv4.EnvelopePrefixSize), output: make([]byte, int(config.MaxFrame)+protocolv4.EnvelopePrefixSize), maintenance: i >= config.WorkSlots}
 		if w.maintenance {
 			w.direction = protocolv4.Direction(i - config.WorkSlots)
 			e.maintenance[w.direction] = w
@@ -291,8 +245,7 @@ func NewEngine(config Config) (*Engine, error) {
 	currentScopes, _ := newScopeTable(scopeCapacity) // Shape checked before allocation.
 	e.spareScopes, _ = newScopeTable(scopeCapacity)
 	e.stageJobs = make([]epochKeyJob, 2*scopeCapacity)
-	e.rootID = 1
-	e.current = &epochState{rootID: e.rootID, born: config.RootBorn, root: config.Root, deadline: deadline, keys: currentScopes}
+	e.current = &epochState{root: config.Root, deadline: deadline, keys: currentScopes}
 	clear(e.config.Root[:])
 	if err := e.current.deadline.Check(); err != nil {
 		e.Close()
@@ -434,7 +387,8 @@ func (e *Engine) openScope(scope uint64, opening bool) error {
 		e.mu.Unlock()
 		return ErrScope
 	}
-	if e.used[role].Has(ordinal) || e.current.keys.get(scope) != nil {
+	word, bit := ordinal/64, uint64(1)<<(ordinal%64)
+	if e.used[role][word]&bit != 0 || e.current.keys.get(scope) != nil {
 		e.mu.Unlock()
 		return ErrScope
 	}
@@ -456,7 +410,7 @@ func (e *Engine) openScope(scope uint64, opening bool) error {
 		e.mu.Unlock()
 		return err
 	}
-	e.used[role].Add(ordinal)
+	e.used[role][word] |= bit
 	e.active++
 	e.mu.Unlock()
 	defer job.release()
@@ -518,29 +472,16 @@ func (e *Engine) live() error {
 	if !e.ready {
 		return ErrNotReady
 	}
-	// One actual clock read serves the adjacent idle, epoch and credential
-	// checks. Every owner validates its own current frontier/continuity; no
-	// sample or permission is reused across a ticket, crypto or provider gate.
-	sample, deadlineErr := e.current.deadline.Sample()
-	var idleErr error
-	if sample.BelongsTo(e.config.Clock) {
-		idleErr = idleError(e.idle.CheckAt(sample))
-		if idleErr != nil {
-			e.wakeIdle()
-		}
-	} else {
-		idleErr = e.checkIdle()
+	if err := e.checkIdle(); err != nil {
+		return err
 	}
-	if idleErr != nil {
-		return idleErr
+	if err := e.current.deadline.Check(); err != nil {
+		return securityTimeError(err)
 	}
-	if deadlineErr != nil {
-		return securityTimeError(deadlineErr)
+	if err := e.config.Authorization.Check(); err != nil {
+		return err
 	}
-	if guard, ok := e.config.Authorization.(interface{ CheckWithSample(timev4.Sample) error }); ok {
-		return guard.CheckWithSample(sample)
-	}
-	return e.config.Authorization.Check()
+	return nil
 }
 
 func (e *Engine) initialLive(owner *FinishedHandshake) error {
@@ -575,15 +516,6 @@ func (e *Engine) inputLive() error {
 	return e.initialLive(e.initial)
 }
 
-// The caller exclusively owns this workspace through its original job/Packet.
-// Its complete maximum arrays remain prepaid, while this invocation allocates
-// only its validated input/output bounds. No backing changes during crypto or
-// publication; Close cannot reclaim it before the real owner releases it.
-func (e *Engine) prepareRecordBacking(w *workspace, inputBytes, outputBytes int) {
-	w.input = make([]byte, inputBytes)
-	w.output = make([]byte, outputBytes)
-}
-
 func (e *Engine) workspace(maintenance bool, direction protocolv4.Direction) (*workspace, error) {
 	if maintenance {
 		if e.maintenance[direction] == nil {
@@ -615,7 +547,7 @@ func (e *Engine) ReserveSharedInput() error {
 	if err := e.serviceInitializationLive(); err != nil {
 		return err
 	}
-	if e.sharedInputReserved || e.nativeInputCount != 0 || e.config.WorkSlots < 2 || len(e.free) == 0 {
+	if e.sharedInputReserved || e.config.WorkSlots < 2 || len(e.free) == 0 {
 		return ErrConfiguration
 	}
 	w, err := e.workspace(false, 1-e.config.SendDirection)
@@ -656,119 +588,7 @@ func (e *Engine) ServiceInitializationEpoch() (uint32, error) {
 	return e.current.number, nil
 }
 
-func softRekeyUsage(value usage, limits usageLimits, reserve MaintenanceReserve, open bool) bool {
-	calls := limits.Seal
-	if open {
-		calls = limits.Open
-	}
-	usableCalls := calls - min(calls, reserve.Calls)
-	usableBlocks := limits.Blocks - min(limits.Blocks, reserve.Blocks)
-	usableBytes := limits.Bytes - min(limits.Bytes, reserve.Bytes)
-	soft := func(value, usable uint64) bool {
-		if usable == 0 {
-			return true
-		}
-		threshold := usable - usable/5
-		if threshold == 0 {
-			threshold = 1
-		}
-		return value >= threshold
-	}
-	return soft(value.calls, usableCalls) || soft(value.blocks, usableBlocks) || soft(value.bytes, usableBytes)
-}
-
-// RekeySafety returns a fixed soft-watermark decision for the current epoch.
-// It is read-only: joining the cause and choosing INIT/REQUEST remain owned by
-// sessionv4.RekeyCauses/RekeyService.
-func (e *Engine) RekeySafety() (RekeySafetySnapshot, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.live(); err != nil {
-		return RekeySafetySnapshot{}, err
-	}
-	if e.current == nil || e.current.deadline == nil {
-		return RekeySafetySnapshot{}, ErrTransition
-	}
-	if err := e.current.deadline.Check(); err != nil {
-		return RekeySafetySnapshot{}, securityTimeError(err)
-	}
-	triggered := false
-	for direction := range 2 {
-		open := protocolv4.Direction(direction) != e.config.SendDirection
-		// Failed inbound datagrams consume the hard ledger, but only unique
-		// authenticated acceptance may contribute to their soft watermark.
-		soft := e.current.reliableUse[direction]
-		addUsage(&soft, e.current.datagramGood[direction])
-		triggered = triggered || softRekeyUsage(soft, e.limits.Epoch, e.config.Maintenance, open)
-		sessionSoft := e.reliableCounts[direction]
-		addUsage(&sessionSoft, e.datagramGood[direction])
-		triggered = triggered || softRekeyUsage(sessionSoft, e.limits.Session, e.config.Maintenance, open)
-	}
-	for scope, keys := range e.current.keys.all() {
-		for direction, key := range keys.keys {
-			if key == nil {
-				continue
-			}
-			soft := key.reliableUse
-			addUsage(&soft, key.datagramGood)
-			reserve := MaintenanceReserve{}
-			if scope == 0 {
-				reserve = e.config.Maintenance
-			}
-			triggered = triggered || softRekeyUsage(soft, e.limits.Key, reserve,
-				protocolv4.Direction(direction) != e.config.SendDirection)
-		}
-	}
-	remaining, err := e.current.deadline.RemainingMS()
-	if err != nil {
-		return RekeySafetySnapshot{}, securityTimeError(err)
-	}
-	// A short authorization/session cap must not masquerade as root-age
-	// exhaustion. Only arm the root-age soft window when that root cap is the
-	// effective parent deadline for this epoch.
-	var rootCap uint64 = math.MaxUint64
-	if e.current.born.LowerMS <= math.MaxUint64-e.limits.RootAge {
-		rootCap = e.current.born.LowerMS + e.limits.RootAge
-	}
-	if e.config.AuthorizationDeadlineMS >= rootCap {
-		window := e.limits.RootAge / 5
-		if window == 0 {
-			window = 1
-		}
-		if remaining <= window {
-			triggered = true
-		}
-	}
-	return RekeySafetySnapshot{Epoch: e.current.number, RootID: e.current.rootID, RootBorn: e.current.born, Deadline: e.current.deadline.Cap(), Triggered: triggered}, nil
-}
-
-// RekeySafetyMatches validates that a sampled safety projection still names the
-// live epoch/root. It deliberately does not refresh the sample or apply a cause.
-func (e *Engine) RekeySafetyMatches(snapshot RekeySafetySnapshot) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.closed || e.current == nil || e.current.number != snapshot.Epoch || e.current.rootID != snapshot.RootID || e.current.deadline == nil {
-		return false
-	}
-	a, b := e.current.born, snapshot.RootBorn
-	return a.LowerMS == b.LowerMS && a.UpperMS == b.UpperMS && a.Mark.SameEra(b.Mark) && e.current.deadline.Cap() == snapshot.Deadline
-}
-
 func (e *Engine) inputWorkspace(maintenance, datagram bool) (*workspace, error) {
-	if datagram && e.datagrams != nil {
-		return e.datagramWorkspace(1 - e.config.SendDirection)
-	}
-	if e.nativeInputCount != 0 && !maintenance && !datagram {
-		if len(e.nativeInput) == 0 {
-			return nil, ErrCapacity
-		}
-		last := len(e.nativeInput) - 1
-		w := e.nativeInput[last]
-		e.nativeInput[last] = nil
-		e.nativeInput = e.nativeInput[:last]
-		e.borrowedWork++
-		return w, nil
-	}
 	if e.sharedInputReserved && !maintenance && !datagram {
 		if e.sharedInput == nil {
 			return nil, ErrCapacity
@@ -781,12 +601,8 @@ func (e *Engine) inputWorkspace(maintenance, datagram bool) (*workspace, error) 
 	return e.workspace(maintenance, 1-e.config.SendDirection)
 }
 func (e *Engine) release(w *workspace) {
-	// Every byte a builder or AEAD could touch is erased before reuse. The
-	// untouched remainder stays zero from construction or its prior release.
-	clear(w.input[:w.inputUsed])
-	clear(w.output[:w.outputUsed])
-	w.inputUsed, w.outputUsed = 0, 0
-	w.input, w.output = nil, nil
+	clear(w.input)
+	clear(w.output)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.borrowedWork--
@@ -795,15 +611,7 @@ func (e *Engine) release(w *workspace) {
 		e.finishCleanupLocked()
 		return
 	}
-	if w.datagram {
-		e.datagramWork[w.direction] = w
-	} else if w.nativeInput {
-		e.nativeInput = append(e.nativeInput, w)
-		select {
-		case e.receiveWake <- struct{}{}:
-		default:
-		}
-	} else if w.sharedInput {
+	if w.sharedInput {
 		e.sharedInput = w
 		select {
 		case e.receiveWake <- struct{}{}:
@@ -862,10 +670,9 @@ func (e *Engine) charge(epoch *epochState, key *recordKey, direction protocolv4.
 	return nil
 }
 
-// Packet retains its original output, key and epoch until Release. Its shared
-// workspace can move once into preadmitted reliable publication storage. Bytes
-// are borrowed only while this unique owner is live; callers must finish using
-// them before transfer/Release and must not retain aliases afterward.
+// Packet retains the preallocated workspace until Release. Bytes are borrowed
+// only while this unique owner is live; callers must finish using them before
+// Release and must not retain aliases afterward.
 type Packet struct {
 	engine    *Engine
 	workspace *workspace
@@ -883,10 +690,6 @@ type Packet struct {
 func (p *Packet) Bytes() ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.bytesLocked()
-}
-
-func (p *Packet) bytesLocked() ([]byte, error) {
 	if p.released {
 		return nil, ErrClosed
 	}
@@ -927,30 +730,19 @@ func (p *Packet) Release() {
 		return
 	}
 	p.released = true
-	if p.workspace == nil {
-		clear(p.data)
-	}
 	p.data = nil
 	w := p.workspace
 	p.workspace = nil
 	e := p.engine
-	key := p.key
 	p.engine, p.epoch, p.key = nil, nil, nil
 	reliable := p.outgoing && !p.datagram
 	p.mu.Unlock()
 	if reliable {
 		e.mu.Lock()
 		e.outgoingPackets--
-		if w == nil {
-			e.detachedPackets--
-			key.detached = false
-		}
-		e.finishCleanupLocked()
 		e.mu.Unlock()
 	}
-	if w != nil {
-		e.release(w)
-	}
+	e.release(w)
 }
 
 // Seal's successful precharge is the irreversible record ticket. Sequence and
@@ -1036,12 +828,7 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 		e.mu.Unlock()
 		return nil, err
 	}
-	var w *workspace
-	if scope == protocolv4.DatagramScope() && e.datagrams != nil {
-		w, err = e.datagramWorkspace(e.config.SendDirection)
-	} else {
-		w, err = e.workspace(scope == 0, e.config.SendDirection)
-	}
+	w, err := e.workspace(scope == 0, e.config.SendDirection)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -1070,7 +857,6 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 		e.release(w)
 		return nil, err
 	}
-	e.prepareRecordBacking(w, maxPlaintext, len(prefix)+maxPlaintext+key.aead.Overhead())
 	var ticketErr error
 	if ticket != nil {
 		ticketErr = ticket()
@@ -1098,7 +884,6 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if ticketErr != nil {
 		return e.finish(w, epoch, key, header, nil, ticketErr)
 	}
-	w.inputUsed = maxPlaintext // A failing bounded builder may write its whole view.
 	size, err := build(header, w.input[:maxPlaintext:maxPlaintext])
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
@@ -1114,7 +899,6 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
 	}
-	w.outputUsed = len(prefix)
 	copy(w.output, prefix)
 	// Recheck time at actual crypto start, after any queue/scheduler delay.
 	e.mu.Lock()
@@ -1133,7 +917,6 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
 	}
-	w.outputUsed = len(prefix) + size + key.aead.Overhead()
 	sealed := key.aead.Seal(w.output[:len(prefix)], nonce[:], w.input[:size], aad)
 	return e.finish(w, epoch, key, header, sealed, nil)
 }
@@ -1157,24 +940,8 @@ func (e *Engine) finish(w *workspace, epoch *epochState, key *recordKey, header 
 			err = ErrScope
 		}
 	}
-	if err == nil {
-		aadBytes := protocolv4.EnvelopePrefixSize + protocolv4.RecordHeaderSize()
-		payload := len(data) - aadBytes - e.profile.TagBytes
-		if payload < 0 {
-			payload = 0
-		}
-		blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
-		cost := usage{calls: 1, blocks: blocks(aadBytes) + blocks(payload) + 1, bytes: uint64(payload + e.profile.TagBytes)}
-		if scope == protocolv4.DatagramScope() {
-			addUsage(&key.datagramGood, cost)
-			addUsage(&epoch.datagramGood[e.config.SendDirection], cost)
-			addUsage(&e.datagramGood[e.config.SendDirection], cost)
-		} else {
-			addUsage(&key.reliableUse, cost)
-			addUsage(&epoch.reliableUse[e.config.SendDirection], cost)
-			addUsage(&e.reliableCounts[e.config.SendDirection], cost)
-			e.outgoingPackets++
-		}
+	if err == nil && scope != protocolv4.DatagramScope() {
+		e.outgoingPackets++
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -1196,10 +963,6 @@ func (e *Engine) open(input []byte, validate func(protocolv4.FrameType, protocol
 }
 
 func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, protocolv4.RecordHeader, []byte) error, marker *RekeyRound, reserved *workspace) (*Packet, protocolv4.FrameType, protocolv4.RecordHeader, error) {
-	return e.openReservedDatagram(input, validate, marker, reserved, nil, nil)
-}
-
-func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.FrameType, protocolv4.RecordHeader, []byte) error, marker *RekeyRound, reserved *workspace, queue *DatagramQueue, payload *[]byte) (*Packet, protocolv4.FrameType, protocolv4.RecordHeader, error) {
 	defer func() {
 		if reserved != nil {
 			e.release(reserved)
@@ -1213,67 +976,55 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		return nil, 0, header, err
 	}
 	e.mu.Lock()
-	dropMetric := e.datagramDropMetricLocked(frame, header)
 	if err = e.inputLive(); err != nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
 	epoch, epochErr := e.receiveEpoch(frame, header, marker)
 	if epochErr != nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, epochErr
 	}
 	keys := epoch.keys.get(header.Scope)
 	if keys == nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrScope
 	}
 	if keys.bootstrap && ((!keys.openSubmitted && (1-e.config.SendDirection != e.bootstrap.Opener || frame != protocolv4.FrameOpenStream)) || keys.openSubmitted && frame == protocolv4.FrameOpenStream) {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	if keys.opening && (!keys.openSubmitted || frame != protocolv4.FrameStreamData) || keys.incoming != nil && (frame != protocolv4.FrameOpenStream || keys.incoming.authenticated || header != keys.incoming.header) {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	direction := protocolv4.Direction(1 - e.config.SendDirection)
 	key := keys.keys[direction]
 	if key == nil || keys.deriving[direction] {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	datagram := frame == protocolv4.FrameDatagram
 	if datagram {
 		if err = e.datagramGate(); err != nil {
-			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, err
 		}
 		if e.invalidTotal+e.possibleFailures >= 32 {
-			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, ErrReceiveBlocked
 		}
 		if !key.replay.admits(header.Sequence) {
-			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, ErrReplay
 		}
 	} else if key.busy || key.exhausted || header.Sequence != key.next {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrSequence
 	}
 	prefixSize := protocolv4.EnvelopePrefixSize + protocolv4.RecordHeaderSize()
 	aad, err := protocolv4.RecordAAD(e.config.Profile, direction, input[:prefixSize])
 	if err != nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
@@ -1284,18 +1035,14 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		reserved = nil // This call now owns the original KDF position.
 	}
 	if err != nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
 	if err = e.charge(epoch, key, direction, frame, len(aad), len(ciphertext)-e.profile.TagBytes, true); err != nil {
-		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		e.release(w)
 		return nil, frame, header, err
 	}
-	e.prepareRecordBacking(w, len(input), len(ciphertext))
-	w.inputUsed = len(input)
 	copy(w.input, input)
 	if datagram {
 		e.possibleFailures++
@@ -1324,8 +1071,6 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		var nonce [12]byte
 		nonce, err = protocolv4.RecordNonce(header)
 		if err == nil {
-			// Authentication failure may still overwrite its bounded output.
-			w.outputUsed = len(input) - prefixSize
 			plaintext, err = key.aead.Open(w.output[:0], nonce[:], w.input[prefixSize:len(input)], aad)
 			if err != nil {
 				authFailed = true
@@ -1359,13 +1104,6 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 	if !datagram {
 		key.busy = false
 	}
-	if queue != nil && err == nil {
-		if queue != e.datagrams || queue.closed || payload == nil {
-			err = ErrClosed
-		} else {
-			err = e.live()
-		}
-	}
 	if err == nil {
 		err = e.inputLive()
 	}
@@ -1387,7 +1125,6 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		err = marker.receiveTicket()
 	}
 	if err == nil {
-		blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
 		if datagram {
 			if gateErr := e.datagramGate(); gateErr != nil {
 				err = gateErr
@@ -1395,23 +1132,15 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 				err = ErrReplay
 			} else {
 				key.replay.accept(header.Sequence)
-				good := usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))}
-				addUsage(&key.datagramGood, good)
-				addUsage(&epoch.datagramGood[direction], good)
-				addUsage(&e.datagramGood[direction], good)
-				if queue != nil {
-					queue.appendLocked(epoch.number, *payload)
-					_ = e.idle.Refresh()
-				}
+				blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
+				addUsage(&key.good, usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))})
 			}
 		} else if key.next != header.Sequence {
 			err = ErrSequence
+		} else if key.next == math.MaxUint64 {
+			key.exhausted = true
 		} else {
-			if key.next == math.MaxUint64 {
-				key.exhausted = true
-			} else {
-				key.next++
-			}
+			key.next++
 			if keys.incoming != nil {
 				keys.incoming.authenticated = true
 			}
@@ -1421,17 +1150,7 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 			if marker != nil {
 				e.switching.received = true
 			}
-			good := usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))}
-			addUsage(&key.reliableUse, good)
-			addUsage(&epoch.reliableUse[direction], good)
-			addUsage(&e.reliableCounts[direction], good)
 		}
-	}
-	if err != nil {
-		e.observeDatagramDropLocked(dropMetric)
-	}
-	if datagram && e.datagrams != nil {
-		e.datagrams.notifyLocked()
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -1491,12 +1210,7 @@ func (e *Engine) stageEpoch(root [32]byte, born timev4.Sample, round *RekeyRound
 		e.mu.Unlock()
 		return ErrUsage
 	}
-	if e.rootID == math.MaxUint64 {
-		e.mu.Unlock()
-		return ErrUsage
-	}
-	e.rootID++
-	staged := &epochState{number: e.current.number + 1, rootID: e.rootID, born: born, root: root, deadline: deadline, keys: e.spareScopes}
+	staged := &epochState{number: e.current.number + 1, root: root, deadline: deadline, keys: e.spareScopes}
 	e.spareScopes = scopeTable{}
 	// The sole staging owner is the reserved rekey work position. Ordinary
 	// record jobs cannot borrow it or block its response with held output bytes.
@@ -1642,23 +1356,6 @@ func (e *Engine) Close() {
 		w.input, w.output = nil, nil
 	}
 	e.free = nil
-	for _, w := range e.nativeInput {
-		clear(w.input)
-		clear(w.output)
-		w.input, w.output = nil, nil
-	}
-	e.nativeInput = nil
-	if e.datagrams != nil {
-		e.datagrams.closeLocked()
-	}
-	for i, w := range e.datagramWork {
-		if w != nil {
-			clear(w.input)
-			clear(w.output)
-			w.input, w.output = nil, nil
-			e.datagramWork[i] = nil
-		}
-	}
 	if e.sharedInput != nil {
 		clear(e.sharedInput.input)
 		clear(e.sharedInput.output)

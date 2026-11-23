@@ -438,10 +438,10 @@ impl TestEndpoint {
             }
 
             for (ch, event) in endpoint_events {
-                if let Some(event) = self.handle_event(ch, event) {
-                    if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event);
-                    }
+                if let Some(event) = self.handle_event(ch, event)
+                    && let Some(conn) = self.connections.get_mut(&ch)
+                {
+                    conn.handle_event(event);
                 }
             }
         }
@@ -722,8 +722,8 @@ fn set_congestion_experienced(
 lazy_static! {
     pub(crate) static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub(crate) static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey<rcgen::KeyPair> =
-        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    pub(crate) static ref CERTIFIED_KEY: cert_test_builder::CertifiedKey<cert_test_builder::KeyPair> =
+        cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
 }
 
 #[derive(Default)]

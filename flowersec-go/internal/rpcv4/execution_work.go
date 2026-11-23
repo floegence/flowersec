@@ -8,8 +8,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // ExecutionWork is the unique original dispatch responsibility, not a public
@@ -473,8 +473,6 @@ type ExecutionResultRead struct {
 	access                   ExecutionAccess
 	reservation, authority   resourcev4.Reference
 	closed, publicationOwned bool
-	cleaned                  bool
-	sampling                 uint32
 }
 
 func ExecutionResultReadCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
@@ -567,42 +565,9 @@ func (r *ExecutionResultRead) withAccess(action func(resourcev4.Reference) error
 	return access.WithExecutionAccess(target, action)
 }
 
-// withSample retains the original reader/backing through the actual clock
-// callback and action. The host adapter runs before authorization/Network/result
-// locks; Close seals immediately but physical cleanup waits for this real tail.
-func (r *ExecutionResultRead) withSample(action func(timev4.Sample) error) (err error) {
-	if r == nil || action == nil {
-		return ErrOwner
-	}
-	r.mu.Lock()
-	if r.closed || r.clock == nil || r.sampling == math.MaxUint32 {
-		r.mu.Unlock()
-		return ErrClosed
-	}
-	r.sampling++
-	clock := r.clock
-	r.mu.Unlock()
-	returned := false
-	defer func() {
-		r.mu.Lock()
-		r.sampling--
-		if !returned {
-			r.closed = true
-		}
-		r.cleanupReadLocked()
-		r.mu.Unlock()
-	}()
-	sample, err := clock.Sample()
-	if err == nil {
-		err = action(sample)
-	}
-	returned = true
-	return err
-}
-
 // withResult protects the actual immutable bytes through a finite SDK copy
 // or publication. The caller already holds the current authorization gate.
-func (r *ExecutionResultRead) withResultAt(sample timev4.Sample, authority resourcev4.Reference, action func(*executionResult) error) error {
+func (r *ExecutionResultRead) withResult(authority resourcev4.Reference, action func(*executionResult) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -618,7 +583,7 @@ func (r *ExecutionResultRead) withResultAt(sample timev4.Sample, authority resou
 		if err := r.authority.CheckSameEnvironment(authority); err != nil {
 			return err
 		}
-		now, err := r.clock.RefreshSample(sample)
+		now, err := r.clock.Sample()
 		if err != nil {
 			return err
 		}
@@ -639,7 +604,7 @@ func (r *ExecutionResultRead) withResultAt(sample timev4.Sample, authority resou
 	if r.result.expired {
 		return ErrResultExpired
 	}
-	now, err := s.clock.RefreshSample(sample)
+	now, err := s.clock.Sample()
 	if err != nil {
 		return err
 	}
@@ -653,18 +618,16 @@ func (r *ExecutionResultRead) CopyChunk(dst []byte, offset uint32) (n int, err e
 	if r == nil || len(dst) > 4096 {
 		return 0, ErrConfiguration
 	}
-	err = r.withSample(func(sample timev4.Sample) error {
-		return r.withAccess(func(authority resourcev4.Reference) error {
-			return r.withResultAt(sample, authority, func(result *executionResult) error {
-				if r.publicationOwned {
-					return ErrOwner
-				}
-				if offset > result.length {
-					return ErrResponseLimit
-				}
-				n = copy(dst, result.payload[offset:result.length])
-				return nil
-			})
+	err = r.withAccess(func(authority resourcev4.Reference) error {
+		return r.withResult(authority, func(result *executionResult) error {
+			if r.publicationOwned {
+				return ErrOwner
+			}
+			if offset > result.length {
+				return ErrResponseLimit
+			}
+			n = copy(dst, result.payload[offset:result.length])
+			return nil
 		})
 	})
 	return
@@ -673,12 +636,10 @@ func (r *ExecutionResultRead) CopyChunk(dst []byte, offset uint32) (n int, err e
 // Length returns retained result metadata through the same current
 // authorization and expiry gate used by CopyChunk.
 func (r *ExecutionResultRead) Length() (length uint32, err error) {
-	err = r.withSample(func(sample timev4.Sample) error {
-		return r.withAccess(func(authority resourcev4.Reference) error {
-			return r.withResultAt(sample, authority, func(result *executionResult) error {
-				length = result.length
-				return nil
-			})
+	err = r.withAccess(func(authority resourcev4.Reference) error {
+		return r.withResult(authority, func(result *executionResult) error {
+			length = result.length
+			return nil
 		})
 	})
 	return
@@ -692,16 +653,6 @@ func (r *ExecutionResultRead) close(publication bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || r.publicationOwned != publication {
-		return
-	}
-	r.closed = true
-	r.cleanupReadLocked()
-}
-
-// cleanupReadLocked releases bytes/reference pins only after every admitted
-// clock/publication user has physically left; logical Close is not a refund.
-func (r *ExecutionResultRead) cleanupReadLocked() {
-	if !r.closed || r.cleaned || r.sampling != 0 {
 		return
 	}
 	if r.durable != nil {
@@ -735,5 +686,5 @@ func (r *ExecutionResultRead) cleanupReadLocked() {
 	r.result = nil
 	r.access = nil
 	r.target = ExecutionTarget{}
-	r.cleaned = true
+	r.closed = true
 }

@@ -343,19 +343,20 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
-      - name: Verify tagged commit is the remote main tip
+      - name: Verify release source authority
         env:
           RELEASE_SHA: ${{ steps.vars.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
           test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
           git checkout "$GITHUB_SHA" -- scripts/verify-release-main.sh
-          bash scripts/verify-release-main.sh
+          bash scripts/verify-release-main.sh "$RELEASE_VERSION"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: flowersec-go/go.mod
+          go-version-file: tools/releasenotes/go.mod
           cache: true
           cache-dependency-path: flowersec-go/go.sum
 
@@ -516,6 +517,7 @@ jobs:
           body_path: release-notes.md
           tag_name: ${{ steps.vars.outputs.tag }}
           overwrite_files: true
+          make_latest: ${{ startsWith(steps.vars.outputs.version, '5.') && 'false' || 'legacy' }}
 
       - name: Verify GitHub Release asset readback
         env:
@@ -868,6 +870,7 @@ jobs:
           fi
 
       - name: Promote GHCR latest tag
+        if: ${{ !startsWith(steps.vars.outputs.version, '5.') }}
         env:
           IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest || steps.runtime-state.outputs.digest }}
           IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
@@ -928,7 +931,7 @@ jobs:
             return 1
           }
           verify_tag "$IMAGE_REPOSITORY:$IMAGE_VERSION"
-          verify_tag "$IMAGE_REPOSITORY:latest"
+          if [[ "$IMAGE_VERSION" != 5.* ]]; then verify_tag "$IMAGE_REPOSITORY:latest"; fi
 
   npm-recovery:
     needs: [prepare, release]
@@ -953,13 +956,6 @@ jobs:
         with:
           node-version: "26.8.1"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: flowersec-go/go.mod
-          cache: true
-          cache-dependency-path: flowersec-go/go.sum
 
       - name: Setup cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -1115,6 +1111,7 @@ jobs:
             local view_status
             local repository_url
             local publish_args=(--access public)
+            if [[ "$VERSION" == 5.* ]]; then publish_args+=(--tag legacy-v5); fi
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
             npm_error="$(mktemp)"
             set +e

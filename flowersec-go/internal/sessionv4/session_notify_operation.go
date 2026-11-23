@@ -8,12 +8,11 @@ import (
 	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // NotifyOperation is the notification capability view of the original
@@ -47,7 +46,7 @@ func (r *RPCServices) PrepareNotifyOperation(ctx context.Context, route rpcv4.Co
 }
 
 func (r *RPCServices) PrepareNotifyAndSave(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.NotifyPreparation, store ReferenceStoreBinding) (*NotifyOperation, protocolv4.OperationReference, error) {
-	if err := r.checkReferenceStore(ctx, store); err != nil {
+	if err := checkPrepareSaveContext(ctx); err != nil {
 		return nil, protocolv4.OperationReference{}, err
 	}
 	options.RequireExecution = true
@@ -101,28 +100,18 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 		return NotifyStartResult{NotAdmitted: true, Error: err}
 	}
 	var submission *rpcv4.NotifySubmission
-	operationCtx := withOwnedDiagnosticOperation(ctx, o.diagnosticOperation)
-	err := o.request.WithStart(operationCtx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
+	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
 		r := o.services
 		r.mu.Lock()
-		if r.closed || r.retired || o.workload == nil && r.callSerial == math.MaxUint64 {
+		if r.closed || r.retired || r.callSerial == math.MaxUint64 {
 			r.mu.Unlock()
 			return rpcv4.ErrClosed
 		}
 		var publisher *rpcv4.NotifyPublisher
-		var protection rpcv4.NotifyProtection
-		local := 0
-		if r.bootstrap != nil {
-			local = int(r.bootstrap.admission.direction)
-		}
-		for _, position := range [2]int{local, 1 - local} {
-			job := r.notifyChannels[position]
+		for _, job := range r.notifyChannels {
 			if job != nil && job.channel != nil {
 				publisher = job.channel.availablePublisher()
 				if publisher != nil {
-					if o.workload != nil {
-						protection = o.workload.notify[position]
-					}
 					break
 				}
 			}
@@ -141,31 +130,23 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 			r.mu.Unlock()
 			return err
 		}
+		r.callSerial++
+		var seed [56]byte
+		copy(seed[:16], "prepared-notify4/")
+		copy(seed[16:32], r.owner.Instance[:])
+		copy(seed[32:48], r.owner.Backing[:])
+		binary.BigEndian.PutUint64(seed[48:], r.callSerial)
+		digest := sha256.Sum256(seed[:])
+		var requests [2]resourcev4.Request
 		var refs [2]resourcev4.Reference
-		if o.workload != nil {
-			if o.workload.workload.shape != 2 || protection == (rpcv4.NotifyProtection{}) {
-				r.mu.Unlock()
-				return cryptov4.ErrNotReady
-			}
-			err = resourcev4.CheckoutProtectedBatch(o.workload.owners[workloadCall:workloadCall+2], refs[:])
-		} else {
-			r.callSerial++
-			var seed [56]byte
-			copy(seed[:16], "prepared-notify4/")
-			copy(seed[16:32], r.owner.Instance[:])
-			copy(seed[32:48], r.owner.Backing[:])
-			binary.BigEndian.PutUint64(seed[48:], r.callSerial)
-			digest := sha256.Sum256(seed[:])
-			var requests [2]resourcev4.Request
-			for i, v := range [2]resourcev4.Vector{source, status} {
-				owner := r.owner
-				copy(owner.Instance[:], digest[:16])
-				copy(owner.Backing[:], digest[16:])
-				owner.Backing[0] ^= byte(i)
-				requests[i] = resourcev4.Request{Owner: owner, Charge: v, Accounts: r.accounts[:r.accountCount]}
-			}
-			err = r.root.ReserveBatch(requests[:], refs[:])
+		for i, v := range [2]resourcev4.Vector{source, status} {
+			owner := r.owner
+			copy(owner.Instance[:], digest[:16])
+			copy(owner.Backing[:], digest[16:])
+			owner.Backing[0] ^= byte(i)
+			requests[i] = resourcev4.Request{Owner: owner, Charge: v, Accounts: r.accounts[:r.accountCount]}
 		}
+		err = r.root.ReserveBatch(requests[:], refs[:])
 		dispatch := r.notifications
 		runtimeBytes := r.runtimeBytes
 		r.mu.Unlock()
@@ -188,11 +169,7 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 		s.policy = policy
 		s.metadata = o.metadata
 		s.mu.Unlock()
-		if protection != (rpcv4.NotifyProtection{}) {
-			submission, err = protection.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
-		} else {
-			submission, err = publisher.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
-		}
+		submission, err = publisher.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
 		return err
 	})
 	if err != nil {
@@ -227,13 +204,11 @@ func (s *notifyOperationState) WithNotifyPublicationProgress(h protocolv4.Applic
 	if s.request == nil || s.dispatch == nil || s.closed && !begun || action == nil {
 		return rpcv4.ErrClosed
 	}
-	// Publication and inbound fanout enter current authority before the route
-	// registry. Both gates remain held through the original finite copy.
-	return s.dispatch.withAuthority(s.method, func(local notificationMethod) error {
-		if local.policy.Namespace != s.policy.Namespace || local.policy.Type != s.policy.Type || local.policy.Semantics != s.policy.Semantics {
-			return rpcv4.ErrAssociation
-		}
-		return s.request.WithNotifyPublication(h, begun, func() error {
+	return s.request.WithNotifyPublication(h, begun, func() error {
+		return s.dispatch.withAuthority(s.method, func(local notificationMethod) error {
+			if local.policy.Namespace != s.policy.Namespace || local.policy.Type != s.policy.Type || local.policy.Semantics != s.policy.Semantics {
+				return rpcv4.ErrAssociation
+			}
 			if err := s.metadata.Check(); err != nil {
 				return err
 			}
@@ -259,19 +234,6 @@ func (o *UnaryOperation) advanceNotifyLocked(closed bool) {
 	case <-s.submission.Done():
 	default:
 		return
-	}
-	// Start only enqueues the original submission. Its finite terminal facts
-	// decide the diagnostic result after the real publisher tail retires;
-	// complete local acceptance remains successful even without a flush.
-	if progress := s.submission.Progress(); !progress.MessageAccepted {
-		code := diagnosticv4.CodeOther
-		switch progress.Reason {
-		case "deadline_exceeded":
-			code = diagnosticv4.CodeTimeout
-		case "not_submitted":
-			code = diagnosticv4.CodeCancelled
-		}
-		recordApplicationDiagnosticFailureCode(o.diagnosticOperation, code)
 	}
 	s.mu.Lock()
 	s.request.Close()
@@ -363,14 +325,14 @@ func (n *NotifyOperation) WaitCleanup(ctx context.Context) error {
 		return rpcv4.ErrOwner
 	}
 	o := n.owner
-	if o.Snapshot().CleanupComplete {
+	o.mu.Lock()
+	complete := !o.preparing && o.closed && o.detached
+	o.mu.Unlock()
+	if complete {
 		return nil
 	}
 	_, err := n.wait(ctx, true)
-	if err != nil {
-		return err
-	}
-	return o.WaitCleanup(ctx)
+	return err
 }
 func (n *NotifyOperation) Close() {
 	if n != nil && n.owner != nil {

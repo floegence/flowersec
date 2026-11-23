@@ -116,7 +116,6 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     /// Construct a [`UdpPoller`] that calls `make_fut` to get the future to poll, storing it until
     /// it yields [`Poll::Ready`], then creating a new one on the next
     /// [`poll_writable`](UdpPoller::poll_writable)
-    #[cfg(any(any(), any(), all(),))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
             make_fut,
@@ -163,7 +162,6 @@ impl<MakeFut, Fut> Debug for UdpPollHelper<MakeFut, Fut> {
 /// Otherwise, `None` is returned.
 #[allow(clippy::needless_return)] // Be sure we return the right thing
 pub(crate) fn default_runtime() -> Option<Arc<dyn Runtime>> {
-    #[cfg(all())]
     {
         if ::tokio::runtime::Handle::try_current().is_ok() {
             return Some(Arc::new(TokioRuntime));
@@ -175,23 +173,14 @@ pub(crate) fn default_runtime() -> Option<Arc<dyn Runtime>> {
         return Some(Arc::new(AsyncStdRuntime));
     }
 
-    #[cfg(all(any(), not(any())))]
+    #[cfg(any())]
     {
         return Some(Arc::new(SmolRuntime));
     }
 
-    #[cfg(not(any(any(), any())))]
     None
 }
 
-#[cfg(all())]
 mod tokio;
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-#[cfg(all())]
 pub(crate) use self::tokio::TokioRuntime;
-
-#[cfg(any())]
-mod async_io;
-// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-#[cfg(any(any(), any()))]
-pub(crate) use self::async_io::*;

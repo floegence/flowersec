@@ -1,4 +1,5 @@
 import { closeSync, fsyncSync, openSync } from "node:fs";
+import { dirname } from "node:path";
 
 export function claimSpendMarker(path: string): void {
   let descriptor: number;
@@ -14,6 +15,12 @@ export function claimSpendMarker(path: string): void {
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
+  }
+  const directory = openSync(dirname(path), "r");
+  try {
+    fsyncSync(directory);
+  } finally {
+    closeSync(directory);
   }
 }
 

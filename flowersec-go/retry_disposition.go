@@ -72,7 +72,7 @@ func (err *SessionError) RetryDisposition() RetryDisposition {
 	}
 	switch err.Code() {
 	case SessionClosed, SessionGoingAway, SessionTimeout, SessionResourceExhausted,
-		SessionStreamReset, SessionRekeyFailed, SessionLivenessFailed:
+		SessionStreamReset, SessionRekeyFailed, SessionLivenessFailed, SessionOperationFailed:
 		return retryableDisposition()
 	default:
 		return terminalDisposition()

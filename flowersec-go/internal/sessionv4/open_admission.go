@@ -1,19 +1,14 @@
 package sessionv4
 
 import (
-	"crypto/sha256"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -73,18 +68,12 @@ type CarrierAssociation struct {
 	// shared identifies the original SDK-owned logical association. Native
 	// providers report their own actual CarrierClosed separately.
 	shared *SharedIngress
-	native native.Stream
 	mu     sync.Mutex
 	bound  *OpenAdmission
 	scope  uint64
 }
 
 type openSlot struct {
-	outcomeComplete, nativeSendStopped                                                          bool
-	protectionGeneration, protectionScope                                                       uint64
-	protectionClass                                                                             StreamClass
-	protectionInUse, protectionClosed                                                           bool
-	recentAck, recentLimit                                                                      uint64 // Compact late-credit knowledge after real flow retirement.
 	bootstrap                                                                                   bool
 	rejectionOrdinary                                                                           bool
 	scope                                                                                       uint64
@@ -95,7 +84,6 @@ type openSlot struct {
 	incoming                                                                                    *cryptov4.IncomingScope
 	header                                                                                      protocolv4.RecordHeader
 	digest                                                                                      [32]byte
-	kindDigest                                                                                  [32]byte
 	deadline                                                                                    *timev4.Deadline
 	peerLimit, localLimit                                                                       uint64
 	reason                                                                                      uint64
@@ -121,37 +109,27 @@ type openSlot struct {
 // proof slots. There is no allocation per rejected ID and no pending waiter
 // queue. The same owner gate orders resource transfer and outcome selection.
 type OpenAdmission struct {
-	handlerGroup                                              *applicationGroup
-	managementGate                                            sync.Mutex
-	managementSealed                                          atomic.Bool
-	managementDeadline                                        atomic.Pointer[timev4.Deadline]
-	diagnostics                                               *diagnosticv4.Counters
-	diagnosticOperation                                       *DiagnosticOperation
-	diagnosticSink                                            *DiagnosticSink
 	mu                                                        sync.Mutex
 	engine                                                    *cryptov4.Engine
 	direction                                                 protocolv4.Direction
 	limits                                                    OpenLimits
 	slots                                                     []openSlot
-	slotExtents                                               [3]int
 	index                                                     []int
-	metadata                                                  openMetadataArena
+	metadata                                                  []byte
+	metadataUsed                                              []bool
 	active, opening, pending, positiveProofs, rejectionProofs uint32
 	byOpener                                                  [2][3]uint32
 	lifetime                                                  [2][3]uint64
 	nextOrdinal                                               uint64
-	protectionGeneration                                      uint64
 	roleOrdinals                                              [2]uint64
-	stable                                                    [2]ordinalbits.Set
+	stable                                                    [2][]uint64
 	closed, draining                                          bool
 	openGate                                                  localOpenGate
 	highestAccepted                                           [2]uint64
 	peerGoAway                                                goAwayBoundary
 	lifecycle                                                 *SessionLifecycle
-	application                                               *SessionPlan
 	decoder                                                   *protocolv4.Decoder
 	encode                                                    []byte
-	openEncode                                                sync.Mutex
 	retirement                                                *Retirement
 	retirementService                                         *RetirementService
 	barriers                                                  *Barriers
@@ -170,7 +148,6 @@ type OpenAdmission struct {
 	exchange                                                  *RekeyExchange
 	runtime                                                   *SessionRuntime
 	failure                                                   error
-	transportFailure                                          bool
 	methodTails                                               uint64
 	cleaning, cleaned, retired                                bool
 	receivePool                                               *ReceivePool
@@ -218,8 +195,8 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 		return nil, cryptov4.ErrConfiguration
 	}
 	// Descriptor and fixed index costs are charged before assigning metadata
-	// capacity. One data and one occupancy byte remain reserved per logical
-	// position; the prepaid pages retain that exact fragmentation/capacity bound.
+	// capacity. The byte arena has one occupancy byte per owned byte; this
+	// conservative layout makes fragmentation and cleanup accounting explicit.
 	ingressOverhead := uint64(limits.IngressItems) * (uint64(unsafe.Sizeof(openSlot{})) + 4*uint64(unsafe.Sizeof(int(0))))
 	if limits.IngressBytes <= ingressOverhead {
 		return nil, cryptov4.ErrConfiguration
@@ -236,10 +213,6 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 	if arenaBytes < kind+metadata {
 		return nil, cryptov4.ErrConfiguration
 	}
-	metadataArena, err := newOpenMetadataArena(arenaBytes)
-	if err != nil {
-		return nil, err
-	}
 	// This workspace covers one complete maximum OPEN at uint64 field maxima.
 	// Actual frame/route admission still checks the complete encrypted record.
 	encodeBytes := kind + metadata + 256
@@ -251,7 +224,10 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 	for indexSize < 2*int(limits.Terminal+limits.IngressItems) {
 		indexSize *= 2
 	}
-	a := &OpenAdmission{pendingWake: make(chan struct{}, 1), outcomeWake: make([]chan struct{}, int(limits.Terminal+limits.IngressItems)), cleanupWake: make(chan struct{}, 1), cleanupDone: make(chan struct{}), engine: engine, direction: direction, limits: limits, slots: make([]openSlot, int(limits.Terminal+limits.IngressItems)), index: make([]int, indexSize), metadata: metadataArena, nextOrdinal: 1, roleOrdinals: [2]uint64{streams.Client, streams.Server}, stable: [2]ordinalbits.Set{ordinalbits.New(streams.Client), ordinalbits.New(streams.Server)}, decoder: decoder, encode: make([]byte, encodeBytes)}
+	a := &OpenAdmission{pendingWake: make(chan struct{}, 1), outcomeWake: make([]chan struct{}, int(limits.Terminal+limits.IngressItems)), cleanupWake: make(chan struct{}, 1), cleanupDone: make(chan struct{}), engine: engine, direction: direction, limits: limits, slots: make([]openSlot, int(limits.Terminal+limits.IngressItems)), index: make([]int, indexSize), metadata: make([]byte, arenaBytes), metadataUsed: make([]bool, arenaBytes), nextOrdinal: 1, roleOrdinals: [2]uint64{streams.Client, streams.Server}, stable: [2][]uint64{make([]uint64, (streams.Client+63)/64), make([]uint64, (streams.Server+63)/64)}, decoder: decoder, encode: make([]byte, encodeBytes)}
+	for i := range a.outcomeWake {
+		a.outcomeWake[i] = make(chan struct{}, 1)
+	}
 	return a, nil
 }
 
@@ -281,17 +257,6 @@ func (a *OpenAdmission) find(scope uint64) int {
 	return -1
 }
 func (a *OpenAdmission) insert(scope uint64, slot int) {
-	// Ordinary proofs, rejection reserve and ingress have independent prepaid
-	// ranges. Every indexed owner stays inside its range's initialized prefix,
-	// even after moving, becoming recent/held, or returning its slot.
-	base := [3]int{0, int(a.limits.Terminal - a.limits.RejectionReserve), int(a.limits.Terminal)}
-	region := 0
-	if slot >= base[2] {
-		region = 2
-	} else if slot >= base[1] {
-		region = 1
-	}
-	a.slotExtents[region] = max(a.slotExtents[region], slot-base[region]+1)
 	for pos, count := a.bucket(scope), 0; count < len(a.index); pos, count = (pos+1)&(len(a.index)-1), count+1 {
 		if a.index[pos] <= 0 {
 			a.index[pos] = slot + 1
@@ -299,30 +264,6 @@ func (a *OpenAdmission) insert(scope uint64, slot int) {
 		}
 	}
 	panic("sessionv4: fixed OPEN index capacity invariant")
-}
-
-func (a *OpenAdmission) initializedSlotCount() int {
-	return a.slotExtents[0] + a.slotExtents[1] + a.slotExtents[2]
-}
-
-// nextInitializedSlot retains physical slot order and skips only untouched
-// tails. This is a scheduling/cleanup bound, never a protocol admission gate.
-func (a *OpenAdmission) nextInitializedSlot(at int) int {
-	base := [3]int{0, int(a.limits.Terminal - a.limits.RejectionReserve), int(a.limits.Terminal)}
-	first := -1
-	for region, start := range base {
-		end := start + a.slotExtents[region]
-		if start == end {
-			continue
-		}
-		if first < 0 {
-			first = start
-		}
-		if at < end {
-			return max(at, start)
-		}
-	}
-	return first
 }
 func (a *OpenAdmission) remove(scope uint64) {
 	for pos, count := a.bucket(scope), 0; count < len(a.index); pos, count = (pos+1)&(len(a.index)-1), count+1 {
@@ -347,13 +288,31 @@ func (a *OpenAdmission) slot(h OpenHandle) (*openSlot, error) {
 	return &a.slots[i], nil
 }
 func (a *OpenAdmission) metadataReserve(kind string, metadata []byte) (int, bool) {
-	return a.metadata.reserve(kind, metadata)
+	size, run := len(kind)+len(metadata), 0
+	for i, used := range a.metadataUsed {
+		if used {
+			run = 0
+		} else {
+			run++
+		}
+		if run == size {
+			start := i + 1 - size
+			for j := start; j <= i; j++ {
+				a.metadataUsed[j] = true
+			}
+			copy(a.metadata[start:], kind)
+			copy(a.metadata[start+len(kind):], metadata)
+			return start, true
+		}
+	}
+	return 0, false
 }
 func (a *OpenAdmission) releaseMetadata(s *openSlot) {
 	if s.metadataSize == 0 || s.preparationActive {
 		return
 	}
-	a.metadata.release(s.metadataStart, s.metadataSize)
+	clear(a.metadata[s.metadataStart : s.metadataStart+s.metadataSize])
+	clear(a.metadataUsed[s.metadataStart : s.metadataStart+s.metadataSize])
 	s.metadataSize, s.kindSize = 0, 0
 }
 func (a *OpenAdmission) freeSlot(ingress bool, rejection bool) int {
@@ -364,18 +323,47 @@ func (a *OpenAdmission) freeSlot(ingress bool, rejection bool) int {
 		start, end = end, int(a.limits.Terminal)
 	}
 	for i := start; i < end; i++ {
-		if a.slots[i].phase == openFree && a.slots[i].protectionGeneration == 0 {
+		if a.slots[i].phase == openFree {
 			return i
 		}
 	}
 	return -1
+}
+func (a *OpenAdmission) unusedProtection(role protocolv4.Direction, class StreamClass) uint32 {
+	var reserved uint32
+	for r := range 2 {
+		for c := range 3 {
+			used := a.byOpener[r][c]
+			if r == int(role) && c == int(class) {
+				used++
+			}
+			if used < a.limits.Protected[r][c] {
+				reserved += a.limits.Protected[r][c] - used
+			}
+		}
+	}
+	return reserved
 }
 func (a *OpenAdmission) positiveAvailable(role protocolv4.Direction, class StreamClass) bool {
 	return a.positiveAvailableWithProof(role, class, false)
 }
 
 func (a *OpenAdmission) positiveAvailableWithProof(role protocolv4.Direction, class StreamClass, ownsProof bool) bool {
-	return a.positiveAvailableProtected(role, class, ownsProof, -1)
+	if class > ManagementStream {
+		return false
+	}
+	proofs := a.positiveProofs
+	if ownsProof {
+		if proofs == 0 {
+			return false
+		}
+		proofs-- // Transfer this OPEN's original proof without reserving another.
+	}
+	reserved := a.unusedProtection(role, class)
+	return a.active < a.limits.Active && reserved <= a.limits.Active-a.active-1 &&
+		a.byOpener[role][class] < a.limits.PerOpener[role][class] && a.byOpener[0][class]+a.byOpener[1][class] < a.limits.PerClass[class] &&
+		a.lifetime[role][class] < a.limits.Lifetime[role][class] &&
+		proofs+reserved < a.limits.Terminal-a.limits.RejectionReserve
 }
 
 func (a *OpenAdmission) businessConflict() bool {
@@ -413,7 +401,6 @@ func (a *OpenAdmission) Hold(record *ReceivedRecord, carrier *CarrierAssociation
 	if !ok || !yes || !good || !numeric || len(digest) != 32 {
 		return OpenHandle{}, ErrOpenAssociation
 	}
-	kindDigest := sha256.Sum256([]byte(kind))
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	carrier.mu.Lock()
@@ -437,7 +424,6 @@ func (a *OpenAdmission) Hold(record *ReceivedRecord, carrier *CarrierAssociation
 	}
 	s := &a.slots[i]
 	*s = openSlot{scope: frame.Header.Scope, phase: openPending, carrier: carrier, incoming: record.incoming, header: frame.Header, deadline: deadline, peerLimit: limit, metadataStart: start, metadataSize: len(kind) + len(metadata), kindSize: len(kind)}
-	s.kindDigest = kindDigest
 	copy(s.digest[:], digest)
 	carrier.bound, carrier.scope = a, s.scope
 	a.insert(s.scope, i)
@@ -471,7 +457,7 @@ func (a *OpenAdmission) CopyRequest(h OpenHandle, dst []byte) (kind, metadata []
 	if s.phase != openPending || len(dst) < s.metadataSize {
 		return nil, nil, 0, cryptov4.ErrCapacity
 	}
-	a.metadata.copyRange(dst, s.metadataStart, s.metadataStart+s.metadataSize)
+	copy(dst, a.metadata[s.metadataStart:s.metadataStart+s.metadataSize])
 	return dst[:s.kindSize:s.kindSize], dst[s.kindSize:s.metadataSize:s.metadataSize], s.peerLimit, nil
 }
 
@@ -491,14 +477,6 @@ func (a *OpenAdmission) CarrierClosed(h OpenHandle) error {
 	defer a.mu.Unlock()
 	s, err := a.slot(h)
 	if err != nil {
-		// A shared flow can finish its original logical association during
-		// the last owner's Release, after RETIRE_ACK. Collection removes its
-		// detail only after carrier closure and every actual tail complete.
-		// The original stable bit plus an absent slot therefore proves this
-		// repeated report is complete; foreign or unretired handles do not.
-		if !a.closed && h.owner == a && a.isStable(h.scope) {
-			return nil
-		}
 		return err
 	}
 	if s.carrierDone {
@@ -521,11 +499,11 @@ func (a *OpenAdmission) isStable(scope uint64) bool {
 		return false
 	}
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	return ordinal < a.roleOrdinals[role] && a.stable[role].Has(ordinal)
+	return ordinal < a.roleOrdinals[role] && a.stable[role][ordinal/64]&(uint64(1)<<(ordinal%64)) != 0
 }
 func (a *OpenAdmission) makeStable(s *openSlot) {
 	role, ordinal := (s.scope+1)%2, (s.scope-1)/2
-	a.stable[role].Add(ordinal)
+	a.stable[role][ordinal/64] |= uint64(1) << (ordinal % 64)
 	s.phase = openHeld
 	// The detail index is retained privately while real references exist; the
 	// stable bitmap already rejects every new barrier/OPEN association.
@@ -536,7 +514,6 @@ func (a *OpenAdmission) collect(s *openSlot) {
 		a.notifyCleanup()
 		return
 	}
-	a.compactRecentFlow(s)
 	if s.phase != openHeld || !s.carrierDone || s.activeCharged || s.barrierReferences != 0 || s.retirementReferences != 0 {
 		return
 	}
@@ -563,7 +540,7 @@ func (a *OpenAdmission) collect(s *openSlot) {
 		a.positiveProofs--
 	}
 	a.remove(s.scope)
-	a.resetSlotLocked(s)
+	*s = openSlot{}
 	a.notifyDecisionOpportunityLocked()
 }
 
@@ -572,7 +549,7 @@ func (a *OpenAdmission) collect(s *openSlot) {
 func (a *OpenAdmission) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for scanned, i := 0, a.nextInitializedSlot(0); scanned < a.initializedSlotCount(); scanned, i = scanned+1, a.nextInitializedSlot(i+1) {
+	for i := range a.slots {
 		a.collect(&a.slots[i])
 	}
 }
@@ -586,25 +563,12 @@ func (a *OpenAdmission) Drain() {
 func (a *OpenAdmission) drainLocked() {
 	a.draining = true
 	a.openGate.close()
-	a.cancelUnacceptedManagementLocked()
 	a.notifyDecisionOpportunityLocked()
 	if a.bootstrap != nil && a.direction == a.bootstrap.spec.Opener {
 		if s, err := a.slot(a.bootstrap.handle); err == nil && !s.submitted {
 			s.cancelled = true
 			s.flow.send.Stop()
 			s.flow.receive.Abandon()
-		}
-	}
-}
-
-// Drain preserves only management channels accepted before this same owner
-// gate closed. Late outcomes still settle their original OPEN and proof, but
-// cannot turn an opening M into a new management capability.
-func (a *OpenAdmission) cancelUnacceptedManagementLocked() {
-	for i := range a.slots {
-		s := &a.slots[i]
-		if s.phase != openFree && s.class == ManagementStream && !s.accepted {
-			a.cancelStreamLocked(s)
 		}
 	}
 }

@@ -18,10 +18,8 @@ use crate::quic_proto::{
 };
 
 /// Cryptography interface based on *ring*
-#[cfg(any(any(), all()))]
 pub(crate) mod ring_like;
 /// TLS interface based on rustls
-#[cfg(any(any(), all()))]
 pub(crate) mod rustls;
 
 /// A cryptographic session (commonly TLS)

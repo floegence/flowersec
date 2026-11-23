@@ -3,27 +3,52 @@ import Testing
 
 @testable import Flowersec
 
+private struct PublicRequest: Codable, Sendable {
+  let value: String
+}
+
+private struct PublicResponse: Codable, Sendable {
+  let accepted: Bool
+}
+
+private struct PublicNotification: Codable, Sendable {
+  let state: String
+}
+
 @Test
 func unversionedOneShotPublicAPICompiles() async throws {
-  let connectSource: @Sendable (TransportEnvironment, ConnectionMaterialSource) async throws -> any Session = {
-    environment, source in try await connect(environment: environment, source: source)
+  let parse: (Data) throws -> Artifact = parseArtifact
+  let connectAttempt: @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session = {
+    lease, options in
+    try await connect(lease: lease, options: options)
   }
-  let connectMaterial: @Sendable (TransportEnvironment, ConnectionMaterial) async throws -> any Session = {
-    environment, material in try await connect(environment: environment, material: material)
+  let rpcCall: @Sendable (any RPCPeer) async throws -> PublicResponse = { peer in
+    try await peer.call(
+      7, PublicRequest(value: "request"), as: PublicResponse.self, timeout: .seconds(1))
   }
-  let controller: (TransportEnvironment, ConnectionMaterialSource) throws -> ConnectionController = {
-    try ConnectionController(environment: $0, source: $1)
-  }
-  let proxy: (any Session) throws -> ProxyClient = { try ProxyClient(session: $0) }
-  _ = connectSource; _ = connectMaterial; _ = controller; _ = proxy
+  let notificationSubscription: @Sendable (any RPCPeer) async throws ->
+    any RPCNotificationSubscription = { peer in
+      try await peer.subscribeNotification(9_002, as: PublicNotification.self) { result in
+        _ = try result.get()
+      }
+    }
+  let streamHandlers = try StreamHandlers()
+  try streamHandlers.handleStream(kind: "application.stream") { _ in }
+
+  _ = parse
+  _ = connectAttempt
+  _ = rpcCall
+  _ = notificationSubscription
+  _ = streamHandlers
 }
 
 @Test
 func retryDispositionsMatchPortableContract() {
-  #expect(ConnectError.expired.retryDisposition == .retryable)
+  #expect(ConnectError.expiredArtifact.retryDisposition == .retryable)
   #expect(ConnectError.canceled.code == .connectionFailed)
   #expect(ConnectError.canceled.retryDisposition == .terminal)
   #expect(SessionError.canceled.retryDisposition == .terminal)
   #expect(SessionError.closed.retryDisposition == .retryable)
+
   #expect(RetryDisposition.retryAfter(1_234_000) == .retryAfter(1_234_000))
 }

@@ -2,7 +2,7 @@
 
 This Go-only enrollment profile exchanges a bounded application descriptor using
 an out-of-band 128-bit invitation secret. It does not create an application
-Session, extend Transport v4, grant access, consume an invitation, or own a
+Session, extend the session protocol, grant access, consume an invitation, or own a
 membership directory. The application mounts one dedicated route on its TLS
 server and owns issuance, expiry, authorization, and durable consumption.
 
@@ -83,4 +83,4 @@ trust material.
 - `flowersec-go/invitation_exchange.go`: independent TLS verifier and Noise exchange.
 - `flowersec-go/invitation_exchange_test.go`: public delivery and error contracts.
 - `flowersec-go/invitation_security_test.go`: transcript replay, tampering, limits, deadlines, and certificate profile.
-- `flowersec-go/internal/carrierv4/tlspolicy/policy_test.go`: ordinary CA/pin policies.
+- `flowersec-go/internal/transportsecurity/policy_test.go`: ordinary CA/pin policies.

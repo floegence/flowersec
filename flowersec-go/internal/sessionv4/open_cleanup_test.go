@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 func assertAdmissionCleanupPending(t *testing.T, a *OpenAdmission) {
@@ -122,7 +122,7 @@ func TestClosedAdmissionJoinsReceiveCursorBeforeReleasingFlow(t *testing.T) {
 	done := startAdmissionCleanup(t, a)
 	assertAdmissionCleanupPending(t, a)
 	f.receive.pool.mu.Lock()
-	retained := f.receive.readPending && !f.receive.cleaned && f.receive.capacity == 64 && f.receive.pool.backingUsed >= f.receive.capacity
+	retained := f.receive.readPending && !f.receive.cleaned && f.receive.storage != nil
 	f.receive.pool.mu.Unlock()
 	if !retained {
 		t.Fatal("closed Session forgot the cursor advancement claim")

@@ -2,113 +2,173 @@ package flowersec_test
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	fs "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/examples/parityclient"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v7"
 )
+
+const (
+	exampleEchoRPCTypeID      = uint32(7001)
+	exampleNotificationTypeID = uint32(7002)
+	exampleEchoStreamKind     = "parity.echo"
+)
+
+type exampleValuePayload struct {
+	Value string `json:"value"`
+}
 
 func ExampleConnect() {
 	if err := connectExample(); err != nil {
-		reportExampleError(err)
-	}
-}
-
-func reportExampleError(err error) {
-	if err != nil {
-		// A new attempt needs new material. Preserve the SDK's structured
-		// recovery and original submission facts instead of replaying work.
-		var connection *fs.ConnectError
-		var session *fs.SessionError
-		var operation *exampleExchangeError
-		if errors.As(err, &operation) {
-			fmt.Fprintf(os.Stderr, "flowersec operation failed (rpc-submitted=%t, notify-submitted=%t, stream-accepted=%d, rpc-reference=%t)\n",
-				operation.facts.RPC.Submission.MessageAccepted, operation.facts.Notification.MessageAccepted,
-				operation.facts.Write.AcceptedBytes, operation.facts.RPC.Reference.Valid())
-		}
-		switch {
-		case errors.As(err, &connection):
-			disposition := connection.RetryDisposition()
-			fmt.Fprintf(os.Stderr, "flowersec connection failed (code=%s, retry=%s, not-before=%d)\n",
-				connection.Code(), disposition.Kind, disposition.RetryAtUnixMilliseconds)
-		case errors.As(err, &session):
-			disposition := session.RetryDisposition()
-			fmt.Fprintf(os.Stderr, "flowersec session failed (code=%s, retry=%s, not-before=%d)\n",
-				session.Code(), disposition.Kind, disposition.RetryAtUnixMilliseconds)
-		default:
-			fmt.Fprintf(os.Stderr, "flowersec example failed (%T)\n", err)
-		}
+		reportRecovery(err)
 	}
 }
 
 func TestExampleConnectE2E(t *testing.T) {
-	if os.Getenv("FSEC_MATERIAL_PATH") == "" {
+	if os.Getenv("FSEC_ARTIFACT_V5_PATH") == "" {
 		t.Skip("example E2E input is supplied by the acceptance runner")
 	}
 	if err := connectExample(); err != nil {
-		var operation *exampleExchangeError
-		if errors.As(err, &operation) {
-			t.Logf("exchange cause: %v", operation.cause)
-		}
 		t.Fatal(err)
 	}
 }
 
-func connectExample() (err error) {
+func connectExample() error {
+	artifactJSON, err := os.ReadFile(os.Getenv("FSEC_ARTIFACT_V5_PATH"))
+	if err != nil {
+		return err
+	}
+	artifact, err := flowersec.ParseArtifact(artifactJSON)
+	if err != nil {
+		return err
+	}
+	receiptPath := os.Getenv("FSEC_SPEND_RECEIPT_V5_PATH")
+	lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error {
+		return commitSpendReceipt(receiptPath)
+	})
+	if err != nil {
+		return err
+	}
+	trustRoots, err := x509.SystemCertPool()
+	if err != nil {
+		return err
+	}
+	if trustRootPath := os.Getenv("FSEC_TRUST_ROOT_PEM_PATH"); trustRootPath != "" {
+		trustRootPEM, readErr := os.ReadFile(trustRootPath)
+		if readErr != nil {
+			return readErr
+		}
+		if !trustRoots.AppendCertsFromPEM(trustRootPEM) {
+			return errors.New("invalid trust root PEM")
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	// Only the acceptance runner supplies this trusted deployment manifest.
-	// Applications configure independent pins, keys, clock and durable history
-	// through parityclient.New; the entire consumer uses published SDK imports.
-	client, err := parityclient.OpenAcceptanceFixture(ctx, os.Getenv("FSEC_MATERIAL_PATH"),
-		os.Getenv("FSEC_TRUST_ROOT_PEM_PATH"), os.Getenv("FSEC_SPEND_RECEIPT_PATH"), os.Getenv("FSEC_ORIGIN"))
-	if client != nil {
-		defer func() {
-			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stop()
-			err = errors.Join(err, client.Close(cleanup))
-		}()
-	}
+	session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{
+		TrustRoots:     trustRoots,
+		Origin:         os.Getenv("FSEC_ORIGIN"),
+		ConnectTimeout: 15 * time.Second,
+	})
 	if err != nil {
 		return err
 	}
-	if _, err = client.Connect(ctx); err != nil {
+	if err := runExampleApplication(ctx, session); err != nil {
+		_ = session.Close()
 		return err
 	}
-	if client.SourceAcquisitions() != 1 || !client.SpendStatus().CommitKnown {
-		return errors.New("original source did not durably consume exactly once")
+	return session.Close()
+}
+
+func runExampleApplication(ctx context.Context, session flowersec.Session) error {
+	request := exampleValuePayload{Value: "ping"}
+	var response exampleValuePayload
+	if err := session.RPC().Call(ctx, exampleEchoRPCTypeID, request, &response); err != nil {
+		return fmt.Errorf("typed RPC: %w", err)
 	}
-	// Connect returned dual READY and observed the original SQLite consumer's
-	// definite commit. This receipt reports that fact; it never authorizes it.
-	if err = commitSpendReceipt(os.Getenv("FSEC_SPEND_RECEIPT_PATH")); err != nil {
-		return err
+	if response != request {
+		return errors.New("unexpected typed RPC response")
 	}
-	facts, err := client.Exchange(ctx, os.Getenv("FSEC_EXAMPLE_STREAM_CELL"))
+	if err := session.RPC().Notify(ctx, exampleNotificationTypeID, exampleValuePayload{Value: "notify"}); err != nil {
+		return fmt.Errorf("send notification: %w", err)
+	}
+
+	streamCell := os.Getenv("FSEC_EXAMPLE_STREAM_CELL")
+	if streamCell == "" {
+		streamCell = "direct"
+	}
+	metadata, err := flowersec.NewStreamMetadata(map[string]any{"cell": streamCell})
 	if err != nil {
-		return &exampleExchangeError{cause: err, facts: facts}
+		return err
+	}
+	stream, err := session.OpenStream(ctx, exampleEchoStreamKind, metadata)
+	if err != nil {
+		return fmt.Errorf("open stream: %w", err)
+	}
+	defer stream.Close()
+	if err := writeExampleAll(stream, []byte("hello")); err != nil {
+		return err
+	}
+	if err := stream.CloseWrite(); err != nil {
+		return err
+	}
+	responseBytes, err := io.ReadAll(stream)
+	if err != nil {
+		return err
+	}
+	if string(responseBytes) != "world" {
+		return errors.New("unexpected reliable stream response")
+	}
+	_, err = session.ProbeLiveness(ctx)
+	if err != nil {
+		return fmt.Errorf("probe liveness: %w", err)
 	}
 	return nil
 }
 
-type exampleExchangeError struct {
-	cause error
-	facts parityclient.ExchangeResult
+func writeExampleAll(stream flowersec.ByteStream, payload []byte) error {
+	for len(payload) > 0 {
+		written, err := stream.Write(payload)
+		if err != nil {
+			return err
+		}
+		if written <= 0 || written > len(payload) {
+			return io.ErrShortWrite
+		}
+		payload = payload[written:]
+	}
+	return nil
 }
 
-func (e *exampleExchangeError) Error() string { return "flowersec parity exchange failed" }
-func (e *exampleExchangeError) Unwrap() error { return e.cause }
+func reportRecovery(err error) {
+	var connectError *flowersec.ConnectError
+	if errors.As(err, &connectError) {
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", connectError.RetryDisposition().Kind)
+		return
+	}
+	var sessionError *flowersec.SessionError
+	if errors.As(err, &sessionError) {
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", sessionError.RetryDisposition().Kind)
+		return
+	}
+	reportExampleError(err)
+}
+
+func reportExampleError(err error) {
+	fmt.Fprintf(os.Stderr, "flowersec example failed (%T)\n", err)
+}
 
 func commitSpendReceipt(path string) error {
 	receipt, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	_, writeErr := receipt.WriteString("flowersec-v4-material-spent\n")
+	_, writeErr := receipt.WriteString("flowersec-v5-artifact-spent\n")
 	if err := errors.Join(writeErr, receipt.Sync(), receipt.Close()); err != nil {
 		return err
 	}

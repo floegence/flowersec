@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 // IdleWatchdog merges idle, authorization and root expiry into one reserved

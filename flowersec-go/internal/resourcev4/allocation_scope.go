@@ -1,29 +1,5 @@
 package resourcev4
 
-// CopyAllocationScope reads an original live owner's exact allocation domain.
-// It grants no reservation or transfer right and never removes a scope.
-func (ref Reference) CopyAllocationScope(root *Root, dst []Account) (OwnerKey, int, error) {
-	if root == nil || ref.root != root {
-		return OwnerKey{}, 0, ErrOwner
-	}
-	root.mu.Lock()
-	defer root.mu.Unlock()
-	s, c := ref.slotsLocked()
-	if s == nil || !s.primary {
-		return OwnerKey{}, 0, ErrOwner
-	}
-	if err := root.checkCharge(s, c); err != nil {
-		return OwnerKey{}, 0, err
-	}
-	if len(dst) < s.count {
-		return OwnerKey{}, 0, ErrCapacity
-	}
-	for i, account := range s.accounts[:s.count] {
-		dst[i] = account.account(root)
-	}
-	return s.owner, s.count, nil
-}
-
 // CopyResultAccounts projects the exact remaining scope generations of an
 // original completed result. It does not infer an Environment from labels or
 // permit a caller to omit a surviving tenant/account from its next vector.
@@ -44,10 +20,7 @@ func (ref Reference) CopyResultAccounts(dst []Account) (int, error) {
 	if len(dst) < s.count {
 		return 0, ErrCapacity
 	}
-	for i, account := range s.accounts[:s.count] {
-		dst[i] = account.account(r)
-	}
-	return s.count, nil
+	return copy(dst, s.accounts[:s.count]), nil
 }
 
 // CheckAllocationScope fixes dynamic children to the exact original root,
@@ -71,7 +44,7 @@ func (ref Reference) CheckAllocationScope(root *Root, owner OwnerKey, accounts [
 		return ErrOwner
 	}
 	for index, account := range accounts {
-		if account.slotLocked(root) == nil || accountIndex(s.accounts[:s.count], account.slotKey()) < 0 {
+		if account.slotLocked(root) == nil || accountIndex(s.accounts[:s.count], account) < 0 {
 			return ErrOwner
 		}
 		for _, earlier := range accounts[:index] {

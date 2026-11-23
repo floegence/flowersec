@@ -1,0 +1,49 @@
+{
+  "schema_version": 5,
+  "vectors": [
+    {
+      "name": "chacha20poly1305_client_to_server_epoch_7",
+      "suite": 1,
+      "session_prk_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "h3_b64u": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+      "direction": 1,
+      "epoch": 7,
+      "sequence": 11,
+      "expires_at_unix_ms": 2000000000000,
+      "plaintext_b64u": "Zmxvd2Vyc2VjLWRhdGFncmFtLXYzLXN1aXRlLTE",
+      "epoch_secret_b64u": "XldbKpY7SnZV3qlywb7Tocjl72iiakzLC5r6gGdgP8o",
+      "unreliable_root_b64u": "MnL8DEhybq4PElZ89bnpp0UEGggVlj2JoqpQ5XLOx44",
+      "material_secret_b64u": "zwU2RCbxQCbOql8enTjEW1RDsQyK5ZIPBEiWkxkcngc",
+      "record_key_b64u": "uhkAQjToWyArnf7th73T91GdkbCFyNemGwXgU1h1uXM",
+      "nonce_prefix_b64u": "22pxag",
+      "nonce_b64u": "22pxagAAAAAAAAAL",
+      "header_hex": "465344350500002000000007000000000000000b000001d1a94a20000000002d",
+      "aad_b64u": "Zmxvd2Vyc2VjLXY1LXVucmVsaWFibGUAICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8BRlNENQUAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAAC0",
+      "ciphertext_b64u": "Hs3IncOChOM-WmrwHy2dpMcW31u_sip0LNPBzBMKLclfu1oCp24iaUN1n8bm",
+      "wire_b64u": "RlNENQUAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAAC0ezcidw4KE4z5aavAfLZ2kxxbfW7-yKnQs08HMEwotyV-7WgKnbiJpQ3WfxuY"
+    },
+    {
+      "name": "aes256gcm_client_to_server_epoch_7",
+      "suite": 2,
+      "session_prk_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "h3_b64u": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+      "direction": 1,
+      "epoch": 7,
+      "sequence": 11,
+      "expires_at_unix_ms": 2000000000000,
+      "plaintext_b64u": "Zmxvd2Vyc2VjLWRhdGFncmFtLXYzLXN1aXRlLTI",
+      "epoch_secret_b64u": "XldbKpY7SnZV3qlywb7Tocjl72iiakzLC5r6gGdgP8o",
+      "unreliable_root_b64u": "MnL8DEhybq4PElZ89bnpp0UEGggVlj2JoqpQ5XLOx44",
+      "material_secret_b64u": "zwU2RCbxQCbOql8enTjEW1RDsQyK5ZIPBEiWkxkcngc",
+      "record_key_b64u": "uhkAQjToWyArnf7th73T91GdkbCFyNemGwXgU1h1uXM",
+      "nonce_prefix_b64u": "22pxag",
+      "nonce_b64u": "22pxagAAAAAAAAAL",
+      "header_hex": "465344350500002000000007000000000000000b000001d1a94a20000000002d",
+      "aad_b64u": "Zmxvd2Vyc2VjLXY1LXVucmVsaWFibGUAICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8BRlNENQUAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAAC0",
+      "ciphertext_b64u": "HQrcg5Q4KIMd-ILRW3xarUM8RQU7dS2GwPcnDiW2ST1bylQ81al5YWXHFkrR",
+      "wire_b64u": "RlNENQUAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAAC0dCtyDlDgogx34gtFbfFqtQzxFBTt1LYbA9ycOJbZJPVvKVDzVqXlhZccWStE"
+    }
+  ],
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

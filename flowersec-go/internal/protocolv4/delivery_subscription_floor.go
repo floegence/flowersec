@@ -4,7 +4,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // DeliverySubscriptionFloor is the original short-result namespace promise.
@@ -17,8 +17,7 @@ type DeliverySubscriptionFloor struct {
 	mu              sync.Mutex
 	reservation     resourcev4.Reference
 	closure         *EndpointCredentials
-	source          *CredentialSubscriptions
-	refs            [MaxSourceCredentials]namespaceSubscription
+	refs            [5]namespaceSubscription
 	count           int
 	wake            chan struct{}
 	active          *CredentialSubscriptions
@@ -27,108 +26,6 @@ type DeliverySubscriptionFloor struct {
 
 func DeliverySubscriptionFloorCharge() resourcev4.Vector {
 	return resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(DeliverySubscriptionFloor{})), resourcev4.Items: 1}
-}
-
-// ReserveSourceDeliveryFloor pins the independent result's original namespace
-// slots before Acquire. A partial source has no complete promise to transfer;
-// its existing component admission must still qualify the missing namespaces.
-// No credential or delivery authorization is created by this reservation.
-func (s *CredentialSubscriptions) ReserveSourceDeliveryFloor(reservation resourcev4.Reference) (_ *DeliverySubscriptionFloor, err error) {
-	if s == nil {
-		return nil, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err = s.checkSourceLocked(s.sourceOrigin); err != nil {
-		return nil, err
-	}
-	if !s.sourceComplete {
-		return nil, nil
-	}
-	for _, ref := range s.refs[:s.count] {
-		if err = reservation.CheckSameEnvironment(ref.owner.reservation); err != nil {
-			return nil, err
-		}
-	}
-	owned, err := reservation.Take(DeliverySubscriptionFloorCharge())
-	if err != nil {
-		return nil, err
-	}
-	f := &DeliverySubscriptionFloor{reservation: owned, source: s, wake: make(chan struct{}, 1)}
-	f.self = f
-	adopted := false
-	defer func() {
-		if !adopted {
-			f.Close()
-		}
-	}()
-	for _, original := range s.refs[:s.count] {
-		ref, err := original.owner.reserveSubscription(f.wake, false)
-		if err != nil {
-			return nil, err
-		}
-		f.refs[f.count], f.count = ref, f.count+1
-	}
-	adopted = true
-	return f, nil
-}
-
-// BindSubscriptions redeems only the verified closure of the same source.
-// Every actual namespace slot already belongs to this floor; binding cannot
-// add a namespace, allocate a reference or sample a different credential set.
-func (f *DeliverySubscriptionFloor) BindSubscriptions(s *CredentialSubscriptions) error {
-	if f == nil || f.self != f || s == nil {
-		return resourcev4.ErrOwner
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.used || s.prepared || s.closure == nil {
-		return resourcev4.ErrOwner
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.closed || f.cleaned || f.active != nil || f.source != s || !s.sourceAttached || !s.sourceComplete {
-		return resourcev4.ErrOwner
-	}
-	if err := f.reservation.CheckSameEnvironment(s.reservation); err != nil {
-		return err
-	}
-	for _, binding := range s.bindings[:s.closure.count] {
-		found := false
-		for _, ref := range f.refs[:f.count] {
-			found = found || ref.owner == binding.Namespace
-		}
-		if !found {
-			return resourcev4.ErrOwner
-		}
-	}
-	for _, ref := range f.refs[:f.count] {
-		if err := ref.check(); err != nil {
-			return err
-		}
-	}
-	f.closure, f.source = s.closure, nil
-	return nil
-}
-
-func (f *DeliverySubscriptionFloor) CheckAdmissionRequest(request resourcev4.Request) error {
-	if f == nil || f.self != f {
-		return resourcev4.ErrOwner
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.closed || f.cleaned || f.active != nil || f.source == nil || f.closure != nil {
-		return resourcev4.ErrOwner
-	}
-	if err := f.reservation.CheckRequest(request); err != nil {
-		return err
-	}
-	for _, ref := range f.refs[:f.count] {
-		if err := ref.check(); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *CredentialSubscriptions) ReserveDeliveryFloor(reservation resourcev4.Reference) (*DeliverySubscriptionFloor, error) {
@@ -142,9 +39,6 @@ func (s *CredentialSubscriptions) ReserveDeliveryFloor(reservation resourcev4.Re
 	}
 	if _, err := s.checkPreparationLocked(); err != nil {
 		return nil, err
-	}
-	if s.used || s.closed || s.prepared {
-		return nil, CBORFailure("credential_authorization_owner")
 	}
 	return newDeliverySubscriptionFloor(s.closure, s.bindings[:s.closure.count], reservation)
 }
@@ -188,7 +82,7 @@ func newDeliverySubscriptionFloor(closure *EndpointCredentials, bindings []Crede
 		if duplicate {
 			continue
 		}
-		ref, e := binding.Namespace.reserveSubscription(f.wake, false)
+		ref, e := binding.Namespace.subscribe(f.wake)
 		if e != nil {
 			return nil, e
 		}
@@ -200,13 +94,13 @@ func newDeliverySubscriptionFloor(closure *EndpointCredentials, bindings []Crede
 
 // caller holds the original endpoint authorization gate; this only attaches
 // already admitted namespace slots to its one freshly checked result owner.
-func (f *DeliverySubscriptionFloor) attach(s *CredentialSubscriptions, deliveryOrigin *EndpointCredentials) error {
+func (f *DeliverySubscriptionFloor) attach(s *CredentialSubscriptions) error {
 	if f == nil || f.self != f {
 		return CBORFailure("credential_authorization_owner")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed || f.cleaned || f.active != nil || (f.closure != s.closure && (deliveryOrigin == nil || f.closure != deliveryOrigin)) {
+	if f.closed || f.cleaned || f.active != nil || f.closure != s.closure {
 		return CBORFailure("revocation_subscription_capacity")
 	}
 	if err := f.reservation.CheckSameEnvironment(s.reservation); err != nil {
@@ -269,6 +163,6 @@ func (f *DeliverySubscriptionFloor) cleanupLocked() {
 	f.count = 0
 	f.reservation.Release()
 	f.reservation = resourcev4.Reference{}
-	f.closure, f.source, f.wake = nil, nil, nil
+	f.closure, f.wake = nil, nil
 	f.cleaned = true
 }

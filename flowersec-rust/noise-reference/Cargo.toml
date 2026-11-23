@@ -1,0 +1,22 @@
+[package]
+name = "flowersec-noise-reference"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+publish = false
+
+[[test]]
+name = "transport_v4_noise"
+path = "transport_v4_noise.rs"
+
+[dev-dependencies]
+hkdf = "0.13"
+p256 = { version = "0.14", features = ["ecdh"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+subtle = "2"
+snow = { version = "=0.10.0", path = "../../test-support/snow", default-features = false, features = ["ring-resolver", "use-p256", "use-curve25519", "use-chacha20poly1305", "use-sha2", "risky-raw-split"] }
+x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
+zeroize = "1"

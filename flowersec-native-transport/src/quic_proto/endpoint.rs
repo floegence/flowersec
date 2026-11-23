@@ -1,4 +1,3 @@
-use crate::preparation_budget::{CandidatePreparationBudget, IncomingPreparationPool};
 use std::{
     collections::{HashMap, hash_map},
     convert::TryFrom,
@@ -9,7 +8,10 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
+use rand::{
+    Rng, RngExt, SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -54,7 +56,6 @@ pub(crate) struct Endpoint {
     /// Buffered Initial and 0-RTT messages for pending incoming connections
     incoming_buffers: Slab<IncomingBuffer>,
     all_incoming_buffers_total_bytes: u64,
-    incoming_preparation: Option<IncomingPreparationPool>,
 }
 
 impl Endpoint {
@@ -74,12 +75,12 @@ impl Endpoint {
         allow_mtud: bool,
         rng_seed: Option<[u8; 32]>,
     ) -> Self {
-        let rng_seed = rng_seed.or(config.rng_seed);
         Self {
-            rng: rng_seed.map_or(
-                StdRng::try_from_rng(&mut rand::rngs::SysRng).expect("system entropy unavailable"),
-                StdRng::from_seed,
-            ),
+            rng: match rng_seed.or(config.rng_seed) {
+                Some(seed) => StdRng::from_seed(seed),
+                None => StdRng::try_from_rng(&mut SysRng)
+                    .expect("failed to seed random number generator from system"),
+            },
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -89,17 +90,12 @@ impl Endpoint {
             last_stateless_reset: None,
             incoming_buffers: Slab::new(),
             all_incoming_buffers_total_bytes: 0,
-            incoming_preparation: None,
         }
     }
 
     /// Replace the server configuration, affecting new incoming connections only
     pub(crate) fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
         self.server_config = server_config;
-    }
-
-    pub(crate) fn take_server_config_current(&mut self) -> Option<Arc<ServerConfig>> {
-        self.server_config.take()
     }
 
     /// Process `EndpointEvent`s emitted from related `Connection`s
@@ -146,84 +142,6 @@ impl Endpoint {
         None
     }
 
-    pub(crate) fn set_incoming_preparation(&mut self, pool: IncomingPreparationPool) {
-        self.incoming_preparation = Some(pool);
-    }
-    pub(crate) fn incoming_preparation_budget(
-        &self,
-        incoming: &Incoming,
-    ) -> Option<CandidatePreparationBudget> {
-        self.incoming_buffers[incoming.incoming_idx]
-            .preparation_budget
-            .clone()
-    }
-    /// Only the fixed routing prefix is read here. Debit precedes packet copy,
-    /// PartialDecode, initial key derivation, buffered input and TLS creation.
-    /// CID routing identifies a native connection, never a signed Route.
-    pub(crate) fn prepare_datagram(
-        &mut self,
-        remote: SocketAddr,
-        local_ip: Option<IpAddr>,
-        data: &[u8],
-    ) -> Result<Option<CandidatePreparationBudget>, Option<ConnectionHandle>> {
-        let Some(pool) = &self.incoming_preparation else {
-            return Ok(None);
-        };
-        let Some(&first) = data.first() else {
-            return Err(None);
-        };
-        let long = first & 0x80 != 0;
-        let cid = if long {
-            let length = usize::from(*data.get(5).ok_or(None)?);
-            if length > MAX_CID_SIZE {
-                return Err(None);
-            }
-            ConnectionId::new(data.get(6..6 + length).ok_or(None)?)
-        } else {
-            let length = self.local_cid_generator.cid_len();
-            ConnectionId::new(data.get(1..1 + length).ok_or(None)?)
-        };
-        let addresses = FourTuple { remote, local_ip };
-        let route = self
-            .index
-            .get_preparation_route(&addresses, cid, long, data);
-        let (budget, connection) = match route {
-            Some(RouteDatagramTo::Incoming(index)) => (
-                self.incoming_buffers[index].preparation_budget.clone(),
-                None,
-            ),
-            Some(RouteDatagramTo::Connection(handle)) => (
-                self.connections[handle].preparation_budget.clone(),
-                Some(handle),
-            ),
-            None => {
-                // A shared listener does not allocate an incoming owner for
-                // arbitrary unknown short headers, and never resets an owner
-                // that is already routed by its original CID.
-                if !long || self.server_config.is_none() {
-                    return Err(None);
-                }
-                (Some(pool.begin().map_err(|_| None)?), None)
-            }
-        };
-        if let Some(budget) = &budget
-            && budget.debit_input(data.len() as u64, 1).is_err()
-        {
-            // One denied input schedules one original connection close.
-            // Further denied packets cannot grow an unbounded control
-            // queue or affect another connection's endpoint ownership.
-            if let Some(handle) = connection {
-                let meta = &mut self.connections[handle];
-                if meta.preparation_close_sent {
-                    return Err(None);
-                }
-                meta.preparation_close_sent = true;
-                return Err(Some(handle));
-            }
-            return Err(None);
-        }
-        Ok(budget)
-    }
     /// Process an incoming UDP datagram
     pub(crate) fn handle(
         &mut self,
@@ -233,19 +151,6 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
         buf: &mut Vec<u8>,
-    ) -> Option<DatagramEvent> {
-        let preparation_budget = self.prepare_datagram(remote, local_ip, &data).ok()?;
-        self.handle_prepared(now, remote, local_ip, ecn, data, buf, preparation_budget)
-    }
-    pub(crate) fn handle_prepared(
-        &mut self,
-        now: Instant,
-        remote: SocketAddr,
-        local_ip: Option<IpAddr>,
-        ecn: Option<EcnCodepoint>,
-        data: BytesMut,
-        buf: &mut Vec<u8>,
-        preparation_budget: Option<CandidatePreparationBudget>,
     ) -> Option<DatagramEvent> {
         // Partially decode packet or short-circuit if unable
         let datagram_len = data.len();
@@ -335,7 +240,7 @@ impl Endpoint {
         } else if event.first_decode.initial_header().is_some() {
             // Potentially create a new connection
 
-            self.handle_first_packet(datagram_len, event, addresses, buf, preparation_budget)
+            self.handle_first_packet(datagram_len, event, addresses, buf)
         } else if event.first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
@@ -520,7 +425,6 @@ impl Endpoint {
         event: DatagramConnectionEvent,
         addresses: FourTuple,
         buf: &mut Vec<u8>,
-        preparation_budget: Option<CandidatePreparationBudget>,
     ) -> Option<DatagramEvent> {
         let dst_cid = event.first_decode.dst_cid();
         let header = event.first_decode.initial_header().unwrap();
@@ -605,10 +509,7 @@ impl Endpoint {
             }
         };
 
-        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer {
-            preparation_budget,
-            ..IncomingBuffer::default()
-        });
+        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
         self.index
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
@@ -651,24 +552,8 @@ impl Endpoint {
             version,
             ..
         } = incoming.packet.header;
-        let Some(server_config) = server_config.or_else(|| self.server_config.clone()) else {
-            self.index.remove_initial(dst_cid);
-            return Err(AcceptError {
-                cause: ConnectionError::LocallyClosed,
-                response: None,
-            });
-        };
-        if incoming_buffer
-            .preparation_budget
-            .as_ref()
-            .is_some_and(|budget| budget.check().is_err())
-        {
-            self.index.remove_initial(dst_cid);
-            return Err(AcceptError {
-                cause: ConnectionError::LocallyClosed,
-                response: None,
-            });
-        }
+        let server_config =
+            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
 
         if server_config
             .transport
@@ -764,7 +649,6 @@ impl Endpoint {
             },
         );
         self.index.insert_initial(dst_cid, ch);
-        self.connections[ch].preparation_budget = incoming_buffer.preparation_budget.clone();
 
         match conn.handle_first_packet(
             incoming.received_at,
@@ -967,8 +851,6 @@ impl Endpoint {
             addresses,
             side,
             reset_token: None,
-            preparation_budget: None,
-            preparation_close_sent: false,
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
@@ -1081,7 +963,6 @@ impl fmt::Debug for Endpoint {
 /// Buffered Initial and 0-RTT messages for a pending incoming connection
 #[derive(Default)]
 struct IncomingBuffer {
-    preparation_budget: Option<CandidatePreparationBudget>,
     datagrams: Vec<DatagramConnectionEvent>,
     total_bytes: u64,
 }
@@ -1201,36 +1082,6 @@ impl ConnectionIndex {
         }
     }
 
-    fn get_preparation_route(
-        &self,
-        addresses: &FourTuple,
-        cid: ConnectionId,
-        long: bool,
-        data: &[u8],
-    ) -> Option<RouteDatagramTo> {
-        if !cid.is_empty() {
-            if let Some(&handle) = self.connection_ids.get(&cid) {
-                return Some(RouteDatagramTo::Connection(handle));
-            }
-            if long && let Some(&route) = self.connection_ids_initial.get(&cid) {
-                return Some(route);
-            }
-        } else {
-            if let Some(&handle) = self.incoming_connection_remotes.get(addresses) {
-                return Some(RouteDatagramTo::Connection(handle));
-            }
-            if let Some(&handle) = self.outgoing_connection_remotes.get(&addresses.remote) {
-                return Some(RouteDatagramTo::Connection(handle));
-            }
-        }
-        if data.len() < RESET_TOKEN_SIZE {
-            return None;
-        }
-        self.connection_reset_tokens
-            .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
-            .cloned()
-            .map(RouteDatagramTo::Connection)
-    }
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
         if !datagram.dst_cid().is_empty()
@@ -1264,8 +1115,6 @@ impl ConnectionIndex {
 
 #[derive(Debug)]
 pub(crate) struct ConnectionMeta {
-    preparation_budget: Option<CandidatePreparationBudget>,
-    preparation_close_sent: bool,
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
@@ -1283,7 +1132,7 @@ pub(crate) struct ConnectionMeta {
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) struct ConnectionHandle(pub usize);
+pub(crate) struct ConnectionHandle(pub(crate) usize);
 
 impl From<ConnectionHandle> for usize {
     fn from(x: ConnectionHandle) -> Self {

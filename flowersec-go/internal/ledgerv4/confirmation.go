@@ -11,8 +11,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -87,7 +87,8 @@ type CommitStore interface {
 // the original claim/admit write. TxB reuses them only after TxA's real tail exits.
 type Invocation struct {
 	mu               sync.Mutex
-	ctx              *ledgerTaskContext
+	ctx              context.Context
+	cancel           context.CancelCauseFunc
 	clock            *timev4.Clock
 	origin           timev4.Mark
 	deadline         *timev4.Deadline
@@ -99,9 +100,6 @@ type Invocation struct {
 	commitCount      int
 	reservation      resourcev4.Reference
 	terminal         error
-	sampling         bool
-	observing        bool
-	cleaned          bool
 }
 
 type OriginalCommit struct {
@@ -120,13 +118,10 @@ func InvocationCharge(maxKeyBytes, maxProjectionBytes int) (resourcev4.Vector, e
 		return resourcev4.Vector{}, ErrConfiguration
 	}
 	// Original key, two detached authority names, exact projection and output,
-	// and two fixed commit/window positions. A separate original observer
-	// carries cancellation through opaque parent contexts and blocked I/O.
-	// Its timer coexists with the original confirmation backoff timer.
-	// The admitted profile additionally charges qualified runtime/backend work.
-	bytes := uint64(3*maxKeyBytes+2*maxProjectionBytes) + uint64(unsafe.Sizeof(Invocation{})) + 2*uint64(unsafe.Sizeof(timev4.Window{})) +
-		uint64(unsafe.Sizeof(timev4.Delay{})) + uint64(unsafe.Sizeof(time.Timer{})) + ledgerTaskContextBytes
-	return resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: 6, resourcev4.WorkSlots: 4, resourcev4.Tasks: 4, resourcev4.Timers: 2}, nil
+	// and two fixed commit/window positions. The admitted profile additionally
+	// charges runtime allocator/context/timer and actual backend work overhead.
+	bytes := uint64(3*maxKeyBytes+2*maxProjectionBytes) + uint64(unsafe.Sizeof(Invocation{})) + 2*uint64(unsafe.Sizeof(timev4.Window{}))
+	return resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: 3, resourcev4.WorkSlots: 2, resourcev4.Tasks: 2, resourcev4.Timers: 1}, nil
 }
 
 // NewInvocation accepts only a deadline already tightened by the trusted
@@ -141,96 +136,36 @@ func NewInvocation(ctx context.Context, clock *timev4.Clock, deadline *timev4.De
 	if err != nil {
 		return nil, err
 	}
-	owned, err := reservation.Take(charge)
-	if err != nil {
-		return nil, err
-	}
-	adopted := false
-	defer func() {
-		if !adopted {
-			owned.Release()
-		}
-	}()
-	original := newLedgerTaskContext(ctx)
-	defer func() {
-		if !adopted {
-			original.cancel(ErrOwner)
-		}
-	}()
-	if err := original.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	sample, err := deadline.Sample()
 	if err != nil {
 		return nil, err
 	}
-	i := &Invocation{ctx: original, clock: clock, origin: sample.Mark, deadline: deadline, fence: fence, reservation: owned, expected: make([]byte, maxProjectionBytes), output: make([]byte, maxProjectionBytes), key: make([]byte, maxKeyBytes)}
-	adopted = true
-	return i, nil
+	owned, err := reservation.Take(charge)
+	if err != nil {
+		return nil, err
+	}
+	original, cancel := context.WithCancelCause(ctx)
+	return &Invocation{ctx: original, cancel: cancel, clock: clock, origin: sample.Mark, deadline: deadline, fence: fence, reservation: owned, expected: make([]byte, maxProjectionBytes), output: make([]byte, maxProjectionBytes), key: make([]byte, maxKeyBytes)}, nil
 }
 
-// checkLocalLocked calls no context or time adapter. In particular, an opaque
-// parent's Err/Value cannot execute inside an original transaction gate.
-func (i *Invocation) checkLocalLocked() error {
+func (i *Invocation) check() error {
 	if i.terminal != nil {
 		return i.terminal
 	}
-	if i.cleaned {
-		return ErrOwner
-	}
-	if err := i.ctx.Err(); err != nil {
-		i.terminal = context.Cause(i.ctx.base)
+	if err := context.Cause(i.ctx); err != nil {
+		i.terminal = err
 	} else if err := i.reservation.Check(); err != nil {
 		i.terminal = err
-	}
-	return i.terminal
-}
-
-// lockSample always returns holding mu. Its single finite sampling position
-// keeps the original buffers charged while the trusted adapter runs outside
-// mu; competing samples refuse locally instead of multiplying blocked work.
-func (i *Invocation) lockSample() (sample timev4.Sample, err error) {
-	i.mu.Lock()
-	if err = i.checkLocalLocked(); err != nil {
-		return sample, err
-	}
-	if i.sampling {
-		return sample, ErrCapacity
-	}
-	i.sampling = true
-	i.mu.Unlock()
-	returned := false
-	defer func() {
-		if !returned {
-			i.mu.Lock()
-			i.sampling = false
-			if i.terminal == nil {
-				i.terminal = ErrOwner
-			}
-			i.mu.Unlock()
-			i.ctx.cancel(ErrOwner)
-		}
-	}()
-	sample, err = i.deadline.Sample()
-	i.mu.Lock()
-	i.sampling = false
-	returned = true
-	return sample, err
-}
-
-func (i *Invocation) checkAtLocked(sample timev4.Sample, sampleErr error) error {
-	if err := i.checkLocalLocked(); err != nil {
-		return err
-	}
-	if sampleErr == ErrCapacity {
-		return sampleErr
-	}
-	if sampleErr != nil {
-		i.terminal = sampleErr
-	} else if !sample.Mark.SameEra(i.origin) {
-		i.terminal = timev4.ErrContinuity
 	} else {
-		i.terminal = i.deadline.CheckAt(sample)
+		sample, err := i.deadline.Sample()
+		if !sample.Mark.SameEra(i.origin) {
+			i.terminal = timev4.ErrContinuity
+		} else {
+			i.terminal = err
+		}
 	}
 	return i.terminal
 }
@@ -239,9 +174,9 @@ func (i *Invocation) checkAtLocked(sample timev4.Sample, sampleErr error) error 
 // TxA followed by authorized TxB after the actual original callback dispatch.
 // No failed/unknown write can be replaced, retried, or treated as absence.
 func (i *Invocation) Begin(tx Transaction) (*OriginalCommit, error) {
-	sample, sampleErr := i.lockSample()
+	i.mu.Lock()
 	defer i.mu.Unlock()
-	if err := i.checkAtLocked(sample, sampleErr); err != nil {
+	if err := i.check(); err != nil {
 		return nil, err
 	}
 	if tx.Kind < SpendTxA || tx.Kind > AdmissionCommit || tx.Authority == "" || len(tx.Authority) > len(i.key) || len(tx.Key) == 0 || len(tx.Key) > len(i.key) || len(tx.Projection) == 0 || len(tx.Projection) > len(i.expected) || tx.BeforeVersion == math.MaxUint64 || tx.CommitVersion != tx.BeforeVersion+1 || tx.FencingEpoch != i.fence {
@@ -275,7 +210,7 @@ func (i *Invocation) Begin(tx Transaction) (*OriginalCommit, error) {
 	return c, nil
 }
 
-func (c *OriginalCommit) checkAtLocked(sample timev4.Sample, sampleErr error) error {
+func (c *OriginalCommit) check() error {
 	i := c.invocation
 	if c.terminal != nil {
 		return c.terminal
@@ -283,16 +218,14 @@ func (c *OriginalCommit) checkAtLocked(sample timev4.Sample, sampleErr error) er
 	if i.current != c {
 		return ErrOwner
 	}
-	if err := i.checkAtLocked(sample, sampleErr); err != nil {
-		if err != ErrCapacity {
-			c.terminal = err
-		}
+	if err := i.check(); err != nil {
+		c.terminal = err
 		return err
 	}
 	// Once confirmation wins, its finite read window does not replace the
 	// original invocation/action deadline. It still bounds late confirmation.
 	if c.window != nil && !c.confirmed {
-		if err := c.window.CheckAt(sample.Mark); err != nil {
+		if err := c.window.Check(); err != nil {
 			c.terminal = err
 			return err
 		}
@@ -300,8 +233,8 @@ func (c *OriginalCommit) checkAtLocked(sample timev4.Sample, sampleErr error) er
 	return nil
 }
 
-func (c *OriginalCommit) observeLocked(sample timev4.Sample, sampleErr error, observation Observation, projection []byte) error {
-	if err := c.checkAtLocked(sample, sampleErr); err != nil {
+func (c *OriginalCommit) observe(observation Observation, projection []byte) error {
+	if err := c.check(); err != nil {
 		return err
 	}
 	if !c.submitted {
@@ -312,7 +245,7 @@ func (c *OriginalCommit) observeLocked(sample timev4.Sample, sampleErr error, ob
 	}
 	switch observation.State {
 	case NotObserved, Unavailable:
-		return c.uncertainLocked(sample.Mark)
+		return c.uncertain()
 	case RolledBack:
 		c.terminal = ErrRolledBack
 	case Conflicting:
@@ -332,10 +265,10 @@ func (c *OriginalCommit) observeLocked(sample timev4.Sample, sampleErr error, ob
 	return c.terminal
 }
 
-func (c *OriginalCommit) uncertainLocked(mark timev4.Mark) error {
+func (c *OriginalCommit) uncertain() error {
 	if c.window == nil {
 		var err error
-		c.window, err = timev4.NewWindowAt(c.invocation.clock, mark, 2000)
+		c.window, err = timev4.NewWindow(c.invocation.clock, 2000)
 		if err != nil {
 			c.terminal = err
 			return err
@@ -349,39 +282,29 @@ func (c *OriginalCommit) uncertainLocked(mark timev4.Mark) error {
 // their actual I/O slot early. It is not an entry point for public queries.
 func (c *OriginalCommit) ConfirmOriginal(observation Observation, projection []byte) error {
 	i := c.invocation
-	sample, sampleErr := i.lockSample()
+	i.mu.Lock()
 	defer i.mu.Unlock()
-	return c.observeLocked(sample, sampleErr, observation, projection)
+	return c.observe(observation, projection)
 }
 
 func (c *OriginalCommit) acceptOutput(observation Observation, callErr error) error {
 	i := c.invocation
-	sample, sampleErr := c.lockRunningSample()
+	i.mu.Lock()
 	defer i.mu.Unlock()
-	if err := c.checkAtLocked(sample, sampleErr); err != nil {
+	if err := c.check(); err != nil {
 		return err
 	}
 	if c.confirmed {
 		return nil
 	}
 	if callErr != nil {
-		return c.uncertainLocked(sample.Mark) // A transport error is never a rollback receipt.
+		return c.uncertain() // A transport error is never a rollback receipt.
 	}
 	if observation.ProjectionBytes < 0 || observation.ProjectionBytes > len(i.output) {
 		c.terminal = ErrConflict
 		return c.terminal
 	}
-	return c.observeLocked(sample, nil, observation, i.output[:observation.ProjectionBytes])
-}
-
-// The original Run already owns its physical I/O and cleanup position. It can
-// sample without acquiring the independent external-receipt position; an ACK
-// racing a clock read cannot make Run discard its own completed store result.
-func (c *OriginalCommit) lockRunningSample() (timev4.Sample, error) {
-	i := c.invocation
-	sample, err := i.deadline.Sample()
-	i.mu.Lock()
-	return sample, err
+	return c.observe(observation, i.output[:observation.ProjectionBytes])
 }
 
 // Run performs exactly one original write and, on uncertainty, at most three
@@ -393,8 +316,8 @@ func (c *OriginalCommit) Run(store CommitStore) error {
 		return ErrConfiguration
 	}
 	i := c.invocation
-	sample, sampleErr := i.lockSample()
-	if err := c.checkAtLocked(sample, sampleErr); err != nil {
+	i.mu.Lock()
+	if err := c.check(); err != nil {
 		i.mu.Unlock()
 		return err
 	}
@@ -403,39 +326,21 @@ func (c *OriginalCommit) Run(store CommitStore) error {
 		return ErrOwner
 	}
 	c.submitted, c.running = true, true
-	if !i.observing {
-		i.observing = true
-		go i.ctx.observe(nil, i.deadline, i.origin)
-	}
 	i.mu.Unlock()
-	returned := false
 	defer func() {
 		i.mu.Lock()
 		c.running = false
-		if !returned && c.terminal == nil {
-			c.terminal = ErrOwner
-		}
 		clear(i.output)
 		i.mu.Unlock()
-		if !returned {
-			i.ctx.cancel(ErrOwner)
-		}
 	}()
-	err := c.runStore(store)
-	returned = true
-	return err
-}
-
-func (c *OriginalCommit) runStore(store CommitStore) error {
-	i := c.invocation
 	observation, callErr := store.Commit(i.ctx, c.tx, i.output)
 	err := c.acceptOutput(observation, callErr)
 	if !errors.Is(err, ErrUnknown) {
 		return err
 	}
 	for {
-		sample, sampleErr := c.lockRunningSample()
-		if err = c.checkAtLocked(sample, sampleErr); err != nil || c.confirmed {
+		i.mu.Lock()
+		if err = c.check(); err != nil || c.confirmed {
 			i.mu.Unlock()
 			return err
 		}
@@ -475,8 +380,8 @@ func (c *OriginalCommit) backoff() error {
 	timer := time.NewTimer(time.Millisecond)
 	defer timer.Stop()
 	for {
-		sample, sampleErr := c.lockRunningSample()
-		err = c.checkAtLocked(sample, sampleErr)
+		i.mu.Lock()
+		err = c.check()
 		confirmed := c.confirmed
 		i.mu.Unlock()
 		if err != nil || confirmed {
@@ -510,8 +415,8 @@ func (c *OriginalCommit) Dispatch(action func(context.Context) error) (err error
 		return ErrConfiguration
 	}
 	i := c.invocation
-	sample, sampleErr := i.lockSample()
-	if err := c.checkAtLocked(sample, sampleErr); err != nil {
+	i.mu.Lock()
+	if err := c.check(); err != nil {
 		i.mu.Unlock()
 		return err
 	}
@@ -539,25 +444,6 @@ func (c *OriginalCommit) Dispatch(action func(context.Context) error) (err error
 	return err
 }
 
-// revokeUndispatched is available only to the original live-spend owner. It
-// closes the callback guard at the very same gate as Dispatch, including when
-// cancellation prevented commit observation. It conveys no permission to
-// dispatch, publish, confirm, or reconstruct an invocation from a stored row.
-// A terminal CAS may record not_started only after this returns true.
-func (c *OriginalCommit) revokeUndispatched() bool {
-	i := c.invocation
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	if i.current != c || c.tx.Kind != SpendTxA || !c.submitted || c.running || c.dispatched {
-		return false
-	}
-	c.dispatched = true
-	if c.terminal == nil {
-		c.terminal = ErrOwner
-	}
-	return true
-}
-
 // Fence is called by the original trusted authority/handle continuity owner.
 // A different generation ends this invocation permanently; reverting to the
 // old value cannot revive it. Actual pending store/callback tails stay owned.
@@ -570,7 +456,7 @@ func (i *Invocation) Fence(current uint64) {
 	}
 	i.mu.Unlock()
 	if changed {
-		i.ctx.cancel(ErrFenced)
+		i.cancel(ErrFenced)
 	}
 }
 
@@ -584,7 +470,7 @@ func (i *Invocation) Cancel(cause error) {
 	}
 	i.reservation.Seal()
 	i.mu.Unlock()
-	i.ctx.cancel(cause)
+	i.cancel(cause)
 }
 
 // Cleanup seals admission and clears private material only after actual store
@@ -594,20 +480,8 @@ func (i *Invocation) Cleanup() error {
 	i.Cancel(ErrOwner)
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.cleaned {
-		return nil
-	}
-	if i.sampling {
-		return ErrCapacity
-	}
 	if c := i.current; c != nil && (c.running || c.dispatching) {
 		return ErrCapacity
-	}
-	if i.observing {
-		// Cancellation above closes the observer's SDK-owned context. Join it
-		// before releasing the invocation buffers so cleanup never reports a
-		// live observer as complete merely because it has not been scheduled yet.
-		<-i.ctx.exited
 	}
 	clear(i.expected)
 	clear(i.output)
@@ -619,6 +493,5 @@ func (i *Invocation) Cleanup() error {
 		i.commits[n].tx.Authority = ""
 	}
 	i.reservation.Release()
-	i.cleaned = true
 	return nil
 }

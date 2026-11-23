@@ -3,18 +3,15 @@ package websocket
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -25,18 +22,15 @@ import (
 type Messages struct{ *owner }
 
 type owner struct {
-	environmentBorrow                 *native.EnvironmentBorrow
 	mu                                sync.Mutex
 	options                           Options
 	reservation, environment          resourcev4.Reference
 	conn                              *ws.Conn
-	tlsConnection                     *tls.Conn
 	transport                         *ownedConn
 	handshake                         *handshakeConn
 	lifetime                          context.Context
 	cancel                            context.CancelCauseFunc
 	prepareCtx, readCtx, writeCtx     context.Context
-	readWatch, writeWatch             <-chan struct{}
 	readGeneration, writeGeneration   uint64
 	preparing, reading, writing       bool
 	closed, worker, complete, retired bool
@@ -93,7 +87,7 @@ func (c *callContext) Value(key any) any {
 	return c.Context.Value(key)
 }
 
-func newOwner(ctx context.Context, o Options, reservation, environment resourcev4.Reference, admitted ...*native.EnvironmentBorrow) (*owner, error) {
+func newOwner(ctx context.Context, o Options, reservation, environment resourcev4.Reference) (*owner, error) {
 	charge, err := Charge(o)
 	if err != nil {
 		return nil, err
@@ -107,17 +101,17 @@ func newOwner(ctx context.Context, o Options, reservation, environment resourcev
 	if err := reservation.CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}
-	shared, original, err := native.TakeEnvironmentBorrow(environment, admitted...)
+	shared, err := environment.Borrow()
 	if err != nil {
 		return nil, err
 	}
 	owned, err := reservation.Take(charge)
 	if err != nil {
-		native.ReleaseEnvironmentBorrow(shared, original)
+		shared.Release()
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancelCause(context.Background())
-	m := &owner{options: o, reservation: owned, environment: shared, environmentBorrow: original, lifetime: lifetime, cancel: cancel,
+	m := &owner{options: o, reservation: owned, environment: shared, lifetime: lifetime, cancel: cancel,
 		prepareCtx: ctx, preparing: true, worker: true, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	go m.lifecycle()
 	return m, nil
@@ -142,11 +136,17 @@ func (m *owner) lifecycle() {
 	defer func() { m.mu.Lock(); m.worker = false; m.cleanupLocked(); m.mu.Unlock() }()
 	for {
 		m.mu.Lock()
-		prepare := m.prepareCtx
-		rd, wd := m.readWatch, m.writeWatch
-		var pd <-chan struct{}
+		prepare, read, write := m.prepareCtx, m.readCtx, m.writeCtx
+		rg, wg := m.readGeneration, m.writeGeneration
+		var pd, rd, wd <-chan struct{}
 		if prepare != nil {
 			pd = prepare.Done()
+		}
+		if read != nil {
+			rd = read.Done()
+		}
+		if write != nil {
+			wd = write.Done()
 		}
 		m.mu.Unlock()
 		var observed uint8
@@ -162,24 +162,7 @@ func (m *owner) lifecycle() {
 			continue
 		}
 		m.mu.Lock()
-		if observed == 1 && !m.preparing {
-			m.mu.Unlock()
-			continue
-		}
-		// Watch the original cancellation channel across adjacent calls,
-		// without retaining an ended caller context or waking per message.
-		// Only an active call sharing the observed channel can be canceled.
-		if observed == 2 && (m.readWatch != rd || !m.reading || m.readCtx == nil || m.readCtx.Done() != rd) {
-			if m.readWatch == rd {
-				m.readWatch = nil
-			}
-			m.mu.Unlock()
-			continue
-		}
-		if observed == 3 && (m.writeWatch != wd || !m.writing || m.writeCtx == nil || m.writeCtx.Done() != wd) {
-			if m.writeWatch == wd {
-				m.writeWatch = nil
-			}
+		if observed == 1 && !m.preparing || observed == 2 && (!m.reading || m.readGeneration != rg) || observed == 3 && (!m.writing || m.writeGeneration != wg) {
 			m.mu.Unlock()
 			continue
 		}
@@ -189,13 +172,6 @@ func (m *owner) lifecycle() {
 		cancel(net.ErrClosed)
 		if transport != nil {
 			err := transport.Close()
-			// A separately owned native listener can close the same socket
-			// first. TLS may then fail to write close_notify after its own
-			// underlying Close has returned. This is definite local cleanup,
-			// not a provider tail that should prevent original retirement.
-			if errors.Is(err, net.ErrClosed) {
-				err = nil
-			}
 			m.mu.Lock()
 			m.closeErr = err
 			m.mu.Unlock()
@@ -209,12 +185,10 @@ func (m *owner) cleanupLocked() {
 		return
 	}
 	m.conn, m.transport = nil, nil
-	m.tlsConnection = nil
 	m.handshake = nil
 	m.checkAcceptedRoute = nil
 	m.acceptedEndpoint = protocolv4.AcceptedWebSocketEndpoint{}
 	m.prepareCtx, m.readCtx, m.writeCtx, m.lifetime, m.cancel = nil, nil, nil, nil, nil
-	m.readWatch, m.writeWatch = nil, nil
 	m.complete = true
 	close(m.done)
 }
@@ -331,7 +305,11 @@ func (m *owner) begin(ctx context.Context, writing bool) (*ws.Conn, error) {
 		m.sealLocked()
 		return nil, err
 	}
-	if err := m.reservation.CheckSameEnvironment(m.environment); err != nil {
+	if err := m.reservation.Check(); err != nil {
+		m.sealLocked()
+		return nil, err
+	}
+	if err := m.environment.Check(); err != nil {
 		m.sealLocked()
 		return nil, err
 	}
@@ -341,21 +319,14 @@ func (m *owner) begin(ctx context.Context, writing bool) (*ws.Conn, error) {
 		}
 		m.writing, m.writeCtx = true, ctx
 		m.writeGeneration++
-		if done := ctx.Done(); done != m.writeWatch {
-			m.writeWatch = done
-			m.signalLocked()
-		}
 	} else {
 		if m.reading {
 			return nil, ErrConcurrent
 		}
 		m.reading, m.readCtx = true, ctx
 		m.readGeneration++
-		if done := ctx.Done(); done != m.readWatch {
-			m.readWatch = done
-			m.signalLocked()
-		}
 	}
+	m.signalLocked()
 	return m.conn, nil
 }
 
@@ -371,6 +342,7 @@ func (m *owner) finish(ctx context.Context, writing bool, err error) error {
 	if err != nil {
 		m.sealLocked()
 	}
+	m.signalLocked()
 	m.cleanupLocked()
 	return err
 }
@@ -417,9 +389,7 @@ func (m *Messages) Retire() error {
 	if !m.retired {
 		m.retired = true
 		m.reservation.Release()
-		native.ReleaseEnvironmentBorrow(m.environment, m.environmentBorrow)
-		m.environmentBorrow = nil
-		m.environment = resourcev4.Reference{}
+		m.environment.Release()
 	}
 	return nil
 }
@@ -433,37 +403,9 @@ type ownedConn struct {
 	closeErr         error
 	preparing        atomic.Bool
 	prepareRemaining atomic.Int64
-	interruption     prepareInterruption
 }
 
 var ErrPrepareBytes = errors.New("websocketv4: preparation byte budget exhausted")
-
-// One socket's private marker survives TLS and HTTP parsing without examining
-// arbitrary error chains. A certificate callback cannot forge this identity;
-// an alert write failure cannot replace a prior TLS verification/protocol error.
-type prepareInterruption struct{ marker byte }
-
-func (*prepareInterruption) Error() string { return "websocketv4: preparation connection interrupted" }
-
-func (c *ownedConn) prepareError(err error) error {
-	if !c.preparing.Load() || err == nil {
-		return err
-	}
-	if err == io.EOF || err == io.ErrUnexpectedEOF || err == io.ErrClosedPipe || native.NetworkFailure(err) == native.ErrConnectionLost {
-		return &c.interruption
-	}
-	return err
-}
-
-func (m *owner) isPrepareInterruption(err error) bool {
-	failure, ok := err.(*prepareInterruption)
-	if !ok || failure == nil {
-		return false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.transport != nil && failure == &m.transport.interruption
-}
 
 func (c *ownedConn) prepareAllowance(n int) (int, bool) {
 	if !c.preparing.Load() {
@@ -490,7 +432,7 @@ func (c *ownedConn) Read(p []byte) (int, error) {
 	if limited {
 		c.prepareRemaining.Add(int64(allowed - n))
 	}
-	return n, c.prepareError(err)
+	return n, err
 }
 
 func (c *ownedConn) Write(p []byte) (int, error) {
@@ -508,22 +450,11 @@ func (c *ownedConn) Write(p []byte) (int, error) {
 	if err == nil && n < len(p) && allowed < len(p) {
 		err = ErrPrepareBytes
 	}
-	return n, c.prepareError(err)
+	return n, err
 }
 
 func (c *ownedConn) Close() error {
-	c.once.Do(func() {
-		c.closeErr = c.Conn.Close()
-		if _, tlsTransport := c.Conn.(*tls.Conn); tlsTransport {
-			// tls.Conn.Close returns its alert write error only after the
-			// underlying Close succeeds. A socket Close error takes precedence.
-			// Keep physical close failures; an unsent alert has no cleanup tail.
-			var operation *net.OpError
-			if errors.As(c.closeErr, &operation) && operation.Op == "write" {
-				c.closeErr = nil
-			}
-		}
-	})
+	c.once.Do(func() { c.closeErr = c.Conn.Close() })
 	return c.closeErr
 }
 
@@ -568,8 +499,5 @@ func (w *upgradeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	w.owner.mu.Lock()
-	w.owner.tlsConnection, _ = conn.(*tls.Conn)
-	w.owner.mu.Unlock()
 	return owned, buffers, nil
 }

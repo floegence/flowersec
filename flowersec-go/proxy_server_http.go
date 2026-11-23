@@ -1,7 +1,6 @@
 package flowersec
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,19 +9,18 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
+	pathpkg "path"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
-func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStream) {
-	if stream == nil {
+func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStream) {
+	if incoming.Stream == nil {
 		server.report(ErrInvalidProxyServer)
 		return
 	}
+	stream := incoming.Stream
 	handlerContext := ctx
 	if handlerContext == nil {
 		handlerContext = context.Background()
@@ -32,36 +30,38 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	cancelRequest := func() { cancelCause(context.Canceled) }
 	defer cancelRequest()
 	// A single timer bounds intake and finite responses, then tracks event activity.
-	timer := time.AfterFunc(server.config.maxTimeout, func() { cancelCause(context.DeadlineExceeded) })
-	defer timer.Stop()
+	var timer *time.Timer
+	if !server.config.sessionBoundRequests {
+		timer = time.AfterFunc(server.config.maxTimeout, func() { cancelCause(context.DeadlineExceeded) })
+	}
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
 	outerResetDone := make(chan struct{})
 	stopOuterReset := context.AfterFunc(handlerContext, func() {
 		defer close(outerResetDone)
 		resetStream()
 	})
-	joinOuterReset := sync.OnceFunc(func() {
+	defer func() {
 		if !stopOuterReset() {
 			<-outerResetDone
 		}
-	})
-	defer joinOuterReset()
+	}()
 	requestMeta := proxyHTTPRequest{}
-	if err := readProxyMetadata(stream, server.config.maxMetadata, &requestMeta); err != nil {
+	if err := readProxyJSON(stream, server.config.maxJSONFrame, &requestMeta); err != nil {
 		server.writeHTTPError(stream, "unknown", "invalid_request_meta")
 		server.report(err)
 		return
 	}
 	requestMeta.RequestID = strings.TrimSpace(requestMeta.RequestID)
-
+	requestMeta.Method = strings.ToUpper(strings.TrimSpace(requestMeta.Method))
 	path, err := parseProxyPath(requestMeta.Path)
-	if requestMeta.Version != proxyWireVersion || requestMeta.RequestID == "" || !protocolv4.ProxyASCIIToken(requestMeta.Method) || requestMeta.Method == http.MethodConnect || err != nil {
+	if requestMeta.Version != proxyWireVersion || requestMeta.RequestID == "" || requestMeta.Method == "" || err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
 		server.report(ErrInvalidProxyServer)
-		return
-	}
-	if path.Path == proxyCredentialControlPath {
-		server.serveCredentialControl(handlerContext, stream, requestMeta, path)
 		return
 	}
 	timeout, err := server.proxyTimeout(requestMeta.TimeoutMS)
@@ -72,10 +72,12 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	}
 	requestContext := handlerContext
 	remaining := time.Until(started.Add(timeout))
-	if remaining <= 0 {
-		cancelCause(context.DeadlineExceeded)
-	} else {
-		timer.Reset(remaining)
+	if timer != nil {
+		if remaining <= 0 {
+			cancelCause(context.DeadlineExceeded)
+		} else {
+			timer.Reset(remaining)
+		}
 	}
 	select {
 	case server.httpPermits <- struct{}{}:
@@ -86,35 +88,7 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		}
 		return
 	}
-	requestHeaderResult, err := proxyRequestHeaders(requestMeta.Headers, server.config)
-	if err != nil {
-		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
-		server.report(err)
-		return
-	}
-	requestHeaders := requestHeaderResult.Header
-	target := *server.config.upstream
-	target.Path, target.RawPath, target.RawQuery, target.Fragment = path.Path, path.RawPath, path.RawQuery, ""
-	target.ForceQuery = path.ForceQuery
-	credentials, err := server.captureCredentials(requestContext, stream, &target, requestMeta.CredentialContext, requestMeta.Credentials, requestMeta.RequestOrigin, requestMeta.Headers, requestHeaders)
-	if err != nil {
-		server.writeHTTPError(stream, requestMeta.RequestID, "credential_scope_unavailable")
-		server.report(err)
-		return
-	}
-	defer credentials.finish()
-	client := server.httpClient
-	if credentials != nil {
-		requestContext = context.WithValue(credentials.ctx, proxyCredentialRequestKey{}, credentials)
-		client = credentials.owner.client
-		credentialStopped := make(chan struct{})
-		stop := context.AfterFunc(requestContext, func() { defer close(credentialStopped); cancelRequest() })
-		defer func() {
-			if !stop() {
-				<-credentialStopped
-			}
-		}()
-	}
+	requestHeaders := proxyRequestHeaders(requestMeta.Headers, server.config)
 	eventRequested := acceptsProxyEventStream(requestHeaders.Get("Accept"))
 	eventPermit := false
 	releaseEvent := func() {
@@ -136,10 +110,6 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	}
 	defer releaseEvent()
 	var watchDone chan struct{}
-	responseComplete := false
-	contextReader, supportsReadContext := stream.(interface {
-		ReadContext(context.Context, []byte) (int, error)
-	})
 	startWatcher := func(beforeWatch func() error) {
 		watchDone = make(chan struct{})
 		go func() {
@@ -147,22 +117,10 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 			if beforeWatch != nil && beforeWatch() != nil {
 				return
 			}
-			if supportsReadContext {
-				var unexpected [1]byte
-				count, err := contextReader.ReadContext(requestContext, unexpected[:])
-				if count > 0 || err != nil && !errors.Is(err, io.EOF) {
-					cancelRequest()
-				}
-			} else {
-				watchProxyRequestStream(stream, cancelRequest)
-			}
+			watchProxyRequestStream(stream, cancelRequest)
 		}()
 	}
 	defer func() {
-		if responseComplete && supportsReadContext {
-			joinOuterReset()
-			cancelRequest()
-		}
 		if watchDone != nil {
 			<-watchDone
 		}
@@ -171,49 +129,19 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 
 	var body io.ReadCloser
 	var bodyErrors chan error
-	requestTrailers := make(http.Header)
-	var intakeTotal int64
-	first, firstTrailers, bodyDone, err := readProxyBodyPart(stream, server.config.maxChunk, &intakeTotal, server.config.maxBody, server.config.maxMetadata)
-	if err != nil || requestHeaderResult.HasLength && (intakeTotal > requestHeaderResult.ContentLength || bodyDone && intakeTotal != requestHeaderResult.ContentLength) {
-		server.writeHTTPError(stream, requestMeta.RequestID, "request_body_invalid")
-		server.report(err)
-		return
-	}
-	if bodyDone {
-		trailers, err := server.requestTrailers(firstTrailers, requestHeaderResult)
-		if err != nil {
+	if requestMeta.Method == http.MethodGet || requestMeta.Method == http.MethodHead {
+		if err := server.drainProxyBody(stream); err != nil {
 			server.writeHTTPError(stream, requestMeta.RequestID, "request_body_invalid")
+			server.report(err)
 			return
-		}
-		for _, field := range trailers {
-			requestTrailers.Add(field.Name, field.Value)
-		}
-		if len(trailers) != 0 {
-			body = io.NopCloser(bytes.NewReader(nil))
 		}
 		startWatcher(nil)
 	} else {
-		// The native API fixes trailer names before writing headers. Announce
-		// the finite trusted allowlist; only actual terminal values are added
-		// by the transport's body reader at EOF.
-		for _, names := range []map[string]struct{}{proxyBaseRequestHeaders, server.config.requestHeaders} {
-			for name := range names {
-				if _, hop := requestHeaderResult.Connection[name]; !hop && proxyValidateTrailers([]proxyHeader{{Name: name}}) == nil {
-					requestTrailers[http.CanonicalHeaderKey(name)] = nil
-				}
-			}
-		}
 		reader, writer := io.Pipe()
-		terminal := make(chan []proxyHeader, 1)
-		body = &proxyTrailerBody{ReadCloser: reader, trailers: requestTrailers, terminal: terminal}
+		body = reader
 		bodyErrors = make(chan error, 1)
 		startWatcher(func() error {
-			err := writeProxyAll(writer, first)
-			var trailers []proxyHeader
-			if err == nil {
-				trailers, err = server.copyProxyBodyFrom(requestContext, stream, writer, requestHeaderResult, intakeTotal)
-			}
-			terminal <- trailers
+			err := server.copyProxyBody(requestContext, stream, writer)
 			_ = writer.CloseWithError(err)
 			bodyErrors <- err
 			return err
@@ -221,6 +149,8 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		defer body.Close()
 	}
 
+	target := *server.config.upstream
+	target.Path, target.RawPath, target.RawQuery, target.Fragment = path.Path, path.RawPath, path.RawQuery, ""
 	request, err := http.NewRequestWithContext(requestContext, requestMeta.Method, target.String(), body)
 	if err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
@@ -228,17 +158,12 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		return
 	}
 	request.Header = requestHeaders
-	request.Trailer = requestTrailers
-	// The original length is an integrity assertion, never output framing.
-	if body != nil {
-		request.ContentLength = -1
-	}
 	if err := applyProxyExternalOrigin(request, requestMeta.ExternalOrigin, server.config.allowedOrigins); err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
 		server.report(err)
 		return
 	}
-	response, err := client.Do(request)
+	response, err := server.httpClient.Do(request)
 	if err != nil {
 		if bodyErrors != nil {
 			select {
@@ -257,54 +182,22 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		return
 	}
 	defer response.Body.Close()
-	if err := credentials.check(); err != nil {
-		server.writeHTTPError(stream, requestMeta.RequestID, "credential_scope_unavailable")
-		server.report(err)
-		return
-	}
-	responseFacts, err := inspectProxyHeaders(proxyNativeHeaders(response.Header))
-	if err != nil {
-		server.writeHTTPError(stream, requestMeta.RequestID, "upstream_request_failed")
-		server.report(err)
-		return
-	}
-	if err := credentials.update(&target, response.Header); err != nil {
-		server.writeHTTPError(stream, requestMeta.RequestID, "credential_update_failed")
-		server.report(err)
-		return
-	}
-
-	_, hiddenCoding := responseFacts.connection["content-encoding"]
-	if hiddenCoding && response.Header.Get("Content-Encoding") != "" {
-		server.writeHTTPError(stream, requestMeta.RequestID, "upstream_request_failed")
-		server.report(ErrInvalidProxyServer)
-		return
-	}
 	persistent := eventRequested && proxyEventStreamType(response.Header.Get("Content-Type"))
 	if persistent {
-		timer.Reset(server.config.eventIdleTimeout)
+		if !server.config.sessionBoundRequests {
+			timer.Reset(server.config.eventIdleTimeout)
+		}
 	} else {
 		releaseEvent()
 	}
-	noBody := requestMeta.Method == http.MethodHead || response.StatusCode == http.StatusNoContent || response.StatusCode == http.StatusResetContent || response.StatusCode == http.StatusNotModified
-	if !noBody && !persistent && response.ContentLength > server.config.maxBody {
+	if !persistent && response.ContentLength > server.config.maxBody {
 		server.writeHTTPError(stream, requestMeta.RequestID, "response_body_too_large")
 		server.report(ErrInvalidProxyServer)
 		return
 	}
-	responseHeaders := proxyResponseHeaders(response.Header, server.config)
-	_, lengthHop := responseFacts.connection["content-length"]
-	if response.ContentLength >= 0 && response.Header.Get("Content-Length") == "" && !lengthHop {
-		responseHeaders = append(responseHeaders, proxyHeader{Name: "content-length", Value: strconv.FormatInt(response.ContentLength, 10)})
-	}
-	if err := credentials.check(); err != nil {
-		resetStream()
-		server.report(err)
-		return
-	}
-	if err := writeProxyMetadata(stream, proxyHTTPResponse{
+	if err := writeProxyJSON(stream, proxyHTTPResponse{
 		Version: proxyWireVersion, RequestID: requestMeta.RequestID, OK: true,
-		Status: response.StatusCode, Headers: responseHeaders,
+		Status: response.StatusCode, Headers: proxyResponseHeaders(response.Header, server.config),
 	}); err != nil {
 		server.report(err)
 		return
@@ -315,34 +208,17 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	}
 	buffer := make([]byte, bufferSize)
 	var total int64
-	remainingLength := response.ContentLength
 	for {
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
-			if noBody {
-				resetStream()
-				server.report(ErrInvalidProxyServer)
-				return
-			}
-			if remainingLength >= 0 {
-				if int64(count) > remainingLength {
-					resetStream()
-					server.report(ErrInvalidProxyServer)
-					return
-				}
-				remainingLength -= int64(count)
-			}
 			maximum := server.config.maxBody
 			if persistent {
-				timer.Reset(server.config.eventIdleTimeout)
+				if !server.config.sessionBoundRequests {
+					timer.Reset(server.config.eventIdleTimeout)
+				}
 				// Bound each chunk without accumulating a lifetime byte counter.
 				total = 0
 				maximum = int64(server.config.maxChunk)
-			}
-			if err := credentials.check(); err != nil {
-				resetStream()
-				server.report(err)
-				return
 			}
 			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, maximum); err != nil {
 				resetStream()
@@ -352,33 +228,8 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				if !noBody && remainingLength > 0 {
-					resetStream()
-					server.report(ErrInvalidProxyServer)
-					return
-				}
-				for name := range response.Trailer {
-					if _, hop := responseFacts.connection[strings.ToLower(name)]; hop {
-						response.Trailer.Del(name)
-					}
-				}
-				if err := proxyValidateTrailers(proxyNativeHeaders(response.Trailer)); err != nil {
-					resetStream()
+				if err := writeProxyTerminator(stream); err != nil {
 					server.report(err)
-					return
-				}
-				if credentials != nil {
-					response.Trailer.Del("Set-Cookie")
-				}
-				if err := credentials.check(); err != nil {
-					resetStream()
-					server.report(err)
-					return
-				}
-				if err := writeProxyBodyEnd(stream, proxyResponseHeaders(response.Trailer, server.config)); err != nil {
-					server.report(err)
-				} else {
-					responseComplete = true
 				}
 				return
 			}
@@ -400,77 +251,29 @@ func watchProxyRequestStream(stream io.Reader, cancel context.CancelFunc) {
 func (server *ProxyServer) drainProxyBody(reader io.Reader) error {
 	var total int64
 	for {
-		_, done, err := readProxyBodyChunk(reader, server.config.maxChunk, &total, server.config.maxBody, true)
+		_, done, err := readProxyChunk(reader, server.config.maxChunk, &total, server.config.maxBody)
 		if err != nil || done {
 			return err
 		}
 	}
 }
 
-func (server *ProxyServer) copyProxyBody(ctx context.Context, reader io.Reader, writer io.Writer, headers proxyRequestHeaderResult) error {
-	_, err := server.copyProxyBodyFrom(ctx, reader, writer, headers, 0)
-	return err
-}
-func (server *ProxyServer) copyProxyBodyFrom(ctx context.Context, reader io.Reader, writer io.Writer, headers proxyRequestHeaderResult, total int64) ([]proxyHeader, error) {
+func (server *ProxyServer) copyProxyBody(ctx context.Context, reader io.Reader, writer io.Writer) error {
+	var total int64
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, context.Cause(ctx)
+			return context.Cause(ctx)
 		default:
 		}
-		payload, trailers, done, err := readProxyBodyPart(reader, server.config.maxChunk, &total, server.config.maxBody, server.config.maxMetadata)
-		if err != nil {
-			return nil, err
+		payload, done, err := readProxyChunk(reader, server.config.maxChunk, &total, server.config.maxBody)
+		if err != nil || done {
+			return err
 		}
-		if headers.HasLength && (total > headers.ContentLength || done && total != headers.ContentLength) {
-			return nil, ErrInvalidProxyServer
-		}
-		if done {
-			return server.requestTrailers(trailers, headers)
-		}
-		if err := writeProxyAll(writer, payload); err != nil {
-			return nil, err
+		if _, err := writer.Write(payload); err != nil {
+			return err
 		}
 	}
-}
-
-func (server *ProxyServer) requestTrailers(fields []proxyHeader, original proxyRequestHeaderResult) ([]proxyHeader, error) {
-	if err := proxyValidateTrailers(fields); err != nil {
-		return nil, err
-	}
-	if _, err := inspectProxyHeaders(fields); err != nil {
-		return nil, err
-	}
-	result := make([]proxyHeader, 0, len(fields))
-	for _, field := range fields {
-		if _, hop := original.Connection[field.Name]; hop {
-			return nil, ErrInvalidProxyServer
-		}
-		if proxyHeaderAllowed(field.Name, proxyBaseRequestHeaders, server.config.requestHeaders) {
-			result = append(result, field)
-		}
-	}
-	return result, nil
-}
-
-// Populate the native trailer map on the transport's own body-read path,
-// immediately before EOF. The intake worker never mutates a Header map that
-// the native serializer might still be reading for the initial headers.
-type proxyTrailerBody struct {
-	io.ReadCloser
-	trailers http.Header
-	terminal <-chan []proxyHeader
-}
-
-func (body *proxyTrailerBody) Read(dst []byte) (int, error) {
-	n, err := body.ReadCloser.Read(dst)
-	if err == io.EOF && body.terminal != nil {
-		for _, field := range <-body.terminal {
-			body.trailers.Add(field.Name, field.Value)
-		}
-		body.terminal = nil
-	}
-	return n, err
 }
 
 func (server *ProxyServer) writeHTTPError(stream io.Writer, requestID, code string) {
@@ -478,7 +281,7 @@ func (server *ProxyServer) writeHTTPError(stream io.Writer, requestID, code stri
 	if requestID == "" {
 		requestID = "unknown"
 	}
-	_ = writeProxyMetadata(stream, proxyHTTPResponse{
+	_ = writeProxyJSON(stream, proxyHTTPResponse{
 		Version: proxyWireVersion, RequestID: requestID, OK: false, Error: proxyStableError(code),
 	})
 	_ = writeProxyTerminator(stream)
@@ -504,36 +307,83 @@ func (server *ProxyServer) proxyTimeout(milliseconds int64) (time.Duration, erro
 	return timeout, nil
 }
 
-// parseProxyPath validates an already serialized origin-form target. The HTTP
-// and WebSocket adapters submit this same value, including empty path segments,
-// percent spelling and the distinction between an absent and an empty query.
-// Subtree authorization belongs to the explicit routing policy at admission.
 func parseProxyPath(raw string) (*url.URL, error) {
-	if !strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "\\#") {
+	if raw != strings.TrimSpace(raw) || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, "://") {
 		return nil, ErrInvalidProxyServer
 	}
-	for index := 0; index < len(raw); index++ {
-		value := raw[index]
-		if value <= 0x20 || value >= 0x7f {
+	for _, value := range []byte(raw) {
+		if value <= 0x20 || value == 0x7f {
 			return nil, ErrInvalidProxyServer
 		}
-		if value == '%' {
-			if index+2 >= len(raw) {
-				return nil, ErrInvalidProxyServer
-			}
-			_, highOK := proxyHex(raw[index+1])
-			_, lowOK := proxyHex(raw[index+2])
-			if !highOK || !lowOK {
-				return nil, ErrInvalidProxyServer
-			}
-			index += 2
-		}
 	}
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" || parsed.RequestURI() != raw {
+	rawPath := raw
+	query := ""
+	if separator := strings.IndexByte(raw, '?'); separator >= 0 {
+		rawPath, query = raw[:separator], raw[separator:]
+	}
+	lowerPath := strings.ToLower(rawPath)
+	if strings.Contains(lowerPath, "%2f") || strings.Contains(lowerPath, "%5c") {
 		return nil, ErrInvalidProxyServer
 	}
+	normalizedQuery, ok := normalizeProxyPercentEscapes(strings.TrimPrefix(query, "?"), false)
+	if !ok {
+		return nil, ErrInvalidProxyServer
+	}
+	if query != "" {
+		query = "?" + normalizedQuery
+	}
+	rawPath = strings.ReplaceAll(rawPath, "\\", "/")
+	if strings.HasPrefix(rawPath, "//") {
+		return nil, ErrInvalidProxyServer
+	}
+	for strings.Contains(rawPath, "//") {
+		rawPath = strings.ReplaceAll(rawPath, "//", "/")
+	}
+	parsed, err := url.ParseRequestURI(rawPath + query)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" {
+		return nil, ErrInvalidProxyServer
+	}
+	keepTrailingSlash := strings.HasSuffix(parsed.Path, "/") || strings.HasSuffix(parsed.Path, "/.") || strings.HasSuffix(parsed.Path, "/..")
+	parsed.Path = pathpkg.Clean(parsed.Path)
+	if keepTrailingSlash && parsed.Path != "/" {
+		parsed.Path += "/"
+	}
+	parsed.RawPath = ""
 	return parsed, nil
+}
+
+func normalizeProxyPercentEscapes(raw string, rejectEncodedSeparators bool) (string, bool) {
+	const hex = "0123456789ABCDEF"
+	var builder strings.Builder
+	builder.Grow(len(raw))
+	for index := 0; index < len(raw); index++ {
+		if raw[index] != '%' {
+			builder.WriteByte(raw[index])
+			continue
+		}
+		if index+2 >= len(raw) {
+			return "", false
+		}
+		high, highOK := proxyHex(raw[index+1])
+		low, lowOK := proxyHex(raw[index+2])
+		if !highOK || !lowOK {
+			return "", false
+		}
+		value := high<<4 | low
+		if rejectEncodedSeparators && (value == '/' || value == '\\') {
+			return "", false
+		}
+		if (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
+			(value >= '0' && value <= '9') || strings.ContainsRune("-._~", rune(value)) {
+			builder.WriteByte(value)
+		} else {
+			builder.WriteByte('%')
+			builder.WriteByte(hex[value>>4])
+			builder.WriteByte(hex[value&0x0f])
+		}
+		index += 2
+	}
+	return builder.String(), true
 }
 
 func proxyHex(value byte) (byte, bool) {

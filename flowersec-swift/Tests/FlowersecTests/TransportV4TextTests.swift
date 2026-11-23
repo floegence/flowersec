@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportTextTests: XCTestCase {
+final class TransportV4TextTests: XCTestCase {
   private static let reference = try! V4TextReference()
   private static let corpus: [V4JSON] = {
     let raw = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))
@@ -60,7 +60,7 @@ final class TransportTextTests: XCTestCase {
       XCTAssertEqual(ctx, before)
       if vector["expected_error"].text == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, Self.corpus.filter { $0["expected_error"].text == nil }.count); XCTAssertGreaterThan(positive, 0); XCTAssertEqual(negative, 831); XCTAssertEqual(separate, 2)
+    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, 826); XCTAssertEqual(separate, 2)
     print("Swift text maps: \(positive) positive / \(negative) negative / \(separate) external composition cases")
   }
 

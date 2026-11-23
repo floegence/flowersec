@@ -8,10 +8,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -33,11 +33,7 @@ func StreamScopeCharge(options StreamScopeOptions) (resourcev4.Vector, error) {
 	if options.TimeoutMS == 0 || options.CleanupTimeoutMS == 0 || options.RuntimeBytes == 0 || options.RuntimeBytes > math.MaxUint64-fixed {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	dependencyCharge, err := resourcev4.BorrowPoolCharge(dependencyFloorCapacity)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	return resourcev4.Vector{resourcev4.SDKBytes: fixed + options.RuntimeBytes, resourcev4.Items: 1, resourcev4.Tasks: 3, resourcev4.WorkSlots: 3, resourcev4.Timers: 1}.Add(dependencyCharge)
+	return resourcev4.Vector{resourcev4.SDKBytes: fixed + options.RuntimeBytes, resourcev4.Items: 1, resourcev4.Tasks: 3, resourcev4.WorkSlots: 3, resourcev4.Timers: 1}, nil
 }
 
 // ScopeResult preserves local acceptance independently of authenticated drain
@@ -55,7 +51,6 @@ type ScopeResult struct {
 // lifecycle task survives a returned incomplete result until real tails exit.
 type StreamScope struct {
 	dependencies           applicationDependencies
-	dependencyFloor        *resourcev4.BorrowPool
 	mu                     sync.Mutex
 	owner                  *StreamOwnership
 	view                   *ScopeStream
@@ -115,28 +110,17 @@ func (a *OpenAdmission) StartStreamScope(ctx context.Context, h OpenHandle, opti
 		owned.Release()
 		return nil, err
 	}
-	dependencyFloor, err := resourcev4.NewBorrowPoolForSources(owned, dependencyFloorCapacity)
+	dependencies, err := captureApplicationDependencies(ctx)
 	if err != nil {
-		_ = o.Release()
-		owned.Release()
-		return nil, err
-	}
-	owned = dependencyFloor.Metadata()
-	dependencies, err := captureApplicationDependenciesWithFloor(ctx, dependencyFloor)
-	if err != nil {
-		dependencyFloor.Close()
 		_ = o.Release()
 		owned.Release()
 		return nil, err
 	}
 	callCtx, cancel := context.WithCancel(ctx)
-	s := &StreamScope{dependencies: dependencies, dependencyFloor: dependencyFloor, owner: o, reservation: owned, deadline: deadline, cancel: cancel, finishStart: make(chan struct{}), cleanupStart: make(chan struct{}), finishResult: make(chan error, 1), workerDone: make(chan struct{}), ready: make(chan struct{}), done: make(chan struct{})}
+	s := &StreamScope{dependencies: dependencies, owner: o, reservation: owned, deadline: deadline, cancel: cancel, finishStart: make(chan struct{}), cleanupStart: make(chan struct{}), finishResult: make(chan error, 1), workerDone: make(chan struct{}), ready: make(chan struct{}), done: make(chan struct{})}
 	s.view = &ScopeStream{owner: o, cap: o.cap, idle: make(chan struct{})}
 	s.result.Close.CleanupStatus = protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending, PendingCallbacks: 1}
-	o.mu.Lock()
-	group := o.allocationGroup
-	o.mu.Unlock()
-	task, err := executor.trySubmitInGroup(group, class, taskReservation, owned, func() {
+	task, err := executor.TrySubmit(class, taskReservation, owned, func() {
 		cause := ErrScopeCallbackExit
 		defer s.dependencies.release()
 		defer func() {
@@ -170,8 +154,6 @@ func (a *OpenAdmission) StartStreamScope(ctx context.Context, h OpenHandle, opti
 	})
 	if err != nil {
 		s.dependencies.release()
-		s.dependencyFloor.Close()
-		s.dependencyFloor = nil
 		cancel()
 		_ = o.Release() // No callback or I/O alias was admitted.
 		owned.Release()
@@ -373,10 +355,6 @@ func (s *StreamScope) completeScope() {
 	s.cancel()
 	s.cancel = nil
 	s.owner, s.view, s.task, s.deadline = nil, nil, nil, nil
-	if s.dependencyFloor != nil {
-		s.dependencyFloor.Close()
-		s.dependencyFloor = nil
-	}
 	s.reservation.Release()
 	s.reservation = resourcev4.Reference{}
 	if !s.published {

@@ -6,15 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"math"
 	"sync"
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -51,7 +50,6 @@ type InitialConfig struct {
 	Reservation                      resourcev4.Reference
 	original                         initialOriginalBinding
 	accepted                         *acceptedAuthorization
-	hop                              *hopAuthentication
 }
 
 // InitialExchange owns the original maintenance transport from NEGOTIATE
@@ -71,7 +69,6 @@ type InitialExchange struct {
 	clientHelloBytes, serverHelloBytes  int
 	sendDecoder, receiveDecoder         *protocolv4.Decoder
 	phase                               uint8
-	hopPhase                            uint8
 	sending, receiving, authenticating  bool
 	readySent, readyReceived            bool
 	fsbDigest, fsaDigest                [32]byte
@@ -82,9 +79,7 @@ type InitialExchange struct {
 	finished                            *cryptov4.FinishedHandshake
 	corePlan                            *SessionCorePlan
 	terminal                            error
-	transportFailure                    bool
 	transferred, watcherExited, cleaned bool
-	sampling                            uint32
 	done                                chan struct{}
 }
 
@@ -95,7 +90,7 @@ func InitialBackingBytes(limits InitialLimits) (uint64, error) {
 	if limits.MaxFrame <= 0 || limits.MaxFrame > protocolv4.MaxPayloadLength {
 		return 0, cryptov4.ErrConfiguration
 	}
-	decoder, err := protocolv4.InitialDecoderBackingBytes(limits.MaxFrame, limits.Nodes)
+	decoder, err := protocolv4.DecoderBackingBytes(limits.MaxFrame, limits.Nodes)
 	if err != nil {
 		return 0, err
 	}
@@ -166,18 +161,14 @@ func newInitialExchange(ctx context.Context, config InitialConfig, stream io.Rea
 	if err != nil {
 		return nil, err
 	}
-	constructed := false
-	defer func() {
-		if !constructed {
-			owned.Release()
-		}
-	}()
-	send, err := protocolv4.NewInitialDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
+	send, err := protocolv4.NewDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
 	if err != nil {
+		owned.Release()
 		return nil, err
 	}
-	receive, err := protocolv4.NewInitialDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
+	receive, err := protocolv4.NewDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
 	if err != nil {
+		owned.Release()
 		return nil, err
 	}
 	config.Reservation = owned
@@ -191,7 +182,6 @@ func newInitialExchange(ctx context.Context, config InitialConfig, stream io.Rea
 	// Observation starts only after standard-library registration returns.
 	x.ctx, x.cancel = context.WithCancelCause(x.parent)
 	go x.watch()
-	constructed = true
 	return x, nil
 }
 
@@ -200,6 +190,7 @@ func (x *InitialExchange) failLocked(err error) error {
 		// Providers often return ctx.Err(). Preserve an already observed
 		// original cause instead of replacing it with generic cancellation.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			x.parent.observe()
 			if cause := context.Cause(x.ctx); cause != nil {
 				err = cause
 			}
@@ -215,79 +206,24 @@ func (x *InitialExchange) failLocked(err error) error {
 	return x.terminal
 }
 
-// Only the original provider invocation may establish transport provenance.
-// An already observed cancellation, deadline or authorization failure wins.
-// Builders and verifiers use the ordinary failure path even for the same error.
-func (x *InitialExchange) failProvider(err error) error {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	if previous := x.checkLocked(); previous != nil {
-		return previous
-	}
-	x.transportFailure = controllerNetworkRetry(err)
-	return x.failLocked(err)
-}
-
 func (x *InitialExchange) checkLocked() error {
-	if err := x.checkLocalLocked(); err != nil {
-		return err
-	}
-	parent, deadline, authorization := x.parent, x.config.Deadline, x.config.Authorization
-	var now timev4.Sample
-	err := x.callLocked(func() (err error) {
-		parent.observe()
-		now, err = deadline.Sample()
-		if err == nil {
-			err = authorization.Check()
-		}
-		return err
-	})
-	if local := x.checkLocalLocked(); local != nil {
-		return local
-	}
-	if err == nil {
-		err = deadline.CheckAt(now)
-	}
-	if err != nil {
-		return x.failLocked(err)
-	}
-	return nil
-}
-
-// callLocked retains the original owner while an existing task samples host
-// state. Callers must defer unlocking mu: it is held again even on Goexit.
-func (x *InitialExchange) callLocked(call func() error) (err error) {
-	if x.sampling == math.MaxUint32 {
-		return cryptov4.ErrCapacity
-	}
-	x.sampling++
-	x.mu.Unlock()
-	returned := false
-	defer func() {
-		abnormal := recover() != nil || !returned
-		x.mu.Lock()
-		x.sampling--
-		if abnormal {
-			err = x.failLocked(ErrEnvironmentTaskExit)
-		}
-		x.cleanupLocked()
-	}()
-	err = call()
-	returned = true
-	return err
-}
-
-func (x *InitialExchange) checkLocalLocked() error {
 	if x.transferred {
 		return cryptov4.ErrClosed
 	}
 	if x.terminal != nil {
 		return x.terminal
 	}
+	x.parent.observe()
 	if err := context.Cause(x.ctx); err != nil {
 		return x.failLocked(err)
 	}
 	if err := x.config.Reservation.Check(); err != nil {
+		return x.failLocked(err)
+	}
+	if err := x.config.Deadline.Check(); err != nil {
+		return x.failLocked(err)
+	}
+	if err := x.config.Authorization.Check(); err != nil {
 		return x.failLocked(err)
 	}
 	return nil
@@ -300,7 +236,7 @@ func (x *InitialExchange) check() error {
 }
 
 func (x *InitialExchange) cleanupLocked() {
-	if x.cleaned || !x.watcherExited || x.sending || x.receiving || x.authenticating || x.sampling != 0 {
+	if x.cleaned || !x.watcherExited || x.sending || x.receiving || x.authenticating {
 		return
 	}
 	clear(x.send)
@@ -316,7 +252,6 @@ func (x *InitialExchange) cleanupLocked() {
 	x.corePlan = nil
 	x.ctx, x.cancel = nil, nil
 	x.config.Reservation.Release()
-	x.config.hop = nil
 	x.cleaned = true
 	close(x.done)
 }
@@ -443,28 +378,6 @@ func (x *InitialExchange) begin(frame protocolv4.FrameType, send, authentication
 		sender = 1 - sender
 	}
 	want, direction := initialFlight(x.phase)
-	if h := x.config.hop; h != nil && x.hopPhase < 4 {
-		if x.phase != 0 || !authentication || frame != protocolv4.FrameHopAuth {
-			return protocolv4.InitialFrameSpec{}, x.failLocked(ErrInitialPhase)
-		}
-		phase, role, sending := h.flight(x.hopPhase)
-		if sending != send {
-			return protocolv4.InitialFrameSpec{}, x.failLocked(ErrInitialPhase)
-		}
-		spec, err := protocolv4.InitialHopAuth(true, sender, role, phase)
-		if err != nil {
-			return spec, x.failLocked(err)
-		}
-		if send {
-			x.sending = true
-		} else {
-			x.receiving = true
-		}
-		return spec, nil
-	}
-	if h := x.config.hop; h != nil && h.relay {
-		return protocolv4.InitialFrameSpec{}, x.failLocked(ErrInitialPhase)
-	}
 	if x.phase >= 3 && x.config.accepted != nil {
 		// Before a definite admitted continuation only a verified rejection
 		// response may proceed; validate checks the actual canonical status.
@@ -505,9 +418,7 @@ func (x *InitialExchange) end(send, rejected bool, err *error) {
 		*err = x.checkLocked()
 	}
 	if *err == nil {
-		if x.config.hop != nil && x.hopPhase < 4 {
-			x.hopPhase++
-		} else if x.phase < 6 {
+		if x.phase < 6 {
 			x.phase++
 		} else if send {
 			x.readySent = true
@@ -531,19 +442,11 @@ func (x *InitialExchange) validate(decoder *protocolv4.Decoder, spec protocolv4.
 	if spec.Schema == "" {
 		return false, nil
 	}
-	selectors := map[string]string{"crypto_profile_id": x.config.Profile, "activation_source_profile": x.config.ActivationSourceProfile}
-	if x.config.hop != nil && x.hopPhase < 4 {
-		_, role, _ := x.config.hop.flight(x.hopPhase)
-		selectors["hop_sender_role"] = string(role)
-	}
-	doc, err := decoder.DecodeMap(payload, spec.Schema, protocolv4.DecodeContext{Selectors: selectors})
+	doc, err := decoder.DecodeMap(payload, spec.Schema, protocolv4.DecodeContext{Selectors: map[string]string{"crypto_profile_id": x.config.Profile, "activation_source_profile": x.config.ActivationSourceProfile}})
 	if err != nil {
 		return false, err
 	}
 	defer doc.Release()
-	if x.config.hop != nil && x.hopPhase < 4 {
-		return false, nil // Exact certificate and possession checks run below this schema gate.
-	}
 	if err := x.config.original.checkFrame(doc, spec.Schema, x.config.Role); err != nil {
 		return false, err
 	}
@@ -683,8 +586,6 @@ func (x *InitialExchange) sendFlight(frame protocolv4.FrameType, build func([]by
 		err = x.messages.WriteMessage(x.ctx, data)
 		if err == nil {
 			result.EnvelopeBytes, result.Complete = len(data), true
-		} else {
-			err = x.failProvider(err)
 		}
 		return result, err
 	}
@@ -700,7 +601,7 @@ func (x *InitialExchange) sendFlight(frame protocolv4.FrameType, build func([]by
 		result.EnvelopeBytes += n
 		result.Complete = result.EnvelopeBytes == len(data)
 		if writeErr != nil {
-			return result, x.failProvider(writeErr)
+			return result, writeErr
 		}
 		if n == 0 {
 			return result, io.ErrNoProgress
@@ -723,7 +624,7 @@ func (x *InitialExchange) readFull(dst []byte) error {
 			if offset == len(dst) && errors.Is(err, io.EOF) {
 				return nil
 			}
-			return x.failProvider(err)
+			return err
 		}
 		if n == 0 {
 			return io.ErrNoProgress
@@ -770,7 +671,7 @@ func (x *InitialExchange) receiveFlight(frame protocolv4.FrameType, verify func(
 	if x.messages != nil {
 		n, err = x.messages.ReadMessage(x.ctx, x.receive)
 		if err != nil {
-			return x.failProvider(err)
+			return err
 		}
 		if n < protocolv4.EnvelopePrefixSize || n > len(x.receive) {
 			return protocolv4.ErrTruncated

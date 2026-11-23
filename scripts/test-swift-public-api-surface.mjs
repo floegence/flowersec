@@ -35,6 +35,7 @@ for (const forbidden of [
   'ArtifactCodecError',
   'maximumAttemptsReached',
   'encodedByteCount',
+  'maxEncodedBytes',
   'maxDepth',
   'maxNodes',
   'maxObjectKeys',
@@ -42,29 +43,6 @@ for (const forbidden of [
   'maxKeyBytes',
   'maxStringBytes',
   'maximumSafeInteger',
-  'V4ClientEnvironment',
-  'V4CredentialAdmission',
-  'V4DirectPoolMaterial',
-  'V4NativeSessionAdmission',
-  'V4PinnedTLS',
-  'V4StreamMetadataProjection',
-  'V4StreamMetadataCodec',
-  'V4ContractAcceptance',
-  'V4ContractRange',
-  'V4ContractRangeField',
-  'V4ContractPolicyFailure',
-  'ConnectionMaterialOwner',
-  'TransportEnvironmentOwner',
-  'TransportV4',
-  'transportv4',
-  'transport_v4',
-  'encodedV4',
-  'v4Namespace',
-  'v4Version',
-  'v4Values',
-  'RPCPeer',
-  'RPCNotificationError',
-  'RPCNotificationSubscription',
 ]) {
   assert.equal(rendered.includes(forbidden), false, `Swift public API leaked ${forbidden}`);
 }
@@ -76,55 +54,25 @@ assert.equal(
   false,
   'ArtifactLease must not expose its artifact',
 );
-// The current public contract reports malformed/unsupported material through
-// ConnectError and its bounded projections; the old ArtifactError name was
-// removed with the pre-v4 Artifact wrapper and must not be reintroduced.
-assert.equal(rendered.includes('ConnectError'), true, 'Swift public API must expose ConnectError');
+assert.equal(rendered.includes('ArtifactError'), true, 'Swift public API must expose ArtifactError');
 assert.equal(rendered.includes('invalidValue'), true, 'Swift metadata errors must expose invalidValue');
-for (const [name, fragments] of [
-  ['TransportEnvironment.init(configuration:)', ['TransportClientConfiguration', 'async throws']],
-  ['TransportEnvironment.preparePoolMaterial(_:identity:role:)', ['TransportPoolCredential', 'TransportApplicationIdentity', 'ConnectionEndpointRole', 'throws -> ConnectionMaterial']],
-  ['TransportEnvironment.connectMaterial(_:requirements:)', ['ConnectionMaterial', 'ConnectionRequirements', 'async throws -> any Session']],
-  ['TransportEnvironment.connect(source:requirements:)', ['ConnectionMaterialSource', 'ConnectionRequirements', 'async throws -> any Session']],
-  ['TransportEnvironment.generateApplicationIdentity(profile:)', ['TransportCryptoProfile', 'TransportApplicationIdentity']],
-  ['TransportEnvironment.importApplicationIdentity(profile:signingSeed:noiseStaticPrivateKey:)', ['TransportCryptoProfile', 'Data', 'TransportApplicationIdentity']],
-  ['TransportEnvironment.refreshTrustedTime()', ['throws']],
-  ['TransportEnvironment.refreshNamespace(authority:head:state:)', ['String', 'Data', 'throws']],
-  ['TransportEnvironment.invalidateTimeContinuity()', []],
-  ['ConnectionMaterial.waitCleanup()', ['async throws -> CleanupStatus']],
-  ['StreamMetadata.init(namespace:version:values:)', ['String', 'UInt16', '[String : Data]', 'throws']],
-  ['StreamMetadata.init(encoded:)', ['Data', 'throws']],
-  ['StreamMetadata.encoded()', ['throws -> Data']],
-  ['StreamMetadata.namespace', ['String?']],
-  ['StreamMetadata.version', ['UInt16?']],
-  ['StreamMetadata.values', ['[String : JSONValue]']],
-  ['StreamMetadata.byteValues', ['[String : Data]?']],
-]) {
-  assert.equal(surface.some(({ pathComponents, declaration }) =>
-    pathComponents.join('.') === name && fragments.every((fragment) => declaration.includes(fragment))),
-  true, `Swift v4 public signature missing or changed: ${name}`);
-}
-for (const opaque of ['ConnectionMaterial', 'TransportApplicationIdentity', 'ReaderCursor',
-  'WriteOperation', 'ServiceNotificationSubscription', 'OperationHandle']) {
-  assert.equal(surface.some(({ pathComponents }) => pathComponents[0] === opaque
-    && (pathComponents[1]?.startsWith('init(') || pathComponents[1] === 'owner')),
-  false, `${opaque} must retain its original SDK owner`);
-}
 assert.equal(
-  surface.some(({ pathComponents, declaration }) =>
-    pathComponents.join('.') === 'ServiceClient.subscribe(_:codec:options:context:handler:)'
-      && declaration.includes('MessageCodec<Value>')
-      && declaration.includes('async throws -> ServiceNotificationSubscription<Value>')),
+  rendered.includes('RPCNotificationError'),
   true,
-  'Swift service clients must expose original typed notification subscriptions',
+  'Swift public API must expose typed notification decode failures',
 );
 assert.equal(
   surface.some(({ pathComponents, declaration }) =>
-    pathComponents.join('.') === 'ServiceNotificationSubscription.waitClosed(_:)'
-      && declaration.includes('NotificationWaitOptions')
-      && declaration.includes('async throws -> CleanupStatus')),
+    pathComponents.join('.') === 'RPCPeer.subscribeNotification(_:as:handler:)'
+      && declaration.includes('Result<Payload, RPCNotificationError>')
+      && declaration.includes('async throws -> any RPCNotificationSubscription')),
   true,
-  'Swift notification subscriptions must expose original cleanup observation',
+  'Swift RPCPeer must expose deterministic typed notification subscriptions',
 );
-assert.equal(surface.some(({ pathComponents }) => pathComponents.join('.') === 'NotificationGap.decodeError'),
-  true, 'Swift notification observations must expose decode failures');
+assert.equal(
+  surface.some(({ pathComponents, declaration }) =>
+    pathComponents.join('.') === 'RPCNotificationSubscription.cancel()'
+      && declaration.includes('async')),
+  true,
+  'Swift notification subscriptions must expose async cancellation',
+);

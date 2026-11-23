@@ -16,9 +16,8 @@ function defaultRun(command, args, options = {}) {
     maxBuffer: 32 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    const diagnostic = result.error?.message ?? [result.stdout, result.stderr].filter(Boolean).join("\n");
     throw new Error(
-      `${command} ${args.join(" ")} failed: ${diagnostic}`,
+      `${command} ${args.join(" ")} failed: ${result.error?.message ?? result.stderr}`,
     );
   }
   return result.stdout;
@@ -70,7 +69,7 @@ export function runRustSecurityChecks({ repoRoot, run = defaultRun, offline = fa
     if (offline) auditArgs.push("--no-fetch");
     run("cargo", auditArgs, { cwd: repoRoot });
     const denyArgs = [
-      "deny", "--manifest-path", context.manifest, "--locked", "--all-features",
+      "deny", "--manifest-path", context.manifest, "--workspace", "--locked", "--all-features",
       "--config", denyConfig,
     ];
     if (offline) denyArgs.push("--offline");

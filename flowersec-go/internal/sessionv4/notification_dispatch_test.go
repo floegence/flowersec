@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 type notificationFixture struct {
@@ -232,61 +232,6 @@ func (f *notificationFixture) send(t *testing.T, payload string) {
 }
 func notificationStrings(handle func(context.Context, string) error) NotificationObserver {
 	return NotificationObserver{Decode: func(_ context.Context, b []byte) (any, error) { return string(b), nil }, Handle: func(ctx context.Context, v any) error { return handle(ctx, v.(string)) }}
-}
-
-func TestNotificationEOFJoinsCompleteInputHandoff(t *testing.T) {
-	f := newNotificationFixture(t)
-	var received atomic.Uint32
-	f.subscribe(t, NotificationDropNewest, notificationStrings(func(_ context.Context, value string) error {
-		if value != "last" {
-			t.Error("changed final notification", value)
-		}
-		received.Add(1)
-		return nil
-	}))
-	if err := f.receiver.Feed(f.wire(t, "last", 10000, f.policy.Digest)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.receiver.End(); err != nil {
-		t.Fatal(err)
-	}
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := f.receiver.WaitDrained(canceled); !errors.Is(err, context.Canceled) {
-		t.Fatal("EOF overtook the queued input", err)
-	}
-	f.d.Advance()
-	ctx, stop := context.WithTimeout(context.Background(), time.Second)
-	defer stop()
-	if err := f.receiver.WaitDrained(ctx); err != nil {
-		t.Fatal(err)
-	}
-	f.receiver.Close()
-	f.until(t, func() bool { return received.Load() == 1 })
-}
-
-func TestNotificationEOFJoinsTakenInput(t *testing.T) {
-	f := newNotificationFixture(t)
-	if err := f.receiver.Feed(f.wire(t, "last", 10000, f.policy.Digest)); err != nil {
-		t.Fatal(err)
-	}
-	message, err := f.receiver.Take()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer message.Close()
-	if err := f.receiver.End(); err != nil {
-		t.Fatal(err)
-	}
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := f.receiver.WaitDrained(canceled); !errors.Is(err, context.Canceled) {
-		t.Fatal("EOF overtook the original input owner", err)
-	}
-	message.Close()
-	if err := f.receiver.WaitDrained(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // v4.go_notify.observers

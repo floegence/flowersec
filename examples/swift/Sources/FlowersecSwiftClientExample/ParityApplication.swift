@@ -1,96 +1,175 @@
-import CryptoKit
 import Flowersec
 import Foundation
 
-struct ValuePayload: Codable, Equatable, Sendable { let value: String }
-
-struct ValuePayloadCodec: MessageCodec {
-  let definition: MessageDefinition
-  func encode(_ value: ValuePayload, into destination: inout Data) throws -> Int {
-    guard value.value.utf8.count <= 4096 else { throw MessageCodecFailure.encodeFailed }
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let encoded = try encoder.encode(value)
-    guard encoded.count <= definition.maxMessageBytes else { throw MessageCodecFailure.encodeFailed }
-    destination = encoded
-    return encoded.count
-  }
-  func decode(_ source: Data) throws -> ValuePayload {
-    guard source.count <= definition.maxMessageBytes,
-      let fields = try JSONSerialization.jsonObject(with: source) as? [String: Any],
-      fields.count == 1, let value = fields["value"] as? String,
-      value.utf8.count <= 4096 else { throw MessageCodecFailure.decodeFailed }
-    return ValuePayload(value: value)
-  }
+private struct ContractFile: Decodable {
+  let namespace: String
+  let query_type_id: UInt32
+  let contracts: [String: Data]
 }
 
-// The parity fixture and this example share this explicit local application
-// declaration. A peer cannot choose a namespace, type, codec or dispatch route.
+private struct Query: Codable { let namespace: String; let type_ids: [UInt32] }
+private struct Reply: Codable { let contracts: [String] }
+
 struct ParityApplication: Sendable {
-  let definition: ServiceDefinition
-  let echo: MethodDefinition
-  let notification: MethodDefinition
-  let codec: ValuePayloadCodec
-  init() throws {
-    let schema = Data(#"{"additionalProperties":false,"properties":{"value":{"type":"string"}},"required":["value"],"type":"object"}"#.utf8)
-    let payload = try MessageDefinition(schemaDigest: Data(SHA256.hash(data: schema)),
-      revision: "1", maxMessageBytes: 4096)
-    codec = ValuePayloadCodec(definition: payload)
-    echo = try MethodDefinition(.init(typeID: 7001, shape: .unary, semantics: .transient,
-      request: payload, response: payload, responseRevision: "1", requestMaxBytes: 4096,
-      minResponseLimitBytes: 0, maxResponseBytes: 4096))
-    notification = try MethodDefinition(.init(typeID: 7002, shape: .notify, semantics: .observation,
-      request: payload, responseRevision: "1", requestMaxBytes: 4096))
-    definition = try ServiceDefinition(namespace: "flowersec.parity", methods: [
-      .init(name: "echo", method: echo), .init(name: "publish", method: notification),
-    ])
-  }
-  func bind(session: any Session, environment: TransportEnvironment, target: ServiceBindingTarget)
-    async throws -> ServiceClient
-  {
-    let echoContract = try await environment.captureServiceContract(Self.contract(typeID: 7001, notify: false))
-    let notificationContract = try await environment.captureServiceContract(Self.contract(typeID: 7002, notify: true))
-    // Fixed query coordinates are independently configured by this fixture.
-    // Known/wanted digests pin the exact local contracts before any peer result.
-    let queryBinding = try ServiceContractQueryBinding(typeID: 7,
-      contractDigest: Data([9]) + Data(repeating: 0, count: 31), maximumLifetimeMS: 30_000)
-    let deadline = UInt64(Date().timeIntervalSince1970 * 1000) + 10_000
-    let results = try await session.queryContracts([
-      .init(namespace: definition.namespace, typeID: 7001, wantedDigest: echoContract.digest,
-        known: .init(contract: echoContract), maximumOfferWindowMS: 30_000),
-      .init(namespace: definition.namespace, typeID: 7002, wantedDigest: notificationContract.digest,
-        known: .init(contract: notificationContract), maximumOfferWindowMS: 30_000),
-    ], target: target, binding: queryBinding, deadlineAtMS: deadline)
-    guard results.count == 2, let echo = results[0].snapshot, let notify = results[1].snapshot,
-      echo.contract.digest == echoContract.digest, notify.contract.digest == notificationContract.digest else {
-      throw ServiceFailure.contractMismatch
+  private static let types: [UInt32] = [7001, 7002, 7003, 7005]
+  private let expected: [Data]
+  private let query: Bool
+  private let queryOverlap: Int
+  let largeMode: LargeEchoMode
+  let largeEcho: LargeEcho?
+  private let extraMethods: UInt32
+  private let rounds: Int
+  let frameLimits: RPCFrameLimits
+  let handlers: RPCHandlers
+  let permissions: ParityPermissions
+  var checkedContractCount: Int { query ? expected.count : 0 }
+
+  init(_ env: [String: String], authorized: Set<UInt32> = [7001, 7002, 7003, 7005], capacityBusiness: Bool = false) throws {
+    #if os(macOS)
+    let capacityProduct = env["FLOWERSEC_CAPACITY_ROLE"] == "product"
+    #else
+    let capacityProduct = false
+    #endif
+    let permissions = ParityPermissions(file: capacityProduct ? nil : env["FLOWERSEC_PARITY_POLICY_FILE"],
+                                        excluded: Set(Self.types).subtracting(authorized))
+    self.permissions = permissions
+    query = env["FSEC_EXAMPLE_QUERY"] == "1"
+    guard let overlap = Int(env["FSEC_EXAMPLE_QUERY_OVERLAP"] ?? "1"), overlap > 0 else {
+      throw ExampleConfigurationError.invalidConfiguration
     }
-    return try session.bindService(definition, target: target, contracts: [echo, notify])
+    queryOverlap = overlap
+    guard let largeMode = LargeEchoMode(rawValue: env["FSEC_EXAMPLE_LARGE_RPC"] ?? "0"),
+          !(largeMode == .serve && env["FSEC_EXAMPLE_BIDIRECTIONAL"] == "1") else {
+      throw ExampleConfigurationError.invalidConfiguration
+    }
+    self.largeMode = largeMode
+    let largeEcho = largeMode == .disabled ? nil : LargeEcho()
+    self.largeEcho = largeEcho
+    guard let count = UInt32(env["FSEC_EXAMPLE_METHOD_COUNT"] ?? "0"), count <= UInt32.max - 10_000,
+          let repetitions = Int(env["FSEC_EXAMPLE_METHOD_ROUNDS"] ?? "1"), repetitions > 0
+    else { throw ExampleConfigurationError.invalidConfiguration }
+    extraMethods = count
+    rounds = repetitions
+    let common = env["FSEC_RPC_FRAME_BYTES"]
+    let send = env["FSEC_RPC_SEND_BYTES"], receive = env["FSEC_RPC_RECEIVE_BYTES"]
+    if common != nil || send != nil || receive != nil || largeEcho != nil {
+      guard common == nil || (send == nil && receive == nil),
+            let sendBytes = (send ?? common).flatMap(Int.init), let receiveBytes = (receive ?? common).flatMap(Int.init),
+            largeEcho == nil || min(sendBytes, receiveBytes) >= LargeEcho.minimumFrame else {
+        throw ExampleConfigurationError.invalidConfiguration
+      }
+      frameLimits = try RPCFrameLimits(send: sendBytes, receive: receiveBytes)
+    } else { frameLimits = .standard }
+
+    var routes = RPCHandlers()
+    var declarations: [UInt32: Data] = [:]
+    let file = try env["FSEC_PARITY_CONTRACTS_PATH"].map {
+      try JSONDecoder().decode(ContractFile.self, from: Data(contentsOf: URL(fileURLWithPath: $0)))
+    }
+    guard !query || file != nil else { throw ExampleConfigurationError.invalidConfiguration }
+    if let file, file.namespace != "flowersec.parity" || file.query_type_id != 7004 {
+      throw ExampleConfigurationError.invalidConfiguration
+    }
+    expected = try file.map { f in try Self.types.map { id in
+      guard let bytes = f.contracts[String(id)], !bytes.isEmpty else { throw ExampleConfigurationError.invalidConfiguration }
+      return bytes
+    } } ?? []
+
+    // Only methods installed for this grant have visible declarations.
+    for id in Self.types where authorized.contains(id) {
+      #if os(macOS)
+      if capacityProduct {
+        if id == 7001 && capacityBusiness {
+          try routes.register(id, context: CapacityPeer.self) { (state: CapacityPeer, request: CapacityEcho) in try await state.echo(request) }
+        } else if id != 7002 {
+          try routes.register(id, context: CapacityPeer.self) { state, payload in try await state.handle(id, payload) }
+        }
+        if let file { declarations[id] = file.contracts[String(id)] }
+        continue
+      }
+      #endif
+      if id == 7002 {
+        try routes.registerNotification(id) { (payload: ValuePayload) in
+          try permissions.execute(id)
+          guard payload.value == "notify" else { throw RPCError(code: 400, message: "invalid value") }
+        }
+        if let file { declarations[id] = file.contracts[String(id)] }
+        continue
+      }
+      try routes.register(id) { (payload: ValuePayload) -> ValuePayload in
+        try permissions.execute(id)
+        let allowed: Bool
+        switch id {
+        case 7001: allowed = ["ping", "notifications-observed"].contains(payload.value)
+        case 7003: allowed = payload.value == "complete"
+        case 7005: allowed = payload.value == "datagram-ready"
+        default: allowed = false
+        }
+        guard allowed else { throw RPCError(code: 400, message: "invalid value") }
+        return payload
+      }
+      if let file { declarations[id] = file.contracts[String(id)] }
+    }
+    if file != nil {
+      let visible = declarations
+      let lookup: @Sendable (Query) throws -> Reply = { q in
+        guard q.namespace == "flowersec.parity", !q.type_ids.isEmpty, q.type_ids.count <= Self.types.count else { throw RPCError(code: 404, message: "unavailable") }
+        try permissions.disclose(q.type_ids)
+        return try Reply(contracts: q.type_ids.map { id in
+          guard let bytes = visible[id] else { throw RPCError(code: 404, message: "unavailable") }
+          return bytes.base64EncodedString()
+        })
+      }
+      #if os(macOS)
+      if capacityProduct {
+        try routes.register(7004, context: CapacityPeer.self) { (state: CapacityPeer, q: Query) in
+          try await state.authorizeQuery(includingNotification: q.type_ids.contains(7002)); return try lookup(q)
+        }
+      } else { try routes.register(7004, handler: lookup) }
+      #else
+      try routes.register(7004, handler: lookup)
+      #endif
+    }
+    if let largeEcho {
+      try routes.register(7010, acceptsNotifications: false) { (text: String) -> String in
+        try await largeEcho.echo(text, permissions: permissions)
+      }
+    }
+    for offset in 0..<extraMethods {
+      let id = 10_000 + offset
+      try routes.register(id) { (value: ValuePayload) -> ValuePayload in
+        try permissions.execute(id)
+        return ValuePayload(value: "\(id):\(value.value)")
+      }
+    }
+    handlers = routes
   }
 
-  static func contract(typeID: UInt32, notify: Bool) -> Data {
-    var fields: [(UInt64, Data)] = [
-      (0, text("flowersec.parity")), (1, uint(UInt64(typeID))), (2, uint(notify ? 2 : 0)),
-      (notify ? 5 : 3, uint(0)), (6, text("1")), (7, text("1")),
-      (8, uint(notify ? 0 : 1)), (9, uint(0)), (10, uint(notify ? 0 : 4096)),
-      (11, uint(30_000)), (21, Data([0xf4])), (23, uint(4096)), (27, Data([0x80])),
-    ]
-    if !notify { fields.append((12, uint(30_000))) }
-    fields.sort { $0.0 < $1.0 }
-    return head(major: 5, value: UInt64(fields.count))
-      + fields.reduce(into: Data()) { $0.append(uint($1.0)); $0.append($1.1) }
-  }
-  private static func uint(_ value: UInt64) -> Data { head(major: 0, value: value) }
-  private static func text(_ value: String) -> Data {
-    head(major: 3, value: UInt64(value.utf8.count)) + Data(value.utf8)
-  }
-  private static func head(major: UInt8, value: UInt64) -> Data {
-    if value < 24 { return Data([(major << 5) | UInt8(value)]) }
-    let size: Int = value <= 255 ? 1 : value <= 65_535 ? 2 : value <= 4_294_967_295 ? 4 : 8
-    var bytes = Data([(major << 5) | (size == 1 ? 24 : size == 2 ? 25 : size == 4 ? 26 : 27)])
-    for shift in stride(from: (size - 1) * 8, through: 0, by: -8) {
-      bytes.append(UInt8(truncatingIfNeeded: value >> shift))
+  func checkOptionalCalls(on session: any Session, callLarge: Bool = true) async throws {
+    if query {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        for _ in 0..<queryOverlap {
+          group.addTask {
+            let reply = try await session.rpc.call(7004, Query(namespace: "flowersec.parity", type_ids: Self.types),
+                                                   as: Reply.self, timeout: .seconds(10))
+            guard reply.contracts.count == expected.count else { throw ExampleConfigurationError.invalidRPCResponse }
+            for (encoded, bytes) in zip(reply.contracts, expected) {
+              guard let decoded = Data(base64Encoded: encoded), decoded == bytes,
+                    decoded.base64EncodedString() == encoded else { throw ExampleConfigurationError.invalidRPCResponse }
+            }
+          }
+        }
+        while try await group.next() != nil {}
+      }
     }
-    return bytes
+    if largeMode == .call && callLarge { try await LargeEcho.call(on: session) }
+    for round in 0..<rounds {
+      for offset in 0..<extraMethods {
+        let id = 10_000 + offset
+        let reply = try await session.rpc.call(id, ValuePayload(value: String(round)), as: ValuePayload.self,
+                                               timeout: .seconds(10))
+        guard reply.value == "\(id):\(round)" else { throw ExampleConfigurationError.invalidRPCResponse }
+      }
+    }
   }
 }

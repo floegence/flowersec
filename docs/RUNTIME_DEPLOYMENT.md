@@ -1,216 +1,67 @@
-# Runtime deployment
+# Deploy a direct TCP client
 
-`flowersec-runtime -config /absolute/path/deployment.json` installs the current
-wire revision 4 deployment. Its roles are `relay`, `direct-server` and `direct-client`.
-The process constructs SDK owners from independently supplied host inputs and
-uses the public native carrier, admission, Noise and READY paths.
+Run `flowersec-runtime -config /etc/flowersec/client.json` beside a TCP application. The application connects to a local port; the runtime opens one encrypted Flowersec stream per TCP connection. The remote direct server chooses the upstream from its independently authorized record. Local applications cannot select another target, stream kind, or metadata.
 
-The configuration is a bounded JSON document. Unknown fields, duplicate object
-keys and trailing JSON are rejected. Deployment field names use the explicit
-snake case spellings in `deployment_config.go`. Embedded numeric SDK tuning
-uses the exported Go field names of the corresponding configuration type;
-`time.Duration` values are integer nanoseconds. Runtime limits have no inferred
-machine-dependent defaults.
+Use the runtime binary from your distribution or build it with `go build ./cmd/flowersec-runtime` from `flowersec-go`. A direct client needs no server certificate, authorization callback, or public listener.
 
-## Shared host inputs
-
-Every role supplies `wire_revision: 4`, `role`, `resources`, `environment_id`,
-`clock`, `namespaces`, `stores` and a finite `shutdown_ms`.
-
-- `resources` supplies the qualified same-root engineering limits. The tenant
-  and environment accounts derive from the original deployment inputs. Every
-  accepted direct position receives its own session account.
-- `clock` identifies an independently qualified monotonic incarnation and
-  trusted initial lower/upper interval. Clock continuity and drift checks remain
-  part of the running deployment.
-- `namespaces` contains independent root pins, finite namespace geometry,
-  fixed HTTPS bootstrap addresses and explicit native TLS trust. Each root is
-  bootstrapped through its own fresh signed response before credential use.
-- Each used store has an absolute canonical SQLite path, its stable original
-  identity, finite store limits, an independent history public key and a
-  signed history approval. An approval binds the path and database/WAL digests,
-  generation, epoch, expiry and permission to provision a new store.
-
-Private signing seeds, original credential maps and TLS private keys are read
-from the configured bounded files. A credential does not install a namespace
-root, choose a store or replace a missing history approval.
-
-## Direct server
-
-The `direct` object installs a finite original material inventory, stable
-admission mappings, native listeners and a frozen raw stream registration set.
-The direct roles use `stores[0]` for their original pool spend or admission
-history. Materials with the `services` or `execution` profile require the
-complete `services` aggregate. Durable business histories install additional
-independent physical stores under their own logical service authorities.
-
-The required `direct` inputs are:
-
-| Field | Original input |
-| --- | --- |
-| `tenant` | Exact tenant of all stable admission mappings |
-| `materials` | Original Artifact, source-specific activation proof, both identity certificate files, independent local signer and static DH seed files, source generation, activation signing key ID, three namespace selectors and candidate index |
-| `admission` | Exact tenant, audience, crypto profile, source, issuer ID, server identity digest, spend authority and signing key for each accepted stable mapping |
-| `listeners` | Material selector, exact numeric `address`, independent TLS certificate/key/trust files and qualified QUIC, WebTransport or WebSocket provider limits |
-| `core` | Qualified immutable numeric session/stream/liveness/rekey/cleanup tuning |
-| `executor` | Finite original ordinary/resident/Completion execution geometry |
-| `streams` | Optional inbound raw stream registrations with exact application kind, handler slots, fixed TCP upstream address and finite timeout |
-| `services` | Complete numeric RPC tuning, original service contracts, method bindings and independently owned execution histories |
-| `client` | Present only for `direct-client`; fixed local ingress and independent native provider inputs |
-| `establishment_limits` | Complete current credential and HELLO codec bounds |
-| `local_capabilities` | Features actually implemented by the local deployment |
-| `binding_mode` | `1`, the supported native observation binding |
-| `handshake_ms` | Finite local establishment duration, up to 90 seconds |
-| `max_admission_record_bytes` | Finite original admission record bound |
-
-`core.Clock`, `core.Session` and a supplied handler plan are not configuration
-inputs. The runtime installs its qualified clock, verified original session
-parameters and newly constructed handler plan. Before opening the listeners,
-it qualifies each complete admission graph and checks its same-root capacity.
-
-A native listener's physical address, carrier and TLS policy must match its
-complete signed candidate. Multiple original routes may share one listener
-when their signed profile, source and Initial frame geometry are compatible.
-TCP and UDP listeners are accounted for independently. A second listener of
-the same network at the same numeric address is rejected.
-
-HELLO is a bounded unauthenticated lookup hint. The resolver requires the exact
-original artifact digest, route digest, candidate ID and attempt ID within the
-listener's installed route set. A successful resolution transfers that
-original material once. The public Acceptor then independently performs
-credential checks, actual AdmissionLedger CAS, FSB binding, Noise and both
-READY messages. Application authorization runs only after authentication and
-matches the complete original application binding.
-
-Each accepted position owns a fresh handler plan, application plan and session
-account. Registered upstream streams preserve bidirectional half-close: peer
-FIN closes the TCP write side, TCP EOF closes the Flowersec write side, and
-cancellation closes both owners before returning their reservations. Shutdown
-joins native listener/provider work, sessions and application callbacks before
-retiring the store, namespace and root owners. Failed cleanup retains the
-original owner for a later cleanup observer.
-
-## Direct client
-
-A `direct-client` deployment supplies `direct.client` and leaves
-`direct.listeners` empty. Its `client.providers` array has one entry per
-original material. Each entry supplies the fixed numeric native peer address,
-independent TLS roots, qualified carrier options and an explicit `origin`
-when required by the signed WebSocket or WebTransport route.
-
-`client.ingress` binds an original material index to one unique numeric
-loopback TCP `address`, exact stream `kind`, immutable `metadata`, finite
-`slots` and `timeout_ms`. The runtime establishes that material through the
-public source-based `Connect` path once, then opens each local connection on
-that authenticated session. It reserves the native listener and connection
-positions before exposure and each full bridge task vector before dispatch.
-EOF propagates as half-close in both directions; cancellation joins both copy
-tasks before returning their resources.
-
-Pool materials supply their original `activation_file`. Live materials omit
-that file, supply their original nonzero `attempt`, and use
-`client.live_control` for the independent fixed HTTPS control address,
-mutual TLS credentials and finite provider limits. The live source lease has
-no activation proof; the original live control provider performs activation.
-The client identity selects the original client certificate and private key.
-
-## Service and execution applications
-
-`services.rpc` contains only immutable numeric tuning. The runtime installs
-its qualified root, clock, authenticated session parameters, service registry,
-execution bindings and executor charges. Callers cannot supply SDK owners or
-callback tables through deployment JSON.
-
-Each `services.methods` entry supplies the exact canonical `contract_file`,
-`namespace`, `type`, `work_class` and bounded fixed TCP `upstream`. Unary
-requests are sent as bytes followed by TCP FIN; the bounded response ends at
-upstream EOF. Notifications send request bytes and FIN and wait for upstream
-EOF, which joins the actual application exchange. Observation notifications
-use original per-session subscriptions; execution notifications use the
-original unique execution handler.
-
-A streaming contract additionally supplies `stream.kind` and
-`stream.metadata` for its exact OPEN binding and uses the resident work class.
-Its TCP application returns items framed by a four-byte big-endian unsigned
-length followed by that many payload bytes. Each complete item is passed to
-the original SDK response before reading the next frame. Signed item size,
-count, total payload, duration and native backpressure remain enforced by the
-original stream owner. EOF lets the SDK publish its terminal result.
-
-Checkpoint and retained-content methods require separately installed
-application recovery/content definitions and are rejected by this fixed TCP
-application adapter. Application stream kind names, including supported
-`*_v1` names, are used exactly as registered.
-
-`services.histories` installs one history per method namespace. Its `service`
-fixes the original tenant, audience and namespace; `caller_authorities`,
-`Records`, `Active`, `RuntimeBytes`, `WorkRuntimeBytes` and
-`ResultRuntimeBytes` bound volatile business execution. Volatile methods use
-explicit `admission_offers` containing original `LowerMS` and `UpperMS`
-bounds. Reading or reconnecting does not extend those windows.
-
-A history with `durable` uses its own `store`, finite SQLite geometry and
-separate `continuity_public_key` and `continuity_approval`. The physical store
-approval binds the database and WAL digests. The separately signed execution
-approval binds the original identity, logical service, epoch, database digest,
-external authority, expiry and `previous_work_fenced: true`. The continuity
-key differs from the physical history key. Both approvals must remain valid
-at the original open boundary. Database files alone cannot establish that
-previous actual or external work has stopped.
-
-The execution approval signs the JSON serialization of this exact ordered
-object, with exported field spellings:
+1. Have the control plane issue a **direct** `flowersec/5` artifact for the remote server and its upstream. The server must have the matching authorization record before you distribute `IssuedArtifact.ArtifactJSON()` to the client. Deliver the artifact privately; use a regular file readable only by the runtime account (for example, mode `0600`).
+2. Provision a persistent local directory owned by the runtime account with mode `0700` for spend markers. Use the same directory across restarts and across all processes that can consume the same artifact. Use a filesystem that supports exclusive creation and directory `fsync`. Keep the artifact, state, and their parent directories under trusted administrative control.
+3. Save the following configuration, substituting the actual paths and the exact HTTPS origin allowed by the remote service. Start the runtime before the invitation expires, then direct the local application to `127.0.0.1:15432`.
 
 ```json
 {
-  "Domain": "flowersec-runtime-execution-continuity-1",
-  "Identity": {},
-  "Service": {},
-  "Epoch": 0,
-  "DatabaseDigest": "base64 of 32 bytes",
-  "PreviousWorkFenced": true,
-  "Authority": "independent settlement authority",
-  "NotAfterMS": 0
+  "role": "direct-client",
+  "spend_directory": "/var/lib/flowersec/spends",
+  "ingress": [{
+    "address": "127.0.0.1:15432",
+    "artifact_file": "/etc/flowersec/invitations/reports.json",
+    "origin": "https://reports.example.com",
+    "kind": "application.tcp",
+    "metadata": {"service": "reports"},
+    "slots": 8,
+    "connect_timeout_ms": 10000,
+    "timeout_ms": 300000
+  }]
 }
 ```
 
-`Identity` and `Service` use the exported field spellings of their original
-SQLite configuration types. The domain-separated envelope contains no
-signature field. Provisioning installs explicitly configured admission windows
-through the original store CAS. Reopening requires `admission_offers` to be
-omitted and reads the original canonical registrations and windows. Expired
-windows remain in persisted history; they do not create new admission promises.
-Shutdown joins the actual durable adapter and SQLite work before retiring the
-physical connection and sealing its backing. Persistent files are retained.
+Each of the 1–64 entries must have its own credential and unique numeric loopback address with a nonzero port (IPv4 or IPv6). Loopback limits access to the local network namespace; any process that can reach the port can exercise the configured grant. Use a dedicated namespace when local users or applications do not share that trust. Use a process or supervisor readiness check: a TCP probe is a real application connection and triggers authentication.
 
-## Relay
+`slots` (1–128) limits concurrent accepted connections per entry. `connect_timeout_ms` (1–90000) bounds session establishment. `timeout_ms` (1–86400000) bounds each stream from opening through the end of forwarding. `metadata` defaults to an empty object. For a private CA, set `tls_roots_file` to the absolute path of a PEM trust bundle for that entry; otherwise the SDK uses system roots for CA-mode invitations. The artifact controls endpoint selection and TLS policy. Use absolute paths for credentials, trust bundles, and the spend directory.
 
-The `relay` role supplies its independent original `pool`, `relay` and
-`control_tls` inputs and uses all three physical stores. Pool issuance, source
-consumption and relay admission retain separate original ownership.
+Startup validates all entries and binds their local ports. Until the first local connection on an entry, it does not dial, establish a session, or spend the artifact. On first use it commits a marker before sending the credential. Subsequent local connections share that authenticated session. Closing the TCP write side still allows a response to arrive. Stopping the process with SIGTERM or Ctrl+C closes listeners, cancels active relays, and waits for them to exit.
 
-A tunnel keeps logical client `0`, server `1` and relay `2`. Grant records and
-publication slots use the logical endpoint side. Each signed leg independently
-chooses endpoint-to-relay or relay-to-endpoint physical direction; its numeric
-address and native TLS inputs identify its actual listener. Every native
-carrier remains its own connection. Original publication preserves the complete
-paired endpoint material and both Grants, and server allow delivery reaches
-the original recipient through the independently installed control service.
+A connect failure or terminated session stops the deployment. Check the remote listener, TLS trust, origin, and control-plane authorization. If the artifact expired or reached the spend step, obtain a fresh direct artifact and replace its file before restarting. Never delete spend markers to recover access; configure the supervisor to avoid automatic restart loops with a spent credential.
 
-Each `relay.legs` entry can install an `origin` for outgoing WSS or WebTransport
-connections. It must satisfy the signed leg policy and the endpoint's independent
-Origin policy. Raw QUIC legs omit this field.
+## Serve registered methods on fixed TCP upstreams
 
-The shared native tunnel peer publishes both independent endpoint listener
-manifests as `client_tls_certificate_pem`, `client_tls_private_key_pem`,
-`server_tls_certificate_pem` and `server_tls_private_key_pem`. Its relay-only
-`--client-listener endpoint|relay` and `--server-listener endpoint|relay`
-flags select physical listener ownership before route signing. The independent
-`--server-carrier` selector supports carrier combinations different from the
-client leg. Endpoint identity roles remain unchanged by those selections.
+Set `role` to `direct-server` and add `direct_services` to the server's existing TLS, listener, authorization and origin configuration. In this mode **every direct application stream must match a registration**. A server that omits both fields continues to bridge raw streams to the address in the authorized record. Tunnel listeners forward encrypted traffic and do not run these methods.
 
-The tunnel matrix driver supports separate
-`FLOWERSEC_PARITY_CLIENT_CARRIERS` and `FLOWERSEC_PARITY_SERVER_CARRIERS`
-filters. `FLOWERSEC_PARITY_CLIENT_LISTENER` and
-`FLOWERSEC_PARITY_SERVER_LISTENER` each accept `endpoint` or `relay` and
-forward that trusted topology choice to the issuing relay peer before signing.
+For example, add these top-level fields to serve a query, a notification and a report stream:
+
+```json
+{
+  "role": "direct-server",
+  "direct_services": {
+    "slots": 8,
+    "rpc_frame_bytes": 1048576,
+    "methods": [
+      {"shape":"unary", "type_id":7001, "upstream":"127.0.0.1:7101", "allowed_channels":["reports"], "timeout_ms":3000, "max_request_bytes":4096, "max_response_bytes":65536},
+      {"shape":"notification", "type_id":7002, "upstream":"127.0.0.1:7102", "allowed_channels":["events"], "timeout_ms":1500, "max_request_bytes":4096},
+      {"shape":"stream", "kind":"reports.rows", "metadata":{"format":"binary"}, "upstream":"127.0.0.1:7103", "allowed_channels":["reports"], "timeout_ms":30000, "max_request_bytes":4096, "max_response_bytes":65536, "max_items":1024, "max_stream_payload_bytes":8388608}
+    ]
+  }
+}
+```
+
+Issue the direct invitation with the method's numeric IP and port as `UpstreamAddress` and an allowed `Session.ChannelID`. At each dispatch the runtime checks **both** fields from the verified authorization, plus the RPC form and type ID or the exact stream kind and canonical metadata (default `{}`). An invitation for `127.0.0.1:7101` cannot invoke the example's methods at ports 7102 or 7103, even on an allowed channel. Use a separate invitation for each distinct upstream. Administration owns the shared registrations; neither RPC input nor OPEN metadata can set the upstream. If methods share a TCP address, the application receives only their payload bytes; use separate ports for operations that require isolation at the upstream, and validate business permissions in the application.
+
+| Client operation | Exchange with the authorized TCP application |
+| --- | --- |
+| `RPC().Call` | The host writes the request's JSON value, then sends TCP FIN. The application returns one UTF-8 JSON value and closes its write side. An invalid, truncated or oversized reply fails the call. |
+| `RPC().Notify` | The host writes the JSON value and sends FIN. The application sends no reply bytes and closes its write side. Notifications are processed in order; the caller gets no processing acknowledgement. |
+| `OpenStream` | The client writes the binary request and calls `CloseWrite`. The host validates the complete request before dialing. After receiving TCP FIN, the application returns items, each prefixed by its four-byte unsigned big-endian length, then EOF. The client reads these same application bytes on the reverse direction of the stream. A partial or oversized item resets the stream; earlier complete items may already have arrived. Empty items count toward `max_items`. |
+
+`slots` (1–128) bounds active method exchanges across all direct sessions. Per session, it also bounds concurrent RPC requests and the sizes of the request and notification queues. Choose `rpc_frame_bytes` (256 bytes to 64 MiB) to cover the **encoded envelope**, including JSON escaping and headers; configure callers' frame limits as needed. Individual request, unary response and stream item limits are at most 32 MiB. `max_stream_payload_bytes` counts item bodies; the item count bounds framing overhead. No method reserves a TCP connection at startup. The method timeout (1–300000 ms) includes RPC queue time after frame receipt, dialing and all TCP I/O; for a stream it starts at dispatch and includes receipt of the request and delivery of its items.
+
+An unauthorized or unregistered RPC call receives `404`; the host discards unauthorized notifications and resets unregistered streams without dialing. Oversized RPC input receives `413`, overload receives `429`, an upstream error receives `502`, and a method deadline receives `504`. A local caller timeout does not cancel completed remote effects. The host does not replay requests, keep execution history or issue completion receipts. Authorization uses the admitted grant and the deployment policy loaded at startup. A service requiring live revocation per operation must enforce it at its own effect boundary. Shutdown cancels active I/O and waits for local method and session workers before releasing the admission lease.

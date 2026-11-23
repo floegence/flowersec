@@ -170,7 +170,7 @@ func (d *Decoder) DecodeRecordBody(input []byte, frame FrameType, header RecordH
 	}
 	// Closed variant selection happens only in this already bounded canonical
 	// map. No discriminator causes a second parse or allocates another owner.
-	doc, err := d.decodeShape(input, "", context)
+	doc, err := d.DecodeShape(input, "", context)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,6 @@ func (d *Decoder) DecodeRecordBody(input []byte, frame FrameType, header RecordH
 			return nil, CBORFailure("open_digest")
 		}
 	}
-	doc.compactPrivateNodes()
 	return result, nil
 }
 
@@ -428,11 +427,6 @@ func (f *Frame) checkRule(rule frameRule, r *frameRuntime) error {
 			if !ok || target == 0 || n != target {
 				return CBORFailure("error_scope")
 			}
-		} else if policy.Scope != "session" {
-			// ERROR code 0 (normal) and any registry entry without a
-			// session/stream scope is not a valid ERROR payload.  Keep the
-			// frame runtime fail-closed like the map-rule decoder.
-			return CBORFailure("error_scope")
 		}
 		if !policy.Retryable && get(rule.RetryAfterField).valid() {
 			return CBORFailure("retry_after_forbidden")

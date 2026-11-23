@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // Synthetic SDK steps exist only in this package's tests. Production exposes
@@ -188,48 +188,6 @@ func TestApplicationQueriesRotateOriginalOwners(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func TestApplicationQueriesIdleSelectionPreservesRotationAndClosingEligibility(t *testing.T) {
-	groups := [3]sdkQueryGroup{
-		{direction: 1, cursor: [2]int{2, 1}},
-		{direction: 0, cursor: [2]int{3, 4}},
-		{direction: 1, cursor: [2]int{6, 7}},
-	}
-	groupOf := [8]int{0, 0, 0, 1, 1, 1, 2, 2}
-	directions := [8]uint8{0, 1, 0, 0, 1, 0, 0, 1}
-	registrations := [8]sdkQueryRegistration{}
-	q := sdkQueryLane{slots: make([]sdkQuerySlot, len(registrations)), lastGroup: 6}
-	for i := range q.slots {
-		q.slots[i] = sdkQuerySlot{registration: &registrations[i], group: &groups[groupOf[i]], direction: directions[i]}
-	}
-	q.slots[1].pending, q.slots[1].ready = true, true
-	q.slots[2].closing, q.slots[2].active = true, true
-	q.slots[4].registration, q.slots[4].pending = nil, true
-	q.slots[5].pending, q.slots[5].active = true, true
-	beforeGroups, beforeLast := groups, q.lastGroup
-	for range 100 {
-		if selected := q.choose(); selected != -1 {
-			t.Fatal("idle selection admitted queued, active or unregistered work", selected)
-		}
-	}
-	if groups != beforeGroups || q.lastGroup != beforeLast {
-		t.Fatal("idle selection changed Session, direction or owner rotation", groups, q.lastGroup)
-	}
-
-	q.slots[0].closing = true
-	q.slots[3].pending = true
-	q.slots[7].closing = true
-	for _, want := range []int{0, 3, 7} {
-		if selected := q.choose(); selected != want {
-			t.Fatal("pending and closing owners lost Session rotation", selected, want)
-		}
-		q.slots[want].ready = true
-	}
-	beforeGroups, beforeLast = groups, q.lastGroup
-	if selected := q.choose(); selected != -1 || groups != beforeGroups || q.lastGroup != beforeLast {
-		t.Fatal("queued closing owners remained eligible or changed idle rotation", selected, groups, q.lastGroup)
 	}
 }
 

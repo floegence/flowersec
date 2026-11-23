@@ -56,10 +56,7 @@ impl QlogSink {
         {
             self.stream.is_some()
         }
-        #[cfg(not(any()))]
-        {
-            false
-        }
+        false
     }
 
     pub(super) fn emit_recovery_metrics(

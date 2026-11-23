@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest/tunnelworkload"
 )
 
 var (
@@ -211,10 +211,6 @@ type capacityQuiescingEndpoint interface {
 	Quiesce(context.Context) error
 }
 
-type capacityPreparer interface {
-	PrepareCapacity(context.Context, int) error
-}
-
 type resourceSnapshotFunc func() (transporttest.ResourceSnapshot, error)
 
 type capacityCaseResult struct {
@@ -311,17 +307,10 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		return result, fmt.Errorf("capture capacity resource baseline: %w", err)
 	}
 	result.Baseline = caseResourceRecord{Phase: "baseline", AtNS: 0, RSSBytes: base.RSSBytes, OpenFDs: base.OpenFDs, Goroutines: base.Goroutines, Tasks: base.Tasks}
-	// Deployment preparation remains part of CPU and cleanup accounting.
-	if preparer, ok := endpoint.(capacityPreparer); ok {
-		if err := preparer.PrepareCapacity(ctx, contract.Sessions); err != nil {
-			return result, fmt.Errorf("prepare capacity deployment: %w", err)
-		}
-	}
 	started := time.Now()
 	watchdogAt := started.Add(contract.Watchdog)
 
 	type connectResult struct {
-		ordinal int
 		session capacitySession
 		err     error
 	}
@@ -338,9 +327,6 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		for unclaimed := range connected {
-			if unclaimed.err != nil {
-				resultErr = errors.Join(resultErr, fmt.Errorf("capacity session %d connect: %w", unclaimed.ordinal+1, unclaimed.err))
-			}
 			if unclaimed.session != nil {
 				resultErr = errors.Join(resultErr, unclaimed.session.Close(cleanupCtx))
 			}
@@ -356,7 +342,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		go func() {
 			defer rampWG.Done()
 			if waitErr := waitCapacityUntil(rampCtx, due, watchdogAt); waitErr != nil {
-				connected <- connectResult{ordinal: ordinal, err: waitErr}
+				connected <- connectResult{err: waitErr}
 				return
 			}
 			connectCtx, cancel := context.WithDeadline(rampCtx, sessionRampEnd)
@@ -366,7 +352,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			connectLatencyMu.Lock()
 			connectLatencies = append(connectLatencies, time.Since(connectStarted))
 			connectLatencyMu.Unlock()
-			connected <- connectResult{ordinal: ordinal, session: session, err: connectErr}
+			connected <- connectResult{session: session, err: connectErr}
 		}()
 	}
 	ids := make(map[string]struct{}, contract.Sessions)
@@ -383,7 +369,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			result.Attempted++
 			if connectedResult.err != nil || connectedResult.session == nil {
 				result.Failed++
-				return result, fmt.Errorf("capacity session %d connect: %w", connectedResult.ordinal+1, connectedResult.err)
+				return result, fmt.Errorf("capacity session %d connect: %w", result.Attempted, connectedResult.err)
 			}
 			if connectedResult.session.ID() == "" {
 				return result, errors.New("capacity workload returned an empty production session ID")
@@ -448,27 +434,10 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	}
 
 	terminated := make(chan string, len(sessions))
-	observerCtx, stopObservers := context.WithCancel(ctx)
-	var observers sync.WaitGroup
-	// These local observers belong to this case, even if real cleanup fails
-	// without closing Termination. Stop and join them before returning; the
-	// original Session and endpoint cleanup still report their own results.
-	defer func() {
-		stopObservers()
-		observers.Wait()
-	}()
 	for _, session := range sessions {
-		observers.Add(1)
 		go func() {
-			defer observers.Done()
-			select {
-			case <-session.Termination():
-				select {
-				case terminated <- session.ID():
-				case <-observerCtx.Done():
-				}
-			case <-observerCtx.Done():
-			}
+			<-session.Termination()
+			terminated <- session.ID()
 		}()
 	}
 	holdEnd := rampEnd.Add(contract.Hold)
@@ -943,7 +912,7 @@ func openProductionCapacityEndpoint(ctx context.Context, definition capacityCase
 	}
 	switch definition.Kind {
 	case capacityDirect:
-		endpoint, err := transporttest.OpenProductDirectCapacityEndpoint(ctx, definition.Carrier, sessions)
+		endpoint, err := transporttest.OpenProductDirectEndpoint(ctx, definition.Carrier)
 		if err != nil {
 			return nil, err
 		}
@@ -962,18 +931,7 @@ func openProductionCapacityEndpoint(ctx context.Context, definition capacityCase
 }
 
 type directCapacityEndpoint struct {
-	endpoint interface {
-		PrepareCapacity(context.Context, int) error
-		Connect(context.Context) (*transporttest.ProductDirectPair, error)
-		Close() error
-	}
-}
-
-func (endpoint *directCapacityEndpoint) PrepareCapacity(ctx context.Context, sessions int) error {
-	if endpoint == nil || endpoint.endpoint == nil {
-		return errors.New("direct capacity endpoint is unavailable")
-	}
-	return endpoint.endpoint.PrepareCapacity(ctx, sessions)
+	endpoint *transporttest.ProductDirectEndpoint
 }
 
 func (endpoint *directCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
@@ -981,10 +939,12 @@ func (endpoint *directCapacityEndpoint) Connect(ctx context.Context) (capacitySe
 	if err != nil {
 		return nil, err
 	}
-	clientTermination, serverTermination := make(chan struct{}), make(chan struct{})
-	go func() { _ = pair.Client.WaitTermination(context.Background()); close(clientTermination) }()
-	go func() { _ = pair.Server.WaitTermination(context.Background()); close(serverTermination) }()
-	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(clientTermination, serverTermination)}, nil
+	clientTermination := make(chan struct{})
+	go func() {
+		_, _ = pair.Client.WaitTermination(context.Background())
+		close(clientTermination)
+	}()
+	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(clientTermination, pair.Server.Termination())}, nil
 }
 
 func (endpoint *directCapacityEndpoint) Close(context.Context) error {
@@ -1000,7 +960,7 @@ type directCapacitySession struct {
 func (session *directCapacitySession) ID() string                   { return session.id }
 func (session *directCapacitySession) Termination() <-chan struct{} { return session.termination }
 func (session *directCapacitySession) ProbeLiveness(ctx context.Context) error {
-	_, err := session.pair.Client.ProbeLiveness(ctx, 5000)
+	_, err := session.pair.Client.ProbeLiveness(ctx)
 	return err
 }
 func (session *directCapacitySession) Close(ctx context.Context) error {
@@ -1016,22 +976,12 @@ func (session *directCapacitySession) Close(ctx context.Context) error {
 
 type tunnelCapacityEndpoint struct{ endpoint *tunnelworkload.Endpoint }
 
-func (endpoint *tunnelCapacityEndpoint) PrepareCapacity(ctx context.Context, sessions int) error {
-	if endpoint == nil || endpoint.endpoint == nil {
-		return errors.New("tunnel capacity endpoint is unavailable")
-	}
-	return endpoint.endpoint.PrepareCapacity(ctx, sessions)
-}
-
 func (endpoint *tunnelCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
 	pair, err := endpoint.endpoint.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	clientTermination, serverTermination := make(chan struct{}), make(chan struct{})
-	go func() { _ = pair.Client.WaitTermination(context.Background()); close(clientTermination) }()
-	go func() { _ = pair.Server.WaitTermination(context.Background()); close(serverTermination) }()
-	return &tunnelCapacitySession{pair: pair, id: fmt.Sprintf("tunnel-%p", pair), termination: joinTermination(clientTermination, serverTermination)}, nil
+	return &tunnelCapacitySession{pair: pair, id: fmt.Sprintf("tunnel-%p", pair), termination: joinTermination(pair.Client.Termination(), pair.Server.Termination())}, nil
 }
 
 func (endpoint *tunnelCapacityEndpoint) Close(ctx context.Context) error {
@@ -1047,7 +997,7 @@ type tunnelCapacitySession struct {
 func (session *tunnelCapacitySession) ID() string                   { return session.id }
 func (session *tunnelCapacitySession) Termination() <-chan struct{} { return session.termination }
 func (session *tunnelCapacitySession) ProbeLiveness(ctx context.Context) error {
-	_, err := session.pair.Client.ProbeLiveness(ctx, 5000)
+	_, err := session.pair.Client.ProbeLiveness(ctx)
 	return err
 }
 func (session *tunnelCapacitySession) Close(ctx context.Context) error {

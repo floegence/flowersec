@@ -18,8 +18,9 @@ function fixture(t) {
     'import fs from "node:fs";',
     'const target = process.argv[2] ?? "";',
     'if (target === "success") { process.stdout.write("success output\\n"); process.exit(0); }',
-    'else if (target === "fail") { process.stderr.write("failure output\\n"); setTimeout(() => process.exit(23), 50); }',
-    'else if (target === "wait") { process.on("SIGTERM", () => { fs.writeFileSync(process.env.FLOWERSEC_TEST_MARKER, "stopped\\n"); process.exit(0); }); setInterval(() => {}, 100); }',
+    // Start the failure only after the peer has installed its signal handler.
+    'else if (target === "fail") { process.stderr.write("failure output\\n"); setInterval(() => { if (fs.existsSync(`${process.env.FLOWERSEC_TEST_MARKER}.ready`)) process.exit(23); }, 5); setTimeout(() => process.exit(24), 2_000); }',
+    'else if (target === "wait") { process.on("SIGTERM", () => { fs.writeFileSync(process.env.FLOWERSEC_TEST_MARKER, "stopped\\n"); process.exit(0); }); fs.writeFileSync(`${process.env.FLOWERSEC_TEST_MARKER}.ready`, "ready\\n"); setInterval(() => {}, 100); }',
     "else { process.exit(2); }",
     "",
   ].join("\n"));

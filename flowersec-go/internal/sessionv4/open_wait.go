@@ -4,7 +4,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 // NextPending returns each authenticated application OPEN to the original
@@ -118,7 +118,7 @@ func (a *OpenAdmission) WaitOutcome(ctx context.Context, h OpenHandle) error {
 	}
 	s.outcomeWaiting = true
 	s.retirementReferences++
-	wake := a.outcomeWakeLocked(a.find(h.scope))
+	wake := a.outcomeWake[a.find(h.scope)]
 	a.mu.Unlock()
 	defer a.finishOutcomeWait(h)
 	for {
@@ -170,7 +170,7 @@ func (a *OpenAdmission) WaitDecisionOpportunity(ctx context.Context, h OpenHandl
 	}
 	s.outcomeWaiting = true
 	s.retirementReferences++
-	wake := a.outcomeWakeLocked(a.find(h.scope))
+	wake := a.outcomeWake[a.find(h.scope)]
 	a.mu.Unlock()
 	defer a.finishOutcomeWait(h)
 	select {
@@ -224,34 +224,20 @@ func (a *OpenAdmission) openOutcomeLocked(h OpenHandle) error {
 
 func (a *OpenAdmission) notifyPendingLocked() { notifyOpenWait(a.pendingWake) }
 
-// The original fixed channel allowance stays charged. Create a slot's channel
-// under the admission gate on its first real notification or observer, so a
-// capacity hint arriving before WaitDecisionOpportunity remains buffered.
-func (a *OpenAdmission) outcomeWakeLocked(index int) chan struct{} {
-	if a.outcomeWake[index] == nil {
-		a.outcomeWake[index] = make(chan struct{}, 1)
-	}
-	return a.outcomeWake[index]
-}
-
 // One fixed notification per original pending slot prevents separate jobs
 // from consuming each other's capacity-change hint. No waiter queue is built.
 func (a *OpenAdmission) notifyDecisionOpportunityLocked() {
-	pending := false
+	a.notifyPendingLocked()
 	for i := int(a.limits.Terminal); i < len(a.slots); i++ {
 		if a.slots[i].phase == openPending {
-			pending = true
-			notifyOpenWait(a.outcomeWakeLocked(i))
+			notifyOpenWait(a.outcomeWake[i])
 		}
-	}
-	if pending {
-		a.notifyPendingLocked()
 	}
 }
 
 func (a *OpenAdmission) notifyOutcomeLocked(s *openSlot) {
 	if i := a.find(s.scope); i >= 0 {
-		notifyOpenWait(a.outcomeWakeLocked(i))
+		notifyOpenWait(a.outcomeWake[i])
 	}
 }
 
@@ -271,7 +257,7 @@ func (a *OpenAdmission) waitStreamCleanupReady(ctx context.Context, h OpenHandle
 	}
 	s.outcomeWaiting = true
 	s.retirementReferences++
-	wake := a.outcomeWakeLocked(a.find(h.scope))
+	wake := a.outcomeWake[a.find(h.scope)]
 	a.mu.Unlock()
 	defer a.finishOutcomeWait(h)
 	for {

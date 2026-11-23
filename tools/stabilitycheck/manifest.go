@@ -34,13 +34,13 @@ type manifest struct {
 }
 
 type docsManifest struct {
-	APIContract        string   `json:"api_contract"`
-	ChangePolicy       string   `json:"change_policy"`
-	Readme             string   `json:"readme"`
-	ErrorModel         string   `json:"error_model"`
-	TransportV4Binding string   `json:"transport_v4_binding"`
-	CLITokens          []string `json:"cli_tokens"`
-	TransportV4Tokens  []string `json:"transport_v4_tokens"`
+	APIContract  string   `json:"api_contract"`
+	ChangePolicy string   `json:"change_policy"`
+	Readme       string   `json:"readme"`
+	ErrorModel   string   `json:"error_model"`
+	WireContract string   `json:"wire_contract"`
+	CLITokens    []string `json:"cli_tokens"`
+	WireTokens   []string `json:"wire_tokens"`
 }
 
 type goManifest struct {
@@ -85,12 +85,11 @@ type nativeABIManifest struct {
 }
 
 type tsSubpath struct {
-	Specifier         string              `json:"specifier"`
-	PackageJSONExport string              `json:"package_json_export"`
-	DocTokens         []string            `json:"doc_tokens"`
-	RuntimeExports    []string            `json:"runtime_exports"`
-	TypeExports       []string            `json:"type_exports,omitempty"`
-	TypeArguments     map[string][]string `json:"type_arguments,omitempty"`
+	Specifier         string   `json:"specifier"`
+	PackageJSONExport string   `json:"package_json_export"`
+	DocTokens         []string `json:"doc_tokens"`
+	RuntimeExports    []string `json:"runtime_exports"`
+	TypeExports       []string `json:"type_exports,omitempty"`
 }
 
 type swiftManifest struct {
@@ -163,7 +162,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV4Binding} {
+	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.WireContract} {
 		if strings.TrimSpace(p) == "" {
 			return errors.New("docs paths must not be empty")
 		}
@@ -174,10 +173,10 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if err := requireUnique("docs.cli_tokens", m.Docs.CLITokens); err != nil {
 		return err
 	}
-	if len(m.Docs.TransportV4Tokens) == 0 {
-		return errors.New("docs.transport_v4_tokens must not be empty")
+	if len(m.Docs.WireTokens) == 0 {
+		return errors.New("docs.wire_tokens must not be empty")
 	}
-	if err := requireUnique("docs.transport_v4_tokens", m.Docs.TransportV4Tokens); err != nil {
+	if err := requireUnique("docs.wire_tokens", m.Docs.WireTokens); err != nil {
 		return err
 	}
 	if strings.TrimSpace(m.Go.ModulePath) == "" {
@@ -210,7 +209,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if strings.TrimSpace(target.DocPackageToken) == "" {
 			return fmt.Errorf("go target %q doc_package_token must not be empty", target.Package)
 		}
-		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v4" {
+		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v3" {
 			return fmt.Errorf("go target %q has unsupported stability_group %q", target.Package, target.StabilityGroup)
 		}
 		if len(target.Entries) == 0 {
@@ -238,7 +237,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 			if entry.Kind != "interface_method" && entry.Kind != "field" && strings.TrimSpace(entry.Signature) != "" {
 				return fmt.Errorf("go entry %q signature is only valid for interface_method or field", entry.Expr)
 			}
-			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v4" {
+			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v3" {
 				return fmt.Errorf("go entry %q has unsupported stability_group %q", entry.Expr, entry.StabilityGroup)
 			}
 			seenExpr = append(seenExpr, entry.Expr)
@@ -291,16 +290,6 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if err := requireUnique("ts.type_exports("+subpath.Specifier+")", subpath.TypeExports); err != nil {
 			return err
 		}
-		for symbol, arguments := range subpath.TypeArguments {
-			if !slices.Contains(subpath.TypeExports, symbol) || len(arguments) == 0 {
-				return fmt.Errorf("ts.type_arguments(%s) must name a type export with nonempty arguments: %s", subpath.Specifier, symbol)
-			}
-			for _, argument := range arguments {
-				if strings.TrimSpace(argument) == "" {
-					return fmt.Errorf("ts.type_arguments(%s).%s contains an empty argument", subpath.Specifier, symbol)
-				}
-			}
-		}
 		for _, symbol := range subpath.RuntimeExports {
 			if _, removed := removedLegacyTSRuntimeExports[symbol]; removed {
 				return fmt.Errorf("ts subpath %q includes removed legacy TypeScript runtime export %q", subpath.Specifier, symbol)
@@ -326,8 +315,8 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if err := requireUnique("ts.bins.name", binNames); err != nil {
 		return err
 	}
-	if m.NativeABI.Package != "@floegence/flowersec-node-native" || m.NativeABI.ContractVersion != 4 || m.NativeABI.WireVersion != 4 {
-		return errors.New("native_abi must describe the Flowersec contract 4 / wire 4 package")
+	if m.NativeABI.Package != "@floegence/flowersec-node-native" || m.NativeABI.ContractVersion != 5 || m.NativeABI.WireVersion != 5 {
+		return errors.New("native_abi must describe the Flowersec contract 5 / wire 5 package")
 	}
 	if len(m.NativeABI.RuntimeExports) == 0 {
 		return errors.New("native_abi.runtime_exports must not be empty")

@@ -26,7 +26,8 @@ const protectedVariables = new Set([
 ]);
 
 const protectedTargets = [
-  "prepush", "node-minimum-check", "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source", "precommit-ts",
+  "main-compatibility-check", "go-minimum-check",
+  "node-minimum-check", "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source", "precommit-ts",
   "diagnostic", "performance", "security-makefile-check", "security-dependency-check",
   "security-package-check", "release-policy-check", "release-version-check", "release-test",
   "release-check", "check", "final-network-preflight", "final-offline-contracts",
@@ -91,8 +92,9 @@ function validateSource(source) {
 function verifyGraph(source) {
   const runtime = "\tnode scripts/toolchains.mjs --check-runtime go node rust swift";
   if (!/^export GOTOOLCHAIN := local$/m.test(source)) throw new Error("Make must disable automatic Go toolchain switching");
-  exactRecipe(source, "prepush", [runtime, "\t$(MAKE) node-minimum-check", "\t$(MAKE) rust-msrv-check rust-test", "\t$(MAKE) test"]);
   exactRecipe(source, "node-minimum-check", ["\t./scripts/test-node-minimum.sh"]);
+  exactRecipe(source, "go-minimum-check", ["\t./scripts/test-go-minimum.sh"]);
+  exactRecipe(source, "main-compatibility-check", [runtime, "\t$(MAKE) go-minimum-check", "\t$(MAKE) node-minimum-check", "\t$(MAKE) rust-msrv-check rust-test"]);
   exactRecipe(source, "test", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance"]);
   exactRecipe(source, "test-resume", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance"]);
   exactRecipe(source, "coverage-race", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race"]);
@@ -133,7 +135,7 @@ function verifyGraph(source) {
   if (JSON.stringify(check.prerequisites) !== JSON.stringify(["security-makefile-check"])) {
     throw new Error("check must have only security-makefile-check as its prerequisite");
   }
-  for (const token of ["release-policy-check", "final-network-preflight", "final-offline-contracts", "final-package-validation", "final-integration-lanes", "final-post-validation"]) {
+  for (const token of ["go-minimum-check", "node-minimum-check", "release-policy-check", "final-network-preflight", "final-offline-contracts", "final-package-validation", "final-integration-lanes", "final-post-validation"]) {
     if (!check.recipe.some((line) => line.includes(token))) throw new Error(`check is missing ${token}`);
   }
   const order = ["final-network-preflight", "final-offline-contracts", "final-package-validation", "final-integration-lanes", "final-post-validation"]

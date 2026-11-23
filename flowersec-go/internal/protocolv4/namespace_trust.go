@@ -2,13 +2,12 @@ package protocolv4
 
 import (
 	"bytes"
-	"math"
 	"strings"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // NamespaceTrustRoot is an independently installed control trust anchor. No
@@ -64,14 +63,6 @@ type trustConfiguration struct {
 // This local owner does not confer online bootstrap or durable-restore evidence.
 // Those adapters must establish their original startup continuity separately.
 type NamespaceTrustStore struct {
-	sampling                       uint32
-	registry                       *NamespaceRegistry
-	referenceFactory               *NamespaceReferenceFactory
-	replacementOf                  *NamespaceTrustStore
-	continuity                     VerificationContinuity
-	continuityReady                bool
-	retirementDeletion             bool
-	retirementOnly                 bool
 	mu                             sync.Mutex
 	root                           NamespaceTrustRoot
 	limits                         NamespaceTrustLimits
@@ -84,7 +75,6 @@ type NamespaceTrustStore struct {
 	bytes, entries                 uint64
 	busy, closed, closing, retired bool
 	bootstrap, bootstrapStarted    bool
-	restoring                      bool
 }
 
 func NamespaceTrustCharge(l NamespaceTrustLimits) (resourcev4.Vector, error) {
@@ -169,36 +159,9 @@ func NewNamespaceTrustStore(root NamespaceTrustRoot, limits NamespaceTrustLimits
 // installs its monotonic revision; concurrent checks retain the old immutable
 // configuration while verification is running. A signed response is never a
 // source of root trust or a rollback/recovery permission.
-func (t *NamespaceTrustStore) Update(wire []byte) error { return t.update(wire, false) }
-
-func (t *NamespaceTrustStore) updateBootstrap(wire []byte) (uint64, error) {
-	if err := t.updateMode(wire, false, true); err != nil {
-		return 0, err
-	}
+func (t *NamespaceTrustStore) Update(wire []byte) (err error) {
 	t.mu.Lock()
-	issued := t.configurations[t.count-1].issued
-	t.mu.Unlock()
-	sample, err := t.clock.Sample()
-	if err != nil {
-		return 0, err
-	}
-	checkErr := sample.Interval.LowerBound(issued, true)
-	if checkErr == timev4.ErrPending {
-		return issued, nil
-	}
-	if checkErr != nil {
-		return 0, checkErr
-	}
-	return 0, nil
-}
-
-func (t *NamespaceTrustStore) update(wire []byte, historical bool) (err error) {
-	return t.updateMode(wire, historical, false)
-}
-
-func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending bool) (err error) {
-	t.mu.Lock()
-	if t.closed || t.busy || t.restoring != historical {
+	if t.closed || t.busy {
 		t.mu.Unlock()
 		return CBORFailure("revocation_trust_owner")
 	}
@@ -217,22 +180,7 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 		previous := &t.configurations[t.count-1]
 		original, e := previous.signed.Bytes()
 		if e == nil && bytes.Equal(wire, original) {
-			t.mu.Unlock()
-			sample, e := t.sampleCurrent()
-			if e != nil {
-				if !allowPending || e != timev4.ErrPending {
-					return e
-				}
-				sample, e = t.clock.Sample()
-				if e != nil {
-					return e
-				}
-			}
-			t.mu.Lock()
-			err = t.checkCurrentLockedAt(sample)
-			if err == timev4.ErrPending && allowPending {
-				err = nil
-			}
+			err = t.checkCurrentLocked()
 			t.mu.Unlock()
 			return err
 		}
@@ -245,10 +193,9 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 	slot := &t.configurations[t.count]
 	t.mu.Unlock()
 	var notify *LiveNamespace
-	published := false
 	defer func() {
 		t.mu.Lock()
-		if !published {
+		if err != nil {
 			if slot.signed != nil {
 				slot.signed.Release()
 			}
@@ -273,13 +220,6 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 	if err = t.decodeConfiguration(slot); err != nil {
 		return err
 	}
-	var sample timev4.Sample
-	if !historical {
-		sample, err = t.clock.Sample()
-		if err != nil {
-			return err
-		}
-	}
 	// Namespace installation and independent permission extension share the
 	// original namespace -> trust lock order. A new permission cannot race an
 	// already authenticated issuer revocation into a shorter impact history.
@@ -287,23 +227,9 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 	defer func() {
 		t.mu.Unlock()
 		if n != nil {
-			defer n.mu.Unlock()
-			if published {
-				n.continuityChanged()
-				if e := n.persistContinuity(); e != nil {
-					err = e
-				}
-			}
+			n.mu.Unlock()
 		}
 	}()
-	if n != nil {
-		if err = n.continuityAvailable(); err != nil {
-			return err
-		}
-		if n.terminal != nil {
-			return n.terminal
-		}
-	}
 	if t.closed {
 		return CBORFailure("revocation_trust_owner")
 	}
@@ -313,10 +239,8 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 	if err != nil {
 		return err
 	}
-	if !historical {
-		if err = t.checkTimeAt(slot, sample); err != nil && (!allowPending || err != timev4.ErrPending) {
-			return err
-		}
+	if err = t.checkTime(slot); err != nil {
+		return err
 	}
 	if t.count > 0 {
 		previous := &t.configurations[t.count-1]
@@ -348,7 +272,6 @@ func (t *NamespaceTrustStore) updateMode(wire []byte, historical, allowPending b
 	t.bytes += slot.encodedBytes
 	t.entries += slot.entries
 	t.count++
-	published = true
 	notify = t.namespace
 	return nil
 }
@@ -406,12 +329,6 @@ func (t *NamespaceTrustStore) decodeConfiguration(c *trustConfiguration) error {
 		}
 		item.permission = IssuerPermission{Schema: [3]string{"IdentityCertificate", "Artifact", "Grant"}[kind], Issuer: trust16(v, schema, "issuer_key_id"), Key: trust32(v, schema, "issuer_public_key"), SigningStart: valueUint(v, schema, "signing_not_before_ms"), SigningEnd: valueUint(v, schema, "signing_not_after_ms")}
 		item.scope = CredentialScope{Schema: item.permission.Schema, Tenant: trustText(v, schema, "tenant_id"), Authority: trustText(v, schema, "revocation_authority_id"), CapacityDigest: trust32(v, schema, "namespace_capacity_digest"), Generation: valueUint(v, schema, "authority_generation"), Issuer: item.permission.Issuer, Audience: trustText(v, schema, "audience"), Subject: trustText(v, schema, "subject_id"), Profile: trustText(v, schema, "crypto_profile_id"), Role: valueUint(v, schema, "role"), Service: trustText(v, schema, "service"), ParentIssuer: trust16Optional(v, schema, "parent_artifact_issuer_key_id"), ParentAuthority: trustText(v, schema, "parent_authority_id"), ParentCapacityDigest: trust32Optional(v, schema, "parent_capacity_digest"), ParentGeneration: valueUint(v, schema, "parent_generation")}
-		// Grant authorizations encode the allowed endpoint-role mask (1/2/3).
-		// A concrete Grant's namespace scope also includes the relay role. Preserve
-		// that complete closure when comparing the independent issuer permission.
-		if kind == 2 {
-			item.scope.Role |= 4
-		}
 		item.first, item.last, item.lastExpiry = valueUint(v, schema, "first_cohort"), valueUint(v, schema, "last_cohort"), valueUint(v, schema, "max_credential_not_after_ms")
 		item.firstParent, item.lastParent = valueUint(v, schema, "first_parent_cohort"), valueUint(v, schema, "last_parent_cohort")
 	}
@@ -437,9 +354,6 @@ func (t *NamespaceTrustStore) decodeConfiguration(c *trustConfiguration) error {
 		v := activation.Index(i)
 		schema := "ConnectionActivationDelegation"
 		b := ActivationTrustBinding{Tenant: trustText(v, schema, "tenant_id"), AuthorityNamespace: trustText(v, schema, "revocation_authority_id"), CapacityDigest: trust32(v, schema, "namespace_capacity_digest"), Generation: valueUint(v, schema, "authority_generation"), SigningKeyID: trustText(v, schema, "signing_key_id"), SpendAuthority: trustText(v, schema, "authority_id"), ParentIssuer: trust16(v, schema, "artifact_issuer_key_id"), Issuer: trust16(v, schema, "issuer_key_id"), Key: trust32(v, schema, "signer_public_key")}
-		if b.ParentIssuer == b.Issuer {
-			return CBORFailure("activation_delegation_authority")
-		}
 		b.DelegationDigest, err = fullMapDigest("connection_activation_delegation_digest", schema, v.Encoded())
 		if err != nil {
 			return err
@@ -505,63 +419,28 @@ func includesTrustID(ids [][16]byte, id [16]byte) bool {
 	return false
 }
 
-func (t *NamespaceTrustStore) checkTimeAt(c *trustConfiguration, sample timev4.Sample) error {
-	if current, err := t.clock.RefreshSample(sample); err != nil {
+func (t *NamespaceTrustStore) checkTime(c *trustConfiguration) error {
+	sample, err := t.clock.Sample()
+	if err != nil {
 		return err
-	} else {
-		sample = current
 	}
-	if !sample.ValidBefore(c.end) {
+	if !sample.Interval.ValidBefore(c.end) {
 		return timev4.ErrExpired
 	}
 	return sample.Interval.LowerBound(c.issued, true)
 }
-
-func (t *NamespaceTrustStore) checkCurrentOwnerLocked() error {
-	if t.registry != nil && t.registry.fenced.Load() {
-		return CBORFailure("revocation_namespace_owner")
-	}
+func (t *NamespaceTrustStore) checkCurrentLocked() error {
 	if t.closed || t.count == 0 {
 		return CBORFailure("revocation_trust_owner")
 	}
-	return t.reservation.CheckSameEnvironment(t.dependencies)
-}
-
-func (t *NamespaceTrustStore) checkCurrentLockedAt(sample timev4.Sample) error {
-	if err := t.checkCurrentOwnerLocked(); err != nil {
+	if err := t.reservation.Check(); err != nil {
 		return err
 	}
-	if current, err := t.clock.RefreshSample(sample); err != nil {
+	if err := t.dependencies.Check(); err != nil {
 		return err
-	} else {
-		sample = current
 	}
-	current := &t.configurations[t.count-1]
-	if !sample.ValidBefore(current.end) {
-		return timev4.ErrExpired
-	}
-	return sample.Interval.LowerBound(current.issued, true)
+	return t.checkTime(&t.configurations[t.count-1])
 }
-
-// Public trust reads retain the actual store across an external clock call.
-// Closing seals immediately; destruction waits for all such calls to exit.
-func (t *NamespaceTrustStore) sampleCurrent() (timev4.Sample, error) {
-	t.mu.Lock()
-	if err := t.checkCurrentOwnerLocked(); err != nil {
-		t.mu.Unlock()
-		return timev4.Sample{}, err
-	}
-	if t.sampling == math.MaxUint32 {
-		t.mu.Unlock()
-		return timev4.Sample{}, CBORFailure("configuration_capacity")
-	}
-	t.sampling++
-	clock := t.clock
-	t.mu.Unlock()
-	defer func() { t.mu.Lock(); t.sampling--; t.mu.Unlock() }()
-	return clock.Sample()
-}
-
 func (t *NamespaceTrustStore) matchConfiguration(c *trustConfiguration) error {
 	if err := checkTrustIssuerKeys(c, c); err != nil {
 		return err
@@ -649,41 +528,14 @@ func (t *NamespaceTrustStore) checkHistory(next *trustConfiguration) error {
 }
 
 func (t *NamespaceTrustStore) Head(binding NamespaceHeadTrust) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
-	return t.headAt(binding, sample)
-}
-
-func (t *NamespaceTrustStore) headAt(binding NamespaceHeadTrust, sample timev4.Sample) error {
-	_, err := t.headAtMode(binding, sample, false)
-	return err
-}
-
-func (t *NamespaceTrustStore) headAtPending(binding NamespaceHeadTrust, sample timev4.Sample) (uint64, error) {
-	return t.headAtMode(binding, sample, true)
-}
-
-func (t *NamespaceTrustStore) headAtMode(binding NamespaceHeadTrust, sample timev4.Sample, allowPending bool) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	pending := uint64(0)
-	if err := t.checkCurrentLockedAt(sample); err != nil {
-		if !allowPending || err != timev4.ErrPending {
-			return 0, err
-		}
-		pending = t.configurations[t.count-1].issued
+	if err := t.checkCurrentLocked(); err != nil {
+		return err
 	}
-	return t.headCurrentLocked(binding, pending)
-}
-
-// These content checks borrow the caller's current trust gate. They perform
-// no callbacks and retain no authorization beyond that synchronous gate.
-func (t *NamespaceTrustStore) headCurrentLocked(binding NamespaceHeadTrust, pending uint64) (uint64, error) {
 	current := &t.configurations[t.count-1]
 	if binding.Tenant != t.root.Tenant || binding.Authority != t.root.Authority || binding.Capacity != t.rules.capacityDigest || binding.Generation != current.generation || includesTrustID(current.rejectedHeads, binding.Signer) {
-		return 0, CBORFailure("revocation_trust_binding")
+		return CBORFailure("revocation_trust_binding")
 	}
 	allowed := false
 	for _, head := range current.heads {
@@ -693,7 +545,7 @@ func (t *NamespaceTrustStore) headCurrentLocked(binding NamespaceHeadTrust, pend
 		}
 	}
 	if !allowed {
-		return 0, CBORFailure("revocation_trust_binding")
+		return CBORFailure("revocation_trust_binding")
 	}
 	for i := 0; i < t.count; i++ {
 		c := &t.configurations[i]
@@ -702,30 +554,18 @@ func (t *NamespaceTrustStore) headCurrentLocked(binding NamespaceHeadTrust, pend
 		}
 		for _, head := range c.heads {
 			if head.signer == binding.Signer && head.digest == binding.Delegation {
-				return pending, nil
+				return nil
 			}
 		}
 	}
-	return 0, CBORFailure("revocation_trust_binding")
+	return CBORFailure("revocation_trust_binding")
 }
 func (t *NamespaceTrustStore) Issuer(permission IssuerPermission, scope CredentialScope) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
-	return t.issuerAt(permission, scope, sample)
-}
-
-func (t *NamespaceTrustStore) issuerAt(permission IssuerPermission, scope CredentialScope, sample timev4.Sample) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return err
 	}
-	return t.issuerCurrentLocked(permission, scope)
-}
-
-func (t *NamespaceTrustStore) issuerCurrentLocked(permission IssuerPermission, scope CredentialScope) error {
 	current := &t.configurations[t.count-1]
 	if includesTrustID(current.retired, scope.Issuer) {
 		return CBORFailure("revocation_issuer_rejected")
@@ -738,23 +578,11 @@ func (t *NamespaceTrustStore) issuerCurrentLocked(permission IssuerPermission, s
 	return CBORFailure("revocation_issuer_permission")
 }
 func (t *NamespaceTrustStore) Policy(policy *CredentialPolicy) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
-	return t.policyAt(policy, sample)
-}
-
-func (t *NamespaceTrustStore) policyAt(policy *CredentialPolicy, sample timev4.Sample) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return err
 	}
-	return t.policyCurrentLocked(policy)
-}
-
-func (t *NamespaceTrustStore) policyCurrentLocked(policy *CredentialPolicy) error {
 	if policy == nil {
 		return CBORFailure("credential_policy_owner")
 	}
@@ -766,23 +594,11 @@ func (t *NamespaceTrustStore) policyCurrentLocked(policy *CredentialPolicy) erro
 	return CBORFailure("credential_policy_owner")
 }
 func (t *NamespaceTrustStore) Activation(binding ActivationTrustBinding) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
-	return t.activationAt(binding, sample)
-}
-
-func (t *NamespaceTrustStore) activationAt(binding ActivationTrustBinding, sample timev4.Sample) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return err
 	}
-	return t.activationCurrentLocked(binding)
-}
-
-func (t *NamespaceTrustStore) activationCurrentLocked(binding ActivationTrustBinding) error {
 	c := &t.configurations[t.count-1]
 	if includesTrustID(c.retired, binding.Issuer) || includesTrustID(c.retired, binding.ParentIssuer) {
 		return CBORFailure("revocation_issuer_rejected")
@@ -800,13 +616,9 @@ func (t *NamespaceTrustStore) RetiredIssuer(id [16]byte) bool {
 	return t.count > 0 && includesTrustID(t.configurations[t.count-1].retired, id)
 }
 func (t *NamespaceTrustStore) Rules() (*NamespaceRules, error) {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return nil, err
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return nil, err
 	}
 	return t.rules, nil
@@ -815,10 +627,6 @@ func (t *NamespaceTrustStore) Rules() (*NamespaceRules, error) {
 // AttachNamespace wires exactly one shared original namespace to trust change
 // notifications. The caller owns both dependencies through namespace cleanup.
 func (t *NamespaceTrustStore) AttachNamespace(n *LiveNamespace) error {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return err
-	}
 	if n == nil {
 		return CBORFailure("revocation_namespace_owner")
 	}
@@ -826,10 +634,10 @@ func (t *NamespaceTrustStore) AttachNamespace(n *LiveNamespace) error {
 	defer n.mu.Unlock()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return err
 	}
-	if t.registry != nil || t.bootstrap || t.namespace != nil || n.rules != t.rules || n.trust != t || n.destroyed {
+	if t.bootstrap || t.namespace != nil || n.rules != t.rules || n.trust != t || n.destroyed {
 		return CBORFailure("revocation_namespace_owner")
 	}
 	if err := t.reservation.CheckSameEnvironment(n.reservation); err != nil {
@@ -869,11 +677,7 @@ func (t *NamespaceTrustStore) DestroyEnvironment() error {
 		t.mu.Unlock()
 		return nil
 	}
-	// An empty registered owner still occupies a recoverable registry slot.
-	// Keep it alive until the shared Environment closes, unless an independent
-	// retirement path explicitly authorized deletion. Unregistered empty anchors
-	// remain disposable during ordinary fixture/application cleanup.
-	if !t.closed || t.busy || t.closing || t.sampling != 0 || t.bootstrap || !t.retirementDeletion && !t.reservation.EnvironmentClosed() && (t.registry != nil || t.count != 0) {
+	if !t.closed || t.busy || t.closing || t.bootstrap || t.count != 0 && !t.reservation.EnvironmentClosed() {
 		t.mu.Unlock()
 		return CBORFailure("revocation_trust_owner")
 	}
@@ -939,13 +743,9 @@ func checkTrustIssuerKeys(a, b *trustConfiguration) error {
 // caller must still verify the actual canonical credential and resolve its
 // complete immutable permission/policy before entering a live namespace gate.
 func (t *NamespaceTrustStore) CredentialKey(schema string, issuer [16]byte) ([32]byte, error) {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return [32]byte{}, err
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return [32]byte{}, err
 	}
 	c := &t.configurations[t.count-1]
@@ -965,16 +765,12 @@ func (t *NamespaceTrustStore) CredentialKey(schema string, issuer [16]byte) ([32
 // authorization token: the live State/Head/time gate remains mandatory at each
 // original consumption and delivery boundary.
 func (t *NamespaceTrustStore) ResolveCredential(credential *Credential) (CredentialValidation, error) {
-	sample, err := t.sampleCurrent()
-	if err != nil {
-		return CredentialValidation{}, err
-	}
 	if credential == nil {
 		return CredentialValidation{}, CBORFailure("credential_owner")
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLockedAt(sample); err != nil {
+	if err := t.checkCurrentLocked(); err != nil {
 		return CredentialValidation{}, err
 	}
 	if t.namespace == nil {

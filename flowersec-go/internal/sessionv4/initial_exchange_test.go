@@ -6,19 +6,44 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
+
+func initialFixture(t *testing.T, id string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile("../../../testdata/transport_v4/corpus.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpus struct{ Vectors []struct{ ID, Hex string } }
+	if err = json.Unmarshal(raw, &corpus); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range corpus.Vectors {
+		if v.ID == id {
+			b, err := hex.DecodeString(v.Hex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}
+	}
+	t.Fatal("missing fixture", id)
+	return nil
+}
 
 func initialTestConfig(t *testing.T, role protocolv4.Direction, profile string) InitialConfig {
 	t.Helper()
@@ -291,12 +316,7 @@ func initialTestPairPrepared(t *testing.T, profile, framing string, flights int,
 		peer := configs[1-role]
 		configs[role].PeerCertificateDigest, configs[role].PeerDHPublic, configs[role].PeerEdPublic = peer.LocalCertificateDigest, peer.LocalDHPublic, peer.LocalEdPublic
 	}
-	// The authenticated configs and actual initial flights share the same
-	// captured artifacts, including fixtures for a fresh transport context.
-	if !bytes.Equal(configs[0].FSB, configs[1].FSB) || !bytes.Equal(configs[0].FSA, configs[1].FSA) {
-		t.Fatal("peer initial artifacts differ")
-	}
-	wires := [][]byte{initialHelloProfile(t, initialFixture(t, "client_hello_fields"), "ClientHello", profile), initialHelloProfile(t, initialFixture(t, "server_hello_fields"), "ServerHello", profile), configs[0].FSB, configs[0].FSA}
+	wires := [][]byte{initialHelloProfile(t, initialFixture(t, "client_hello_fields"), "ClientHello", profile), initialHelloProfile(t, initialFixture(t, "server_hello_fields"), "ServerHello", profile), fsb, fsa}
 	for phase, wire := range wires[:flights] {
 		frame, sender := initialFlight(uint8(phase))
 		result := make(chan error, 1)

@@ -9,19 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type initialCoreFixture struct {
-	root            *resourcev4.Root
-	plan            *SessionCorePlan
-	environment     resourcev4.Reference
-	next            byte
-	scope           SessionResourceScope
-	limit           resourcev4.Vector
-	deliveryCleanup func()
+	root        *resourcev4.Root
+	plan        *SessionCorePlan
+	environment resourcev4.Reference
+	next        byte
+	scope       SessionResourceScope
+	limit       resourcev4.Vector
 }
 
 func (f *initialCoreFixture) reserve(t *testing.T, charge resourcev4.Vector) resourcev4.Reference {
@@ -44,17 +43,10 @@ func initialCorePrepareCarrier(t *testing.T, fixtures *[2]initialCoreFixture, me
 }
 
 func initialCorePrepareConfig(t *testing.T, fixtures *[2]initialCoreFixture, messages bool, configure func(*SessionCoreConfig)) func(*cryptov4.HandshakeConfig, *InitialConfig) {
-	return initialCorePrepareWithResources(t, fixtures, messages, configure, nil)
-}
-
-func initialCorePrepareWithResources(t *testing.T, fixtures *[2]initialCoreFixture, messages bool, configure func(*SessionCoreConfig), resources func(*resourcev4.Config)) func(*cryptov4.HandshakeConfig, *InitialConfig) {
 	return func(h *cryptov4.HandshakeConfig, initial *InitialConfig) {
 		f := &fixtures[h.Role]
 		cfg := resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 8, ReservationSlots: 256, ReferenceSlots: 512,
-			Limit: resourcev4.Vector{resourcev4.SDKBytes: 64 << 20, resourcev4.ProviderBytes: 64 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 256, resourcev4.WorkSlots: 256, resourcev4.Timers: 64, resourcev4.Sessions: 2}}
-		if resources != nil {
-			resources(&cfg)
-		}
+			Limit: resourcev4.Vector{resourcev4.SDKBytes: 64 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 256, resourcev4.WorkSlots: 256, resourcev4.Timers: 64, resourcev4.Sessions: 2}}
 		backing, err := resourcev4.BackingBytes(cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -313,36 +305,5 @@ func TestSessionSharedCarrierKeepsWholeFramesAcrossShortWrites(t *testing.T) {
 	}
 	if n, err := carrier.Write([]byte("late")); n != 0 || err != io.ErrClosedPipe {
 		t.Fatal(n, err)
-	}
-}
-
-// installCoreDeliveryAuthority supplies independently signed revocation owners
-// for result tests layered on the isolated native/crypto transport fixture.
-func installCoreDeliveryAuthority(t *testing.T, fixture *initialCoreFixture, handshake *cryptov4.HandshakeConfig, initial *InitialConfig) {
-	t.Helper()
-	trust := newSessionAdmissionTrustProfile(t, fixture.root, fixture.environment, resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{83}, Backing: [16]byte{1}, Kind: 83}, "live_authority", handshake.Session.Contract.Limits().ApplicationProfile)
-	authorization, err := protocolv4.NewEndpointAuthorization(trust.subscriptions[handshake.Role], trust.authority)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { authorization.Close(nil) })
-	handshake.Authorization = authorization
-	initial.Authorization = authorization
-	fixture.deliveryCleanup = func() {
-		authorization.Close(nil)
-		for _, subscriptions := range trust.subscriptions {
-			subscriptions.Close()
-		}
-		trust.namespace.Close(nil)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := trust.namespace.WaitCleanup(ctx); err != nil {
-			t.Error(err)
-			return
-		}
-		fixture.root.Close()
-		if err := trust.namespace.DestroyEnvironment(); err != nil {
-			t.Error(err)
-		}
 	}
 }

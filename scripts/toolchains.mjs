@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 export const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const fields = {
-  go: ["version"], rust: ["version", "msrv", "nightly"],
+  go: ["version", "minimum"], rust: ["version", "msrv", "nightly"],
   node: ["version", "minimum"], swift: ["version", "xcode", "toolsVersion"],
   typescript: ["version", "apiVersion", "compatibilityVersion"],
 };
@@ -28,11 +28,13 @@ export function readToolchains(root = repositoryRoot) {
     }
     Object.freeze(config[language]);
   }
-  const nodeVersion = config.node.version.split(".").map(Number);
-  const nodeMinimum = config.node.minimum.split(".").map(Number);
-  const firstDifference = nodeVersion.findIndex((part, index) => part !== nodeMinimum[index]);
-  if (firstDifference !== -1 && nodeVersion[firstDifference] < nodeMinimum[firstDifference]) {
-    throw new Error("toolchains.json node.version must satisfy node.minimum");
+  for (const language of ["go", "node"]) {
+    const version = config[language].version.split(".").map(Number);
+    const minimum = config[language].minimum.split(".").map(Number);
+    const firstDifference = version.findIndex((part, index) => part !== minimum[index]);
+    if (firstDifference !== -1 && version[firstDifference] < minimum[firstDifference]) {
+      throw new Error(`toolchains.json ${language}.version must satisfy ${language}.minimum`);
+    }
   }
   return Object.freeze(config);
 }
@@ -50,7 +52,8 @@ export function checkRuntime(languages, { config = readToolchains(), env = proce
     let install;
     switch (language) {
       case "go":
-        expected = config.go.version;
+      case "go-minimum":
+        expected = language === "go" ? config.go.version : config.go.minimum;
         actual = /^go version go(\S+)/.exec(output("go", ["version"], { ...env, GOTOOLCHAIN: "local" }, run))?.[1];
         install = `install Go ${expected} and put its bin directory first in PATH`;
         if (env.GOTOOLCHAIN && env.GOTOOLCHAIN !== "local" && env.GOTOOLCHAIN !== `go${expected}`) {

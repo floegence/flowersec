@@ -1,8 +1,9 @@
-import type { OperationOptions } from "../public/contract.js";
-import type { V4ConnectionMaterialSource, V4Session, V4TransportEnvironment } from "../v4/public.js";
-import type { V4ConnectionRequirements } from "../generated/transportV4APIResults.js";
+import { connectV3, type SessionOptionsV3 } from "../browser/connectSessionV3.js";
+import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
+import type { Session } from "../public/contract.js";
 
-import { createProxySurface, type ProxySurface, type ProxySurfaceOptions } from "./surface.js";
+import { createProxyRuntime } from "./runtime.js";
+import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
 import type { ProxyRuntime, ProxyRuntimeOptions } from "./types.js";
 import {
   registerProxyControllerWindow,
@@ -11,10 +12,8 @@ import {
 } from "./windowBridge.js";
 
 export type ProxyBrowserConnectOptions = Readonly<{
-  connect?: OperationOptions;
-  requirements?: Partial<V4ConnectionRequirements>;
-  runtime?: Omit<ProxyRuntimeOptions, "session" | "sessionBinding" | "credentialContext" | "registerServiceWorkerBridge">;
-  surface?: Omit<ProxySurfaceOptions, "binding" | "runtime" | "serviceWorker">;
+  connect?: SessionOptionsV3;
+  runtime?: Omit<ProxyRuntimeOptions, "session">;
   serviceWorker?: Readonly<{
     scriptUrl: string;
     scope?: string;
@@ -25,36 +24,30 @@ export type ProxyBrowserConnectOptions = Readonly<{
 }>;
 
 export type ProxyBrowserHandle = Readonly<{
-  session: V4Session;
+  session: Session;
   runtime: ProxyRuntime;
-  surface: ProxySurface;
   dispose(): Promise<void>;
 }>;
 
 export async function connectProxyBrowser(
-  environment: V4TransportEnvironment,
-  source: V4ConnectionMaterialSource,
+  lease: ArtifactLeaseV3,
   options: ProxyBrowserConnectOptions = {},
 ): Promise<ProxyBrowserHandle> {
-  const session = await environment.connect(source, options.requirements, options.connect);
-  let surface: ProxySurface | undefined;
+  const session = await connectV3(lease, options.connect);
+  let runtime: ProxyRuntime | undefined;
   try {
-    const contentOrigin = options.surface?.contentOrigin ?? options.runtime?.externalOrigin ?? globalThis.location?.origin;
-    if (contentOrigin === undefined) throw new TypeError("proxy browser requires an explicit Surface origin");
-    surface = await createProxySurface({ mode: "trusted", hostOrigin: contentOrigin, contentOrigin,
-      requestPolicy: { methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        paths: options.runtime?.pathPolicy ?? {}, allowWebSocket: true }, ...options.surface,
-      binding: { mode: "fixed", session }, ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
-      ...(options.serviceWorker === undefined ? {} : { serviceWorker: options.serviceWorker }), });
+    if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
+    runtime = createProxyRuntime({ session, ...options.runtime });
     return Object.freeze({
       session,
-      runtime: surface.runtime, surface,
+      runtime,
       dispose: async () => {
-        try { await surface!.dispose(); } finally { await session.close(); }
+        runtime!.dispose();
+        await session.close();
       },
     });
   } catch (error) {
-    await surface?.dispose().catch(() => undefined);
+    runtime?.dispose();
     await session.close().catch(() => undefined);
     throw error;
   }
@@ -68,17 +61,16 @@ export type ProxyControllerBrowserHandle = ProxyBrowserHandle & Readonly<{
 }>;
 
 export async function connectProxyControllerBrowser(
-  environment: V4TransportEnvironment,
-  source: V4ConnectionMaterialSource,
+  lease: ArtifactLeaseV3,
   options: ProxyControllerBrowserConnectOptions,
 ): Promise<ProxyControllerBrowserHandle> {
-  const base = await connectProxyBrowser(environment, source, options);
+  const base = await connectProxyBrowser(lease, options);
   let controller: ProxyControllerWindowHandle | undefined;
   try {
     controller = registerProxyControllerWindow({ runtime: base.runtime, ...options.controller });
     return Object.freeze({
       session: base.session,
-      runtime: base.runtime, surface: base.surface,
+      runtime: base.runtime,
       controller,
       dispose: async () => {
         controller!.dispose();

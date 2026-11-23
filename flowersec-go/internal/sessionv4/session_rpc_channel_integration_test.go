@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 func rpcChannelRuntimeFixture(t *testing.T) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
@@ -20,11 +20,7 @@ func rpcChannelRuntimeFixture(t *testing.T) (context.Context, [2]*RPCServices, [
 func rpcChannelRuntimeFixtureConfigured(t *testing.T, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig)) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
 	return rpcChannelRuntimeProfile(t, "services", configure)
 }
-func rpcChannelRuntimeProfile(t *testing.T, application string, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), clocks ...*timev4.Clock) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
-	return rpcChannelRuntimeProfilePrepared(t, application, configure, nil, clocks...)
-}
-
-func rpcChannelRuntimeProfilePrepared(t *testing.T, application string, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), beforeRun func(context.Context, [2]*RPCServices, [2]*bootstrapEndpoint), clocks ...*timev4.Clock) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
+func rpcChannelRuntimeProfile(t *testing.T, application string, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig)) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -122,7 +118,7 @@ func rpcChannelRuntimeProfilePrepared(t *testing.T, application string, configur
 			t.Fatal("bootstrap allocated omitted resources", before, after)
 		}
 		return bootstrap
-	}, clocks...)
+	})
 
 	// This test exercises the real bootstrap/channel pipeline. The full public
 	// admission/authority factory is not established by this component test.
@@ -156,16 +152,8 @@ func rpcChannelRuntimeProfilePrepared(t *testing.T, application string, configur
 					t.Error(err)
 				}
 			}
-			// Runtime and admission cleanup may observe the same original channel.
-			// Both must join its one physical retirement without a stale tail error.
-			channelCleanup := make(chan error, 2)
-			for range 2 {
-				go func() { channelCleanup <- services[role].waitChannel(cleanup) }()
-			}
-			for range 2 {
-				if err := <-channelCleanup; err != nil {
-					t.Error(err)
-				}
+			if err := services[role].waitChannel(cleanup); err != nil {
+				t.Error(err)
 			}
 			if err := e.admission.sendService.WaitCleanup(cleanup); err != nil {
 				t.Error(err)
@@ -195,9 +183,6 @@ func rpcChannelRuntimeProfilePrepared(t *testing.T, application string, configur
 	})
 	client.complete(t, server)
 	server.complete(t, client)
-	if beforeRun != nil {
-		beforeRun(ctx, services, endpoints)
-	}
 	for role, e := range endpoints {
 		done[role][0] = make(chan error, 1)
 		go func() {
@@ -303,7 +288,7 @@ func assertRPCChannelRefusal(t *testing.T, ctx context.Context, r *RPCServices, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := r.network.NewCompletion(ticket, 1024, f.reserveOwner(t, 1, charge, true, r.accounts[:r.accountCount]...), 4096)
+	completion, err := r.network.NewCompletion(ticket, 1024, f.reserveOwner(t, 1, charge, true), 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +297,7 @@ func assertRPCChannelRefusal(t *testing.T, ctx context.Context, r *RPCServices, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = channel.Publisher().QueueRequest(ticket, encoded[:length], payload, f.reserve(t, 1, charge, r.accounts[:r.accountCount]...), 4096); err != nil {
+	if _, err = channel.Publisher().QueueRequest(ticket, encoded[:length], payload, f.reserve(t, 1, charge), 4096); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -321,9 +306,6 @@ func assertRPCChannelRefusal(t *testing.T, ctx context.Context, r *RPCServices, 
 		t.Fatal("fixed refusal blocked behind input credit", ctx.Err())
 	}
 	if progress := completion.Progress(); !progress.Complete || progress.SDKErrorCode == 0 || progress.Reason != "" {
-		channel.mu.Lock()
-		failure := channel.failure
-		channel.mu.Unlock()
-		t.Fatal(progress, "channel cause", failure)
+		t.Fatal(progress)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 func TestScopeKeyWorkCannotBorrowMaintenanceOrUnboundedBacking(t *testing.T) {

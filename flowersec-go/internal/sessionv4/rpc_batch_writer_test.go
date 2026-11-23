@@ -6,10 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // v4.go_rpc_channel.batch
@@ -42,27 +41,13 @@ func TestRPCBatchWriterUsesOriginalQueueAndActualPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publication := &rpcv4.Publication{}
-	tail, err := writer.TryAcceptResponse(context.Background(), [][]byte{first[:n], second[:m]}, publication)
+	tail, err := writer.TryAccept(context.Background(), [][]byte{first[:n], second[:m]})
 	if err != nil || tail != uint64(n+m) || owner.AcceptedBytes() != tail {
 		t.Fatal(tail, err)
 	}
 	if accepted, _, pending, _, _, _, _ := q.Snapshot(); accepted != tail || pending != n+m {
 		t.Fatal("batch not in original ring", accepted, pending)
 	}
-	// The pump publishes its frontier before releasing the physical queue
-	// borrow. Published must wait for that final release, since Retire rejects
-	// a live pump even when all requested bytes have been written.
-	q.mu.Lock()
-	publishedBefore := q.published
-	q.published, q.pumping = tail, true
-	q.mu.Unlock()
-	if published, err := writer.Published(tail); published || err != nil {
-		t.Fatal("publication outran its physical queue handoff", published, err)
-	}
-	q.mu.Lock()
-	q.published, q.pumping = publishedBefore, false
-	q.mu.Unlock()
 	if _, err := owner.Write(context.Background(), []byte{1}); !errors.Is(err, ErrStreamOwned) {
 		t.Fatal("competing writer", err)
 	}
@@ -81,39 +66,13 @@ func TestRPCBatchWriterUsesOriginalQueueAndActualPublication(t *testing.T) {
 	if _, err := writer.Published(tail - 1); !errors.Is(err, ErrStreamOwned) {
 		t.Fatal("arbitrary frontier", err)
 	}
-	if publication.Progress().Terminal {
-		t.Fatal("ring admission inferred provider handoff")
-	}
 	writer.Close()
 	if err := writer.Retire(); !errors.Is(err, cryptov4.ErrCapacity) {
 		t.Fatal("refunded live provider", err)
 	}
+	close(provider.release)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Advance the actual four-byte records to the response's final record.
-	// Earlier provider handoffs must not settle the complete response.
-	nextServiceFrame(t, provider)
-	for sent := q.chunk; sent < n+m; sent += q.chunk {
-		select {
-		case provider.release <- struct{}{}:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
-		nextServiceFrame(t, provider)
-		if publication.Progress().Terminal {
-			t.Fatal("partial provider handoff settled response")
-		}
-	}
-	// Response facts follow the actual provider handoff independently of the
-	// queue return tail. The ring and pump remain owned behind this gate.
-	q.mu.Lock()
-	close(provider.release)
-	progress, waitErr := publication.Wait(ctx)
-	tailRetained := q.pumping && q.published < tail && q.size != 0 && !q.cleaned
-	q.mu.Unlock()
-	if waitErr != nil || !progress.Flushed || !tailRetained {
-		t.Fatal("response handoff waited for or refunded queue return tail", progress, waitErr, tailRetained)
-	}
 	for {
 		published, err := writer.Published(tail)
 		if err != nil {
@@ -130,9 +89,6 @@ func TestRPCBatchWriterUsesOriginalQueueAndActualPublication(t *testing.T) {
 	}
 	if err := writer.Retire(); err != nil {
 		t.Fatal(err)
-	}
-	if !publication.Progress().Flushed {
-		t.Fatal("provider handoff did not settle original response")
 	}
 	if err := owner.Release(); err != nil {
 		t.Fatal(err)

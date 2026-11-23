@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
 )
 
 type carrierSoakContract struct {
@@ -191,7 +191,7 @@ func holdCarrierSoakSession(ctx context.Context, pair *transporttest.ProductDire
 	for {
 		select {
 		case <-ticker.C:
-			if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
+			if _, err := pair.Client.ProbeLiveness(ctx); err != nil {
 				return fmt.Errorf("carrier soak liveness: %w", err)
 			}
 		case <-timer.C:

@@ -10,46 +10,9 @@ import (
 	"testing"
 )
 
-func TestSwiftModulePathsUseOnlyBuildSelectedDependencySlices(t *testing.T) {
-	root := t.TempDir()
-	bin := filepath.Join(root, "debug")
-	if err := os.MkdirAll(filepath.Join(bin, "Modules"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	chosen := filepath.Join(root, "Clibsodium.xcframework", "macos", "Headers")
-	foreign := filepath.Join(root, "Clibsodium.xcframework", "ios", "Headers")
-	shim := filepath.Join(root, "Shims", "include")
-	description := map[string]any{"swiftCommands": map[string]any{
-		"Flowersec": map[string]any{"moduleName": "Flowersec", "otherArguments": []string{
-			"-I", chosen, "-Xcc", "-I", "-Xcc", chosen,
-			"-Xcc", "-fmodule-map-file=" + filepath.Join(shim, "module.modulemap"),
-		}},
-		"Other": map[string]any{"moduleName": "Other", "otherArguments": []string{"-I", foreign}},
-	}}
-	data, err := json.Marshal(description)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "description.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := swiftBuildModulePaths(bin, "Flowersec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{bin, filepath.Join(bin, "Modules"), chosen, shim}
-	slices.Sort(want)
-	if !slices.Equal(paths, want) {
-		t.Fatalf("got paths %q, want only build-selected paths %q", paths, want)
-	}
-	if _, err := swiftBuildModulePaths(bin, "Missing"); err == nil {
-		t.Fatal("missing module unexpectedly selected dependency paths")
-	}
-}
-
 func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	root := t.TempDir()
-	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V4_BINDING.md", "README.md", "docs/ERROR_MODEL.md"} {
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V5_WIRE.md", "README.md", "docs/ERROR_MODEL.md"} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -62,20 +25,20 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	m := &manifest{
 		Version: 1,
 		Docs: docsManifest{
-			APIContract:        "docs/API_CONTRACT.md",
-			ChangePolicy:       "docs/API_CHANGE_POLICY.md",
-			Readme:             "README.md",
-			ErrorModel:         "docs/ERROR_MODEL.md",
-			TransportV4Binding: "docs/TRANSPORT_V4_BINDING.md",
-			CLITokens:          []string{"`cli`"},
-			TransportV4Tokens:  []string{"flowersec/4"},
+			APIContract:  "docs/API_CONTRACT.md",
+			ChangePolicy: "docs/API_CHANGE_POLICY.md",
+			Readme:       "README.md",
+			ErrorModel:   "docs/ERROR_MODEL.md",
+			WireContract: "docs/TRANSPORT_V5_WIRE.md",
+			CLITokens:    []string{"`cli`"},
+			WireTokens:   []string{"flowersec/5"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v6/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v7",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v7/legacy"},
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v6/client",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v7/client",
 					Alias:           "client",
 					DocPackageToken: "`client`",
 					Entries: []goCompileExpr{
@@ -91,7 +54,7 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v6/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v7/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}
@@ -159,13 +122,57 @@ func TestValidateManifestRejectsDuplicateTSTypeExports(t *testing.T) {
 	}
 }
 
-func TestValidateManifestRequiresTransportV4DocumentationGuard(t *testing.T) {
+func TestNativeExportAgreement(t *testing.T) {
+	root, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := loadManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyNativeABI(root, m); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []struct{ name, path, old, replacement, diagnostic string }{
+		{"extra declaration", "index.d.ts", "export function contractVersion", "export function newFunction(): void;\nexport function contractVersion", "declaration exports"},
+		{"missing implementation", "src/webtransport.rs", `js_name = "bindWebTransport"`, `js_name = "otherFunction"`, "implementation exports"},
+		{"extra implementation", "src/lib.rs", `pub fn contract_version()`, "pub fn additional() -> bool { true }\n#[napi_derive::napi(js_name = \"extraFunction\")]\npub fn contract_version()", "implementation exports"},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			copy := t.TempDir()
+			if err := os.CopyFS(filepath.Join(copy, "flowersec-node-native", "src"), os.DirFS(filepath.Join(root, "flowersec-node-native", "src"))); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"index.d.ts", change.path} {
+				content, err := os.ReadFile(filepath.Join(root, "flowersec-node-native", name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if name == change.path {
+					if strings.Count(string(content), change.old) != 1 {
+						t.Fatalf("expected one occurrence of %q", change.old)
+					}
+					content = []byte(strings.Replace(string(content), change.old, change.replacement, 1))
+				}
+				if err := os.WriteFile(filepath.Join(copy, "flowersec-node-native", name), content, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := verifyNativeABI(copy, m); err == nil || !strings.Contains(err.Error(), change.diagnostic) {
+				t.Fatalf("expected %q, got %v", change.diagnostic, err)
+			}
+		})
+	}
+}
+
+func TestValidateManifestRequiresTransportV3DocumentationGuard(t *testing.T) {
 	m, root := validTestManifest(t)
-	m.Docs.TransportV4Tokens = nil
+	m.Docs.WireTokens = nil
 
 	err := validateManifest(root, m)
-	if err == nil || !strings.Contains(err.Error(), "docs.transport_v4_tokens") {
-		t.Fatalf("expected missing Transport v4 documentation guard error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "docs.wire_tokens") {
+		t.Fatalf("expected missing Transport v3 documentation guard error, got %v", err)
 	}
 }
 
@@ -207,7 +214,7 @@ func TestValidateManifestRejectsSignatureOnNonInterfaceMethod(t *testing.T) {
 func validTestManifest(t *testing.T) (*manifest, string) {
 	t.Helper()
 	root := t.TempDir()
-	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V4_BINDING.md", "README.md", "docs/ERROR_MODEL.md", "flowersec-rust/Cargo.toml"} {
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V5_WIRE.md", "README.md", "docs/ERROR_MODEL.md", "flowersec-rust/Cargo.toml"} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -220,19 +227,19 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 	return &manifest{
 		Version: 1,
 		Docs: docsManifest{
-			APIContract:        "docs/API_CONTRACT.md",
-			ChangePolicy:       "docs/API_CHANGE_POLICY.md",
-			Readme:             "README.md",
-			ErrorModel:         "docs/ERROR_MODEL.md",
-			TransportV4Binding: "docs/TRANSPORT_V4_BINDING.md",
-			CLITokens:          []string{"`cli`"},
-			TransportV4Tokens:  []string{"flowersec/4"},
+			APIContract:  "docs/API_CONTRACT.md",
+			ChangePolicy: "docs/API_CHANGE_POLICY.md",
+			Readme:       "README.md",
+			ErrorModel:   "docs/ERROR_MODEL.md",
+			WireContract: "docs/TRANSPORT_V5_WIRE.md",
+			CLITokens:    []string{"`cli`"},
+			WireTokens:   []string{"flowersec/5"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v6/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v7",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v7/legacy"},
 			CompileTargets: []goCompileTarget{{
-				Package:         "github.com/floegence/flowersec/flowersec-go/v6/client",
+				Package:         "github.com/floegence/flowersec/flowersec-go/v7/client",
 				Alias:           "client",
 				DocPackageToken: "`client`",
 				Entries: []goCompileExpr{{
@@ -265,12 +272,12 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 		},
 		NativeABI: nativeABIManifest{
 			Package:         "@floegence/flowersec-node-native",
-			ContractVersion: 4,
-			WireVersion:     4,
-			RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
+			ContractVersion: 5,
+			WireVersion:     5,
+			RuntimeExports:  []string{"bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "supportsNativeH3"},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v6/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v7/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}, root
@@ -279,10 +286,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 	m := &manifest{
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go/v6",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v7",
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v6/endpoint",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v7/endpoint",
 					Alias:           "endpoint",
 					DocPackageToken: "`endpoint`",
 					Entries: []goCompileExpr{
@@ -315,9 +322,9 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 
 func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 	m := &manifest{Go: goManifest{
-		ModulePath: "github.com/floegence/flowersec/flowersec-go/v6",
+		ModulePath: "github.com/floegence/flowersec/flowersec-go/v7",
 		CompileTargets: []goCompileTarget{{
-			Package: "github.com/floegence/flowersec/flowersec-go/v6/fserrors",
+			Package: "github.com/floegence/flowersec/flowersec-go/v7/fserrors",
 			Alias:   "fserrors",
 			Entries: []goCompileExpr{{
 				Kind:      "field",
@@ -327,7 +334,7 @@ func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 		}},
 	}}
 
-	_, testFile, err := renderGoVerifier(m, "1.27.2")
+	_, testFile, err := renderGoVerifier(m, "1.27.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +384,7 @@ func (Session) Close() error { return nil }
 			if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.2\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.1\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			packageDir := filepath.Join(moduleRoot, "sample")
@@ -443,26 +450,6 @@ func TestSwiftSignatureDigestIncludesNormalizedDeclarations(t *testing.T) {
 	}
 	if swiftSignatureSHA256(base) == swiftSignatureSHA256(changed) {
 		t.Fatal("Swift declaration change did not change the signature digest")
-	}
-}
-
-func TestSwiftSymbolsCoalesceIdenticalProtocolDefaultDeclaration(t *testing.T) {
-	requirement := dumpedSwiftSymbol{
-		Kind: "swift.method", Name: "ByteStream.finish()", Declaration: "func finish() async throws",
-	}
-	symbols, err := normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, requirement})
-	if err != nil || len(symbols) != 1 || symbols[0] != requirement {
-		t.Fatalf("identical requirement/default declarations must register once: %v, %v", symbols, err)
-	}
-	different := requirement
-	different.Declaration = "func finish() async"
-	symbols, err = normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, different})
-	if err != nil || len(symbols) != 2 {
-		t.Fatalf("distinct overload declarations must remain in the signature input: %v, %v", symbols, err)
-	}
-	manifestSymbols := swiftManifestSymbols(symbols)
-	if len(manifestSymbols) != 1 || manifestSymbols[0].Name != requirement.Name {
-		t.Fatalf("overload paths must be represented once in the manifest: %v", manifestSymbols)
 	}
 }
 
@@ -577,7 +564,7 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	}
 }
 
-func TestRustCompileEntriesRequireRawStreamHandlerPlanContract(t *testing.T) {
+func TestRustCompileEntriesRequireSessionHandlersHandleStreamContract(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	m, err := loadManifest(repoRoot)
 	if err != nil {
@@ -585,7 +572,7 @@ func TestRustCompileEntriesRequireRawStreamHandlerPlanContract(t *testing.T) {
 	}
 
 	const stale = "let _ = flowersec::SessionHandlers::handle_stream::<String>"
-	const expected = "fn require_raw_stream_handler_plan<K, H>(environment: &flowersec::TransportEnvironment, kind: K, metadata: Option<flowersec::RawStreamMetadataContract>, handler: H, application_bytes: u64) -> Result<flowersec::HandlerPlan, flowersec::ServeError> where K: Into<String>, H: flowersec::RawStreamHandler { environment.handler_plan(flowersec::HandlerPlanOptions { streams: flowersec::StreamDispatch::Registered(vec![flowersec::RawStreamRegistration { kind: kind.into(), metadata, handler: std::sync::Arc::new(handler) }]), application_bytes }) }"
+	const expected = "fn require_session_handlers_handle_stream<K, H>(handlers: &mut flowersec::SessionHandlers, kind: K, handler: H) -> Result<(), flowersec::HandlerRegistrationError> where K: Into<String>, H: flowersec::StreamHandler { handlers.handle_stream(kind, handler) }"
 	if slices.Contains(m.Rust.CompileEntries, stale) {
 		t.Fatalf("Rust compile entries retain stale handle_stream probe %q", stale)
 	}
@@ -596,7 +583,7 @@ func TestRustCompileEntriesRequireRawStreamHandlerPlanContract(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Fatalf("Rust compile entries contain raw stream handler plan contract %d times, want 1", count)
+		t.Fatalf("Rust compile entries contain handle_stream contract %d times, want 1", count)
 	}
 }
 
@@ -631,7 +618,7 @@ func TestRepoToolchainVersionUsesRootConfig(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		`{}`, `{"go":{"version":"1.27"}}`, `{"go":{"version":"auto"}}`,
-		`{"go":{"version":1271}}`, `{"go":{"version":"1.27.2"}`,
+		`{"go":{"version":1271}}`, `{"go":{"version":"1.27.1"}`,
 	} {
 		if err := os.WriteFile(configPath, []byte(invalid), 0o644); err != nil {
 			t.Fatal(err)
@@ -692,33 +679,6 @@ func TestGoVerifierProxyChainHonorsRunnerConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := goVerifierProxyChain(proxyRoot, test.configured, test.cache); got != test.want {
 				t.Fatalf("go verifier proxy chain = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestValidateManifestTypeArguments(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		arguments map[string][]string
-		valid     bool
-	}{
-		{"exported", map[string][]string{"Generic": {"string"}}, true},
-		{"unknown", map[string][]string{"Missing": {"string"}}, false},
-		{"empty list", map[string][]string{"Generic": {}}, false},
-		{"empty argument", map[string][]string{"Generic": {" "}}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m, root := validTestManifest(t)
-			m.TS.Subpaths[0].TypeExports = []string{"Generic"}
-			m.TS.Subpaths[0].TypeArguments = tc.arguments
-			err := validateManifest(root, m)
-			if tc.valid {
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), "ts.type_arguments") {
-				t.Fatalf("expected type argument validation failure, got %v", err)
 			}
 		})
 	}

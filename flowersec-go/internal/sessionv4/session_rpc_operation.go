@@ -8,13 +8,13 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"time"
+	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // UnaryOperation is the original local prepared/started call owner. It keeps
@@ -22,14 +22,6 @@ import (
 // never makes a
 // second physical request, including after an accurately unsubmitted failure.
 type UnaryOperation struct {
-	workload                             *unaryWorkloadSlot
-	controllerManaged                    bool
-	controllerSlot                       int
-	reselections                         uint8
-	startContext                         context.Context
-	starting                             bool
-	startDone                            chan struct{}
-	controller                           controllerDispatch
 	notify                               *notifyOperationState
 	reference                            protocolv4.OperationReference
 	stream                               *streamOperationState
@@ -45,8 +37,6 @@ type UnaryOperation struct {
 	decode                               UnaryDecoder
 	resultPlan                           *unaryResultPlan
 	call                                 *UnaryCall
-	diagnosticOperation                  *DiagnosticOperation
-	diagnosticOperationOwned             bool
 	cancel                               context.CancelFunc
 	preparing, started, closed, detached bool
 	failure                              error
@@ -97,10 +87,6 @@ func (r *RPCServices) prepareUnary(ctx context.Context, route rpcv4.ContractRout
 }
 
 func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, protected bool, decode UnaryDecoder, resultPlan *unaryResultPlan, codec *SynchronousUnaryCodec, streamPlans ...*streamPreparationPlan) (_ *UnaryOperation, err error) {
-	return r.prepareUnaryEncodingWithWorkload(ctx, route, payload, options, class, protected, decode, resultPlan, codec, nil, streamPlans...)
-}
-
-func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, protected bool, decode UnaryDecoder, resultPlan *unaryResultPlan, codec *SynchronousUnaryCodec, workload *unaryWorkloadSlot, streamPlans ...*streamPreparationPlan) (_ *UnaryOperation, err error) {
 	referenceCtx := ctx
 	if len(streamPlans) > 1 {
 		return nil, cryptov4.ErrConfiguration
@@ -121,14 +107,7 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 	if options.AdmissionMode > 1 || codec != nil && (codec.Encode == nil || codec.MaxEncodedBytes > 1048576 || codec.ScratchBytes > 1048576) {
 		return nil, cryptov4.ErrConfiguration
 	}
-	var referenceFloor *resourcev4.BorrowPool
-	if workload != nil {
-		referenceFloor = workload.references
-		if referenceFloor == nil {
-			return nil, resourcev4.ErrOwner
-		}
-	}
-	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
+	dependencies, err := captureApplicationDependencies(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -142,9 +121,6 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 			return nil, ErrApplicationDependency
 		}
 		options.AdmissionMode = 1
-		if err := r.checkInvocationReadiness(ctx, route, stream); err != nil {
-			return nil, err
-		}
 	}
 	r.mu.Lock()
 	if r.closed || r.retired {
@@ -157,27 +133,16 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 	}
 	index := -1
 	for j, o := range r.operations {
-		if o == nil && (j >= len(r.workloadSlots) || r.workloadSlots[j] == nil) {
+		if o == nil {
 			index = j
 			break
 		}
 	}
-	if workload != nil {
-		if workload.workload.services != r || !workload.claiming || workload.closed || workload.index >= len(r.operations) || r.operations[workload.index] != nil || r.workloadSlots[workload.index] != workload {
-			r.mu.Unlock()
-			return nil, cryptov4.ErrClosed
-		}
-		index = workload.index
-	}
-	if index < 0 || workload == nil && r.callSerial == math.MaxUint64 {
+	if index < 0 || r.callSerial == math.MaxUint64 {
 		r.mu.Unlock()
 		return nil, cryptov4.ErrCapacity
 	}
 	options.Clock, options.RuntimeBytes = r.clock, r.runtimeBytes
-	options.CompletionGraceMS = 0
-	if !streaming && !notify && !resume {
-		options.CompletionGraceMS = r.completionGraceMS
-	}
 	payloadLimit := uint32(len(payload))
 	if resume {
 		payloadLimit = 9345
@@ -198,51 +163,68 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 		}
 		payloadLimit = codec.MaxEncodedBytes
 	}
-	charges, count, err := preparedOperationCharges(r.runtimeBytes, payloadLimit, uint32(len(payload)), codec, stream, executor, origin == nil)
-	if err != nil {
-		r.mu.Unlock()
-		return nil, err
+	var charges [5]resourcev4.Vector
+	count := 3
+	charges[0], err = rpcv4.PreparedRequestCharge(payloadLimit, r.runtimeBytes)
+	if err == nil {
+		charges[1], err = rpcv4.ContractRouteCharge(r.runtimeBytes)
 	}
-	var refs [5]resourcev4.Reference
-	if workload != nil {
-		err = resourcev4.CheckoutProtectedBatch(workload.owners[workloadPreparation:workloadPreparation+count], refs[:count])
-	} else {
-		r.callSerial++
-		var seed [56]byte
-		copy(seed[:16], "rpc-prepared/v4")
-		copy(seed[16:32], r.owner.Instance[:])
-		copy(seed[32:48], r.owner.Backing[:])
-		binary.BigEndian.PutUint64(seed[48:], r.callSerial)
-		hash := sha256.Sum256(seed[:])
-		var requests [5]resourcev4.Request
-		for j, c := range charges[:count] {
-			owner := r.owner
-			copy(owner.Instance[:], hash[:16])
-			copy(owner.Backing[:], hash[16:])
-			owner.Backing[0] ^= byte(j)
-			requests[j] = resourcev4.Request{Owner: owner, Charge: c, Accounts: r.accounts[:r.accountCount]}
+	if err == nil {
+		charges[2], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(UnaryOperation{})), resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: r.runtimeBytes})
+	}
+	if err == nil && streaming {
+		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(streamOperationState{})) + uint64(unsafe.Sizeof(StreamOperation{})) + uint64(len(stream.kind)+len(stream.metadata)), resourcev4.Items: 2})
+	}
+	if err == nil && notify {
+		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(notifyOperationState{})) + uint64(unsafe.Sizeof(NotifyOperation{})) + 4*r.runtimeBytes, resourcev4.Items: 6})
+	}
+	if err == nil && resume {
+		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(resumeTarget{}))})
+		if err == nil {
+			charges[3], err = resumePreparationCharge(r.runtimeBytes)
 		}
-		err = r.root.ReserveBatch(requests[:count], refs[:count])
+		count = 4
+	}
+	if err == nil && codec != nil {
+		charges[3], err = synchronousUnaryCharge(uint32(len(payload)), *codec, r.runtimeBytes)
+		count = 4
+		if origin == nil {
+			charges[4] = executor.TaskCharge()
+			count = 5
+		}
 	}
 	if err != nil {
 		r.mu.Unlock()
 		return nil, err
 	}
-	o := &UnaryOperation{workload: workload, dependencies: dependencies, services: r, index: index, metadata: refs[2], class: class, protected: protected, decode: decode, resultPlan: resultPlan, preparing: true}
-	if r.plan != nil {
-		o.diagnosticOperation = r.plan.beginApplicationDiagnostic()
-		o.diagnosticOperationOwned = true
+	r.callSerial++
+	var seed [56]byte
+	copy(seed[:16], "rpc-prepared/v4")
+	copy(seed[16:32], r.owner.Instance[:])
+	copy(seed[32:48], r.owner.Backing[:])
+	binary.BigEndian.PutUint64(seed[48:], r.callSerial)
+	hash := sha256.Sum256(seed[:])
+	var requests [5]resourcev4.Request
+	var refs [5]resourcev4.Reference
+	for j, c := range charges[:count] {
+		owner := r.owner
+		copy(owner.Instance[:], hash[:16])
+		copy(owner.Backing[:], hash[16:])
+		owner.Backing[0] ^= byte(j)
+		requests[j] = resourcev4.Request{Owner: owner, Charge: c, Accounts: r.accounts[:r.accountCount]}
 	}
+	if err = r.root.ReserveBatch(requests[:count], refs[:count]); err != nil {
+		r.mu.Unlock()
+		return nil, err
+	}
+	o := &UnaryOperation{dependencies: dependencies, services: r, index: index, metadata: refs[2], class: class, protected: protected, decode: decode, resultPlan: resultPlan, preparing: true}
 	if notify {
 		o.notify = &notifyOperationState{tryNow: options.AdmissionMode == 1}
 	}
 	if streaming {
-		o.stream = &streamOperationState{workload: workload, core: stream.core, kind: strings.Clone(stream.kind), metadata: append([]byte(nil), stream.metadata...)}
+		o.stream = &streamOperationState{core: stream.core, kind: strings.Clone(stream.kind), metadata: append([]byte(nil), stream.metadata...)}
 	}
 	r.operations[index] = o
-	if workload != nil {
-		workload.operation = o
-	}
 	dependencies = applicationDependencies{}
 	r.mu.Unlock()
 	var p *rpcv4.PreparedRequest
@@ -274,24 +256,16 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 	if resume {
 		_, policy, policyErr := route.Policy()
 		err = policyErr
-		var target *resumeTarget
 		if err == nil {
-			target, err = claimResumeTarget(ctx, stream.core, stream.resume.target, stream.resume.binding, policy, o.metadata, stream.resume.token.EncodedBytes())
-			o.mu.Lock()
-			o.stream.resume = target
-			o.mu.Unlock()
+			o.stream.resume, err = claimResumeTarget(ctx, stream.core, stream.resume.target, stream.resume.binding, policy, o.metadata, stream.resume.token.EncodedBytes())
 		}
 		if err == nil {
-			p, err = prepareResumeRequest(route, options, stream.resume.token, target, refs[0], refs[1])
+			p, err = prepareResumeRequest(route, options, stream.resume.token, o.stream.resume, refs[0], refs[1])
 		}
 	} else if notify {
-		if codec == nil {
-			p, err = rpcv4.PrepareNotify(route, payload, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
-		} else {
-			p, err = rpcv4.BeginNotifyPreparation(route, payloadLimit, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
-		}
+		p, err = rpcv4.PrepareNotify(route, payload, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
 	} else if streaming {
-		streamOptions := rpcv4.StreamPreparation{Clock: options.Clock, ParentDeadline: options.ParentDeadline, DeadlineAtMS: options.DeadlineAtMS, DefaultLifetimeMS: options.DefaultLifetimeMS, AdmissionNotAfterMS: options.AdmissionNotAfterMS, MaxItemBytes: options.ResponseLimitBytes, AdmissionMode: options.AdmissionMode, ExplicitAdmissionMode: options.ExplicitAdmissionMode, RequireExecution: options.RequireExecution, RequireDurable: options.RequireDurable, Offer: options.Offer, RuntimeBytes: options.RuntimeBytes}
+		streamOptions := rpcv4.StreamPreparation{Clock: options.Clock, DeadlineAtMS: options.DeadlineAtMS, DefaultLifetimeMS: options.DefaultLifetimeMS, AdmissionNotAfterMS: options.AdmissionNotAfterMS, MaxItemBytes: options.ResponseLimitBytes, AdmissionMode: options.AdmissionMode, ExplicitAdmissionMode: options.ExplicitAdmissionMode, RequireExecution: options.RequireExecution, RequireDurable: options.RequireDurable, Offer: options.Offer, RuntimeBytes: options.RuntimeBytes}
 		if codec == nil {
 			p, err = rpcv4.PrepareStream(route, payload, streamOptions, refs[0], refs[1])
 		} else {
@@ -356,75 +330,6 @@ func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, rout
 	return o, nil
 }
 
-// A convenience call may arrive immediately after dual READY while the
-// original first RPC channel is still materializing. Keep its prepared
-// request and immutable lifetime while waiting for that admitted initializer.
-// Queued explicit Start joins this same initializer; try_now remains immediate.
-func (o *UnaryOperation) waitInitialChannel(ctx context.Context) (*RPCServices, error) {
-	for {
-		o.mu.Lock()
-		r, h, request := o.services, o.header, o.request
-		if o.closed || o.detached {
-			o.mu.Unlock()
-			return nil, cryptov4.ErrClosed
-		}
-		var changed <-chan struct{}
-		if o.canReselectLocked() {
-			// Capture the original Controller notification before selecting so a
-			// replacement cannot be lost between selection and bootstrap wait.
-			c := o.controller.controller
-			c.mu.Lock()
-			changed = c.changed
-			c.mu.Unlock()
-			var err error
-			r, err = o.selectControllerRouteLocked()
-			if err != nil {
-				o.mu.Unlock()
-				return nil, err
-			}
-		}
-		o.mu.Unlock()
-		if r == nil || h.Fields().AdmissionMode == 1 {
-			return r, nil
-		}
-		r.mu.Lock()
-		ready, bootstrap, settled := r.firstReady, r.bootstrap, r.firstSettled
-		closed := r.closed || r.retired
-		r.mu.Unlock()
-		select {
-		case <-changed:
-			continue
-		default:
-		}
-		if closed {
-			return nil, cryptov4.ErrClosed
-		}
-		if ready == nil || bootstrap == nil || settled {
-			return r, nil
-		}
-		remaining, err := request.PreparationRemainingMS(r.clock)
-		if err != nil {
-			return nil, err
-		}
-		timer := time.NewTimer(time.Duration(min(remaining, uint64(60000))) * time.Millisecond)
-		select {
-		case <-ready:
-			timer.Stop()
-		case <-changed:
-			timer.Stop()
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-		// Reuse the same immutable request/offer deadline and the original
-		// at-most-two reselections. Progress never acquires another Session.
-		if err := request.CheckPreparedLifetime(); err != nil {
-			return nil, err
-		}
-	}
-}
-
 // Start's short local owner gate chooses at most one request. A try_now miss
 // preserves prepared rights only when the original admission returned before
 // creating any publisher work. Later Start calls observe the same call or
@@ -433,30 +338,8 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 	if o == nil || ctx == nil {
 		return UnaryStartResult{Error: cryptov4.ErrConfiguration}
 	}
-	applicationContext, contextErr := checkApplicationContext(ctx)
+	_, contextErr := checkApplicationContext(ctx)
 	o.mu.Lock()
-	for o.starting {
-		if applicationContext && contextErr == nil && o.header.Fields().AdmissionMode != 1 {
-			o.mu.Unlock()
-			return UnaryStartResult{Error: ErrApplicationDependency}
-		}
-		done := o.startDone
-		o.mu.Unlock()
-		if contextErr != nil {
-			return UnaryStartResult{Error: contextErr}
-		}
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return UnaryStartResult{Error: ctx.Err()}
-		}
-		o.mu.Lock()
-	}
-	if o.stream != nil && o.stream.resume != nil {
-		o.mu.Unlock()
-		started := (&StreamOperation{owner: o}).Start(ctx)
-		return UnaryStartResult{NotAdmitted: started.NotAdmitted, Error: started.Error}
-	}
 	defer o.mu.Unlock()
 	if o.started {
 		return UnaryStartResult{Call: o.call, Error: o.failure}
@@ -466,9 +349,6 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 	}
 	if o.preparing {
 		return UnaryStartResult{NotAdmitted: true, Error: rpcv4.ErrPreparationIncomplete}
-	}
-	if applicationContext && o.header.Fields().AdmissionMode != 1 {
-		return UnaryStartResult{NotAdmitted: true, Error: ErrApplicationDependency}
 	}
 	if o.closed || o.detached {
 		return UnaryStartResult{Error: cryptov4.ErrClosed}
@@ -480,50 +360,15 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 		return UnaryStartResult{NotAdmitted: true, Error: err}
 	}
 	callCtx, cancel := context.WithCancel(ctx)
-	callCtx = withOwnedDiagnosticOperation(callCtx, o.diagnosticOperation)
-	o.startContext = callCtx
-	queued := o.header.Fields().AdmissionMode != 1 && o.services != nil
-	if queued {
-		// Keep one original Start owner through bootstrap and any bounded
-		// current reselection before the first invocation exists.
-		o.starting, o.cancel, o.startDone = true, cancel, make(chan struct{})
-		defer func() {
-			o.starting = false
-			close(o.startDone)
-		}()
-	}
 	var call *UnaryCall
-	var err error
-	for {
-		selected := o.services
-		beginAttempted := false
-		if queued {
-			o.mu.Unlock()
-			selected, err = o.waitInitialChannel(callCtx)
-			o.mu.Lock()
-			if err == nil && o.closed {
-				err = cryptov4.ErrClosed
-			}
-		}
-		if err == nil {
-			err = o.request.WithStart(callCtx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
-				beginAttempted = true
-				var e error
-				call, e = o.beginControllerUnaryLocked(callCtx, selected, route, h, header, payload)
-				return e
-			})
-		}
-		if err == nil || !beginAttempted || !o.retryInitialControllerRouteLocked(err) {
-			break
-		}
-		// No invocation was published by a failed begin. The next pass only
-		// selects an existing current, preserving original bytes and deadlines.
-		err = nil
-	}
+	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
+		var e error
+		call, e = o.services.beginUnary(callCtx, route, h, header, payload, o.class, o.protected, true, &o.dependencies, o.resultPlan, o.decode)
+		return e
+	})
 	if err != nil {
 		cancel()
-		o.cancel = nil
-		if o.header.Fields().AdmissionMode == 1 && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrApplicationDependency) || errors.Is(err, ErrCompletionDependency)) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrApplicationDependency) || errors.Is(err, ErrCompletionDependency) {
 			return UnaryStartResult{NotAdmitted: true, Error: err}
 		}
 		if o.header.Fields().AdmissionMode == 1 && (errors.Is(err, cryptov4.ErrCapacity) || errors.Is(err, resourcev4.ErrCapacity) || errors.Is(err, rpcv4.ErrCapacity) || errors.Is(err, cryptov4.ErrNotReady)) {
@@ -538,17 +383,13 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 		o.request = nil
 		o.decode, o.resultPlan = nil, nil
 		o.detachLocked()
-		if o.closed {
-			o.metadata.Release()
-			o.metadata = resourcev4.Reference{}
-		}
 		return UnaryStartResult{Error: err}
 	}
 	o.started, o.call, o.cancel = true, call, cancel
 	o.dependencies.release()
-	if !o.canReselectLocked() {
-		o.releasePreparedLocked()
-	}
+	o.request.Close()
+	o.request = nil
+	o.decode, o.resultPlan = nil, nil
 	return UnaryStartResult{Call: call}
 }
 
@@ -584,10 +425,9 @@ func (o *UnaryOperation) Close() {
 		o.stream.messages.Close()
 	}
 	if o.call != nil {
-		o.call.fencePublication()
 		o.call.Close()
 	}
-	if o.preparing || o.starting {
+	if o.preparing {
 		if o.cancel != nil {
 			o.cancel()
 		}
@@ -612,25 +452,12 @@ func (o *UnaryOperation) Close() {
 		o.metadata.Release()
 		o.metadata = resourcev4.Reference{}
 	}
-	if !o.controllerManaged {
-		o.controller.close()
-	}
 }
 
 func (o *UnaryOperation) detachLocked() {
 	if o.detached {
 		return
 	}
-	if o.controllerManaged && o.controller.controller != nil {
-		c := o.controller.controller
-		c.mu.Lock()
-		if c.operations[o.controllerSlot] == o {
-			c.operations[o.controllerSlot] = nil
-		}
-		c.mu.Unlock()
-		o.controllerManaged = false
-	}
-	o.controller.release()
 	o.dependencies.release()
 	if s := o.notify; s != nil && s.submission == nil {
 		s.mu.Lock()
@@ -650,21 +477,12 @@ func (o *UnaryOperation) detachLocked() {
 	r := o.services
 	if r != nil {
 		r.mu.Lock()
-		if o.workload != nil && o.workload.operation == o {
-			o.workload.operation = nil
-		}
 		if o.index < len(r.operations) && r.operations[o.index] == o {
 			r.operations[o.index] = nil
 		}
 		r.mu.Unlock()
 	}
-	if o.diagnosticOperationOwned {
-		finishApplicationDiagnosticError(o.diagnosticOperation, o.failure)
-		o.diagnosticOperation = nil
-		o.diagnosticOperationOwned = false
-	}
 	o.services = nil
-	o.workload = nil
 	o.detached = true
 }
 
@@ -674,7 +492,7 @@ func (o *UnaryOperation) advance(closed bool) {
 	if o.detached {
 		return
 	}
-	if o.preparing || o.starting {
+	if o.preparing {
 		var err error
 		if o.request != nil {
 			err = o.request.CheckPreparedLifetime()
@@ -707,27 +525,13 @@ func (o *UnaryOperation) advance(closed bool) {
 		return
 	}
 	if o.call != nil {
-		call := o.call.currentCall()
-		call.mu.Lock()
-		done, invocation, publication := call.finished, call.invocation, call.publication
-		call.mu.Unlock()
-		if !done && invocation != nil && o.canReselectLocked() {
-			o.reselectLocked(invocation)
-			call = o.call.currentCall()
-			call.mu.Lock()
-			done, publication = call.finished, call.publication
-			call.mu.Unlock()
-		}
-		if done || publication != nil && publication.Progress().HeaderAccepted {
-			o.releasePreparedLocked()
-		}
+		o.call.mu.Lock()
+		done := o.call.finished
+		o.call.mu.Unlock()
 		if done {
 			if o.cancel != nil {
 				o.cancel()
 				o.cancel = nil
-			}
-			if o.controllerManaged && !o.call.routesInputCleaned() {
-				return
 			}
 			o.detachLocked()
 			if o.closed {
@@ -752,15 +556,6 @@ func (o *UnaryOperation) advance(closed bool) {
 	o.request = nil
 	o.decode, o.resultPlan = nil, nil
 	o.detachLocked()
-}
-
-func (o *UnaryOperation) releasePreparedLocked() {
-	if o.request != nil {
-		o.request.Close()
-		o.request = nil
-	}
-	o.decode, o.resultPlan = nil, nil
-	o.startContext = nil
 }
 
 func (r *RPCServices) advanceOperations() {

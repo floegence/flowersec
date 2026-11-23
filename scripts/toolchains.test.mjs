@@ -47,6 +47,7 @@ test("authoritative config rejects floating, missing and unknown version fields"
     (config) => { delete config.go.version; },
     (config) => { config.node.fallback = "latest"; },
     (config) => { config.node.minimum = "99.0.0"; },
+    (config) => { config.go.minimum = "99.0.0"; },
   ]) {
     const config = structuredClone(readToolchains());
     mutate(config);
@@ -81,6 +82,9 @@ test("runtime detects mismatched tools before work and distinguishes explicit co
   const nodeMinimum = () => ({ status: 0, stdout: `v${config.node.minimum}` });
   assert.throws(() => checkRuntime(["node"], { run: nodeMinimum }), /node: expected/);
   checkRuntime(["node-minimum"], { run: nodeMinimum });
+  const goMinimum = () => ({ status: 0, stdout: `go version go${config.go.minimum} darwin/arm64` });
+  checkRuntime(["go-minimum"], { run: goMinimum });
+  assert.throws(() => checkRuntime(["go-minimum"], { run }), /go-minimum: expected/);
   assert.throws(() => checkRuntime(["node-minimum"], { run }), /node-minimum: expected/);
   const minimum = () => ({ status: 0, stdout: `rustc ${config.rust.msrv} (fixture)` });
   assert.throws(() => checkRuntime(["rust"], { run: minimum }), /rust: expected/);

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"runtime"
@@ -14,10 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type sessionMessageProvider struct {
@@ -225,86 +223,6 @@ func TestSessionMessageInputPreservesOneEnvelopePerMessage(t *testing.T) {
 	}
 }
 
-func TestSessionMessageInputWholeRecordKeepsFramingAndOriginalBuffer(t *testing.T) {
-	for _, malformed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("malformed=%t", malformed), func(t *testing.T) {
-			wire := messageEnvelope(t, protocolv4.FrameStreamData, 40)
-			if malformed {
-				wire = append(wire, wire...)
-			}
-			provider := &sessionMessageProvider{read: func(_ context.Context, dst []byte) (int, error) {
-				if len(dst) != 136 || cap(dst) != 136 {
-					t.Fatal("provider received different uncharged backing")
-				}
-				return copy(dst, wire), nil
-			}}
-			input, _, _ := messageInputFixture(t, context.Background(), provider)
-			receiver, _, _ := resourceRecordReceiver(t)
-			for range 2 {
-				if err := receiver.begin(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				dst, err := input.readRecordMessage(receiver)
-				if malformed {
-					if dst != nil || err == nil || receiver.storage != nil {
-						t.Fatal("invalid whole message exposed or allocated receiver bytes", err)
-					}
-				} else if err != nil || len(dst) != len(wire) || cap(dst) != len(wire) || !bytes.Equal(dst, wire) || input.length != 0 || input.offset != 0 || !bytes.Equal(input.buffer, make([]byte, len(input.buffer))) {
-					t.Fatal("whole envelope did not release its original read gate", len(dst), err)
-				}
-				receiver.finish()
-				if receiver.storage != nil || !bytes.Equal(dst, make([]byte, len(dst))) {
-					t.Fatal("receiver retained the independent message copy after exit")
-				}
-			}
-			if malformed && provider.reads.Load() != 1 || !malformed && provider.reads.Load() != 2 {
-				t.Fatal("whole message changed provider ownership", provider.reads.Load())
-			}
-		})
-	}
-}
-
-func TestSessionMessageInputPreservesOriginalTransportFailure(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		cause     error
-		transport bool
-	}{
-		{"native", native.ErrConnectionLost, true},
-		{"incomplete", io.ErrUnexpectedEOF, true},
-		{"closed_pipe", io.ErrClosedPipe, true},
-		{"application", errors.New("application failure"), false},
-		{"wrapped", errors.Join(native.ErrConnectionLost), false},
-	} {
-		for _, write := range []bool{false, true} {
-			t.Run(tc.name+map[bool]string{false: "/read", true: "/write"}[write], func(t *testing.T) {
-				p := &sessionMessageProvider{
-					read:  func(context.Context, []byte) (int, error) { return 0, tc.cause },
-					write: func(context.Context, []byte) error { return tc.cause },
-				}
-				m, _, _ := messageInputFixture(t, context.Background(), p)
-				var err error
-				if write {
-					_, err = m.Write(messageEnvelope(t, protocolv4.FramePing, 40))
-				} else {
-					input := connectionInputReader{reader: m}
-					_, err = input.Read(make([]byte, 8))
-					if input.failed(err) != tc.transport {
-						t.Fatal("shared input lost the original failure classification", err)
-					}
-				}
-				want := tc.cause
-				if !tc.transport {
-					want = ErrSessionMessageProvider
-				}
-				if err != want {
-					t.Fatal("message boundary changed the failure", err, want)
-				}
-			})
-		}
-	}
-}
-
 func TestSessionMessageInputInitialCapsAndCanceledHandoffContext(t *testing.T) {
 	initial := messageEnvelope(t, protocolv4.FrameNegotiate, 512)
 	runtimeWire := messageEnvelope(t, protocolv4.FramePing, 40)
@@ -487,55 +405,6 @@ func TestSessionMessageInputPropagatesOriginalCallCancellation(t *testing.T) {
 	}
 	if parent.valueCalls.Load() != 0 {
 		t.Fatal("SDK installed hidden standard-library context propagation")
-	}
-}
-
-func TestSessionMessageInputCancellationAfterAdjacentCalls(t *testing.T) {
-	for _, writing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("writing=%t", writing), func(t *testing.T) {
-			entered := make(chan struct{})
-			var calls int
-			step := func(ctx context.Context) error {
-				calls++
-				if calls < 3 {
-					return nil
-				}
-				close(entered)
-				<-ctx.Done()
-				return ctx.Err()
-			}
-			p := &sessionMessageProvider{
-				read:  func(ctx context.Context, dst []byte) (int, error) { return copy(dst, []byte{1}), step(ctx) },
-				write: func(ctx context.Context, _ []byte) error { return step(ctx) },
-			}
-			m, _, _ := messageInputFixture(t, context.Background(), p)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			call := func() error {
-				if writing {
-					return m.WriteMessage(ctx, []byte{1})
-				}
-				_, err := m.ReadMessage(ctx, make([]byte, 8))
-				return err
-			}
-			for range 2 {
-				if err := call(); err != nil {
-					t.Fatal(err)
-				}
-			}
-			result := make(chan error, 1)
-			go func() { result <- call() }()
-			awaitMessage(t, entered)
-			cancel()
-			select {
-			case err := <-result:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal("adjacent call lost original cancellation", err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("adjacent call retained its original provider tail")
-			}
-		})
 	}
 }
 

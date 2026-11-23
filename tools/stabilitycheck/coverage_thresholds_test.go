@@ -17,8 +17,8 @@ func TestCoverageQualityGates(t *testing.T) {
 	}
 
 	wantGo := map[string]float64{
-		"github.com/floegence/flowersec/flowersec-go/v6":              25,
-		"github.com/floegence/flowersec/flowersec-go/v6/controlplane": 75,
+		"github.com/floegence/flowersec/flowersec-go/v7":              25,
+		"github.com/floegence/flowersec/flowersec-go/v7/controlplane": 75,
 	}
 	gotGo := make(map[string]float64, len(m.Coverage.Go))
 	for _, target := range m.Coverage.Go {
@@ -40,9 +40,8 @@ func TestCoverageQualityGates(t *testing.T) {
 	assertFileThresholds(t, filepath.Join(root, "flowersec-ts", "vitest.config.ts"), map[string]int{
 		"lines": 82, "functions": 82, "statements": 77, "branches": 68,
 	})
-	assertSourceThreshold(t, filepath.Join(root, "Makefile"), `check-swift-coverage\.mjs[^\n]*\$\$coverage_path"\s+(\d+)\s+(\d+)`, []int{79, 80})
-	assertSourceThreshold(t, filepath.Join(root, "Makefile"), `(?m)^rust-cover-check:\n\tcd flowersec-rust && cargo llvm-cov --all-features --no-report\n\tnode scripts/rust-coverage\.mjs\n`, nil)
-	assertSourceThreshold(t, filepath.Join(root, "scripts", "rust-coverage.mjs"), `await run\("cargo", \["llvm-cov", "report", "--fail-under-lines", "(\d+)"\], reportEnvironment\)`, []int{85})
+	assertMakeThreshold(t, filepath.Join(root, "Makefile"), `check-swift-coverage\.mjs[^\n]*\$\$coverage_path"\s+(\d+)\s+(\d+)`, []int{79, 80})
+	assertMakeThreshold(t, filepath.Join(root, "Makefile"), `cargo llvm-cov[^\n]*--fail-under-lines\s+(\d+)`, []int{85})
 }
 
 func TestGoCoverageSerializesPackageExecution(t *testing.T) {
@@ -96,7 +95,7 @@ func assertFileThresholds(t *testing.T, path string, want map[string]int) {
 	}
 }
 
-func assertSourceThreshold(t *testing.T, path, pattern string, want []int) {
+func assertMakeThreshold(t *testing.T, path, pattern string, want []int) {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {

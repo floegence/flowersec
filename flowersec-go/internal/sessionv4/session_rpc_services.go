@@ -4,18 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // RPCServicesConfig is the immutable ordinary RPC assembly for one Session.
@@ -23,17 +21,6 @@ import (
 // receive promises, short workload protection and execution stores are separate
 // admission obligations; this assembly alone cannot enable a Session profile.
 type RPCServicesConfig struct {
-	// Workloads is the finite caller demand reserved by complete Session
-	// assembly before material acquisition or spending. Nil adds no targets.
-	// A component-only InstallRPCServices has no Session admission owner and
-	// therefore cannot consume this configuration.
-	Workloads []SessionMethodWorkload
-	// Native requires original independent stream ownership in the Session
-	// assembly. It reserves every future channel's DATA receiver before READY.
-	Native bool
-	// MixedCarrier captures the original native receive backing for every
-	// fixed future channel before source acquisition. Native selects actual I/O.
-	MixedCarrier bool
 	// ReferenceDomain identifies the trusted local application target domain,
 	// never a root or endpoint obtained from an imported reference. Required
 	// when this caller prepares execution operations.
@@ -103,16 +90,11 @@ const (
 // does not start a channel or publish readiness. The original SessionPlan owns
 // dispatch and fixed query worker registrations on the shared root executor.
 type RPCServices struct {
-	shortResultPosition                   environmentResultProtection
-	native                                *nativeStreamTransport
-	nativeConfigured                      bool
-	bootstrapNative                       *nativeStreamProtection
 	referenceDomain                       string
 	referenceCodec                        *protocolv4.OperationReferenceCodec
 	resultReadBinding                     rpcv4.QueryBinding
 	deliveryFloor                         *protocolv4.DeliverySubscriptionFloor
 	management                            *managementChannelOpening
-	managementNative                      *nativeStreamProtection
 	managementResolver                    rpcv4.ExecutionManagementResolver
 	executionRegistry                     *rpcv4.ServiceRegistry
 	executionRegistryBorrow               resourcev4.Reference
@@ -129,11 +111,6 @@ type RPCServices struct {
 	dynamicChannels                       [8]*rpcChannelOpening
 	firstFuture                           internalChannelFuture
 	firstAllocation                       *internalChannelAllocation
-	firstBinding                          bool
-	firstBindingDone                      chan struct{}
-	channelCleanupGate                    chan struct{}
-	firstReady                            chan struct{}
-	firstSettled                          bool
 	runtimeStarted                        bool
 	publication                           <-chan struct{}
 	receivePool                           *ReceivePool
@@ -141,9 +118,6 @@ type RPCServices struct {
 	futureChannels                        [maxFutureChannels]internalChannelFuture
 	plan                                  *SessionPlan
 	localCall                             *unaryInvocation
-	workloadSlots                         []*unaryWorkloadSlot
-	initialWorkloads                      []*unaryWorkload
-	replacementClosed                     bool
 	generalCalls                          []*unaryInvocation
 	operations                            []*UnaryOperation
 	callSerial                            uint64
@@ -172,11 +146,6 @@ type RPCServices struct {
 	hashRuntimeBytes                      uint64
 	completionGraceMS                     uint64
 	closed, bound, retired                bool
-	draining                              atomic.Bool
-}
-
-func (c RPCServicesConfig) networkConfig() rpcv4.NetworkConfig {
-	return rpcv4.NetworkConfig{ProtectShortCall: true, Session: c.Session, Query: c.Query, ResultRead: c.ResultRead, RuntimeBytes: c.RuntimeBytes}
 }
 
 func (c RPCServicesConfig) inputConfig() rpcv4.ServiceInputsConfig {
@@ -213,9 +182,6 @@ func (c RPCServicesConfig) notifyOutputConfig() rpcv4.NotifyPublisherConfig {
 }
 
 func rpcServicesCharges(c RPCServicesConfig) (charges [rpcServicesOwnerCapacity]resourcev4.Vector, total resourcev4.Vector, err error) {
-	if err = checkSessionWorkloadRecipes(c); err != nil {
-		return charges, total, err
-	}
 	if c.ReferenceDomain != "" && !executionIdentityText(c.ReferenceDomain) {
 		return charges, total, cryptov4.ErrConfiguration
 	}
@@ -231,10 +197,7 @@ func rpcServicesCharges(c RPCServicesConfig) (charges [rpcServicesOwnerCapacity]
 	if e != nil || channels == 0 || c.Session.Limits().MaxCredit < channels*minimum || c.Bootstrap.ReceivePoolBytes < (channels-1)*minimum+c.Bootstrap.ReceiveBytes {
 		return charges, total, cryptov4.ErrConfiguration
 	}
-	// The sole first-channel constructor retains a charged completion signal
-	// outside the publication mutex. Cleanup observers share one prepaid gate
-	// until the original Stream capability is physically relinquished.
-	charges[rpcServicesMetadata], err = (resourcev4.Vector{resourcev4.SDKBytes: 384 + uint64(unsafe.Sizeof(RPCServices{})) + uint64(len(c.Workloads))*uint64(unsafe.Sizeof((*unaryWorkload)(nil))) + uint64(c.Session.Limits().RPCMaxGeneralOutstanding)*(uint64(unsafe.Sizeof((*unaryInvocation)(nil)))+uint64(unsafe.Sizeof((*UnaryOperation)(nil)))+uint64(unsafe.Sizeof((*unaryWorkloadSlot)(nil)))), resourcev4.Items: 2, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	charges[rpcServicesMetadata], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(RPCServices{})) + uint64(c.Session.Limits().RPCMaxGeneralOutstanding)*(uint64(unsafe.Sizeof((*unaryInvocation)(nil)))+uint64(unsafe.Sizeof((*UnaryOperation)(nil)))), resourcev4.Items: 1, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 	if err != nil {
 		return
 	}
@@ -257,7 +220,7 @@ func rpcServicesCharges(c RPCServicesConfig) (charges [rpcServicesOwnerCapacity]
 			return
 		}
 	}
-	charges[rpcServicesNetwork], err = rpcv4.NetworkCharge(c.networkConfig())
+	charges[rpcServicesNetwork], err = rpcv4.NetworkCharge(rpcv4.NetworkConfig{ProtectShortCall: true, Session: c.Session, Query: c.Query, ResultRead: c.ResultRead, RuntimeBytes: c.RuntimeBytes})
 	if err != nil {
 		return
 	}
@@ -346,14 +309,7 @@ func rpcServicesCharges(c RPCServicesConfig) (charges [rpcServicesOwnerCapacity]
 
 func RPCServicesRequirements(c RPCServicesConfig) (resourcev4.Vector, uint32, error) {
 	charges, total, err := rpcServicesCharges(c)
-	if err != nil {
-		return total, 0, err
-	}
-	workloads, owners, err := sessionWorkloadRequirements(c)
-	if err == nil {
-		total, err = total.Add(workloads)
-	}
-	return total, uint32(rpcServicesChargeCount(charges)) + owners, err
+	return total, uint32(rpcServicesChargeCount(charges)), err
 }
 
 func rpcServicesChargeCount(charges [rpcServicesOwnerCapacity]resourcev4.Vector) int {
@@ -370,28 +326,14 @@ func rpcServicesChargeCount(charges [rpcServicesOwnerCapacity]resourcev4.Vector)
 // The caller combines its requests with core and handshake requests in one
 // ReserveBatch, then consumes these exact references before any durable claim.
 type rpcServicesBatch struct {
-	dependencies         rpcDependencyPreparation
-	execution            serviceExecutionPreparation
-	queries              *sessionContractQueries
-	network              *rpcv4.Network
-	references           rpcServicesReferences
-	receivePool          *ReceivePool
-	receiveProtection    [11]*ReceiveProtection
-	built                *RPCServices
-	workloadHeadroom     *unaryWorkload
-	initializerWorkloads *unaryWorkload
-	initializer          *controllerInitializerPlan
-	completionFloor      *CompletionFloor
-	shortExecutionBorrow resourcev4.Reference
-	resultPosition       environmentResultProtection
-	deliveryFloor        *protocolv4.DeliverySubscriptionFloor
-	plan                 *SessionPlan
-	config               RPCServicesConfig
-	executionScopes      []rpcExecutionScope
-	executionStart       int
-	charges              [rpcServicesOwnerCapacity]resourcev4.Vector
-	count                int
-	prepared, used       bool
+	deliveryFloor   *protocolv4.DeliverySubscriptionFloor
+	plan            *SessionPlan
+	config          RPCServicesConfig
+	executionScopes []rpcExecutionScope
+	executionStart  int
+	charges         [rpcServicesOwnerCapacity]resourcev4.Vector
+	count           int
+	prepared, used  bool
 }
 
 func prepareRPCServicesBatch(b *rpcServicesBatch, p *SessionPlan, c RPCServicesConfig, host *EnvironmentSession) error {
@@ -402,20 +344,14 @@ func prepareRPCServicesBatch(b *rpcServicesBatch, p *SessionPlan, c RPCServicesC
 	if err != nil {
 		return err
 	}
-	if _, _, err := sessionWorkloadRequirements(c); err != nil {
-		return err
-	}
 	scopes, executionStart, err := prepareExecutionScopes(c)
 	if err != nil {
 		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.executor == nil || p.claimed || p.host != host || p.rpcPreparing || p.registrationPreparing || p.rpc != nil || p.services != nil || p.queries != nil || !p.config.Services || !p.config.ContractQueries {
+	if p.closed || p.executor == nil || p.claimed || p.host != host || p.rpcPreparing || p.rpc != nil || p.services != nil || p.queries != nil || !p.config.Services || !p.config.ContractQueries {
 		return cryptov4.ErrTransition
-	}
-	if c.Session.Limits().ApplicationProfile == "execution" && p.executor.config.DisableManagement {
-		return cryptov4.ErrConfiguration
 	}
 	if c.ShortTaskCharge != p.executor.TaskCharge() || c.ShortCompletionCharge != p.executor.CompletionFloorCharge() {
 		return cryptov4.ErrConfiguration
@@ -448,45 +384,8 @@ func (b *rpcServicesBatch) release() {
 	if b == nil || !b.prepared {
 		return
 	}
-	for w := b.workloadHeadroom; w != nil; {
-		next := w.initialNext
-		w.initialNext = nil
-		w.closeUnattached()
-		w = next
-	}
-	b.workloadHeadroom = nil
-	for w := b.initializerWorkloads; w != nil; {
-		next := w.initialNext
-		w.initialNext = nil
-		w.closeUnattached()
-		w = next
-	}
-	b.initializerWorkloads, b.initializer = nil, nil
-	b.queries.releasePreparation()
-	b.queries = nil
-	b.network.Close()
-	b.network = nil
-	b.execution.close()
-	b.dependencies.close()
-	b.references.close()
-	for _, guard := range b.receiveProtection {
-		guard.Close()
-	}
-	clear(b.receiveProtection[:])
-	b.receivePool = nil
-	b.completionFloor.Close()
-	b.completionFloor = nil
-	if b.built != nil {
-		b.built.Close()
-		_ = b.built.retire()
-		b.built = nil
-	}
-	b.shortExecutionBorrow.Release()
-	b.shortExecutionBorrow = resourcev4.Reference{}
 	b.deliveryFloor.Close()
 	b.deliveryFloor = nil
-	b.resultPosition.close()
-	b.resultPosition = environmentResultProtection{}
 	b.plan.mu.Lock()
 	b.plan.rpcPreparing = false
 	b.plan.mu.Unlock()
@@ -497,9 +396,6 @@ func (b *rpcServicesBatch) release() {
 // InstallRPCServices is a component constructor. Complete Session admission
 // uses the same preparation and adoption in its original aggregate batch.
 func (p *SessionPlan) InstallRPCServices(c RPCServicesConfig) (*RPCServices, error) {
-	if c.Workloads != nil {
-		return nil, cryptov4.ErrConfiguration
-	}
 	var b rpcServicesBatch
 	if err := prepareRPCServicesBatch(&b, p, c, nil); err != nil {
 		return nil, err
@@ -525,49 +421,29 @@ func (p *SessionPlan) InstallRPCServices(c RPCServicesConfig) (*RPCServices, err
 	return b.adopt(refs[:b.count])
 }
 
-func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, err error) {
+func (b *rpcServicesBatch) adopt(refs []resourcev4.Reference) (_ *RPCServices, err error) {
 	if b == nil || !b.prepared || b.used || len(refs) != b.count {
 		return nil, resourcev4.ErrOwner
 	}
-	if b.built != nil {
-		return b.built, nil
-	}
+	b.used = true
 	p, c := b.plan, b.config
 	executor := p.executor
 	for index, ref := range refs {
-		if b.ownsExecution(index) || index == rpcServicesDeliveryFloor && b.deliveryFloor != nil || index == rpcServicesCompletionFloor && b.completionFloor != nil || index == rpcServicesNetwork && b.network != nil {
+		if index == rpcServicesDeliveryFloor && b.deliveryFloor != nil {
 			continue
 		}
 		if err := ref.CheckAllocationScope(c.Root, c.Owner, b.accountsFor(index)); err != nil {
 			return nil, err
 		}
 	}
-	if err := b.reserveReferences(refs); err != nil {
-		return nil, err
-	}
-	if err := b.reserveQueries(); err != nil {
-		return nil, err
-	}
-	if err := b.reserveExecution(refs); err != nil {
-		return nil, err
-	}
-	if err := b.reserveDependencies(refs); err != nil {
-		return nil, err
-	}
-	shortBorrow, err := b.references.shortExecution.TakeBorrow()
+	shortBorrow, err := refs[rpcServicesShortCalls].Borrow()
 	if err != nil {
 		return nil, err
 	}
-	b.shortExecutionBorrow = shortBorrow
-	r := &RPCServices{channelCleanupGate: make(chan struct{}, 1), firstReady: make(chan struct{}), shortResultPosition: b.resultPosition, resultReadBinding: c.ResultRead, deliveryFloor: b.deliveryFloor, plan: p, shortRequestBytes: c.ShortRequestBytes, shortResponseBytes: c.ShortResponseBytes, cryptoProfile: c.CryptoProfile, session: c.Session, clock: c.Clock, root: c.Root, owner: c.Owner, accountCount: len(c.Accounts), runtimeBytes: c.RuntimeBytes, hashRuntimeBytes: c.HashRuntimeBytes}
-	r.completionFloor = b.completionFloor
-	r.network, b.network = b.network, nil
-	r.receivePool, b.receivePool = b.receivePool, nil
-	r.receiveProtection, b.receiveProtection = b.receiveProtection, [11]*ReceiveProtection{}
+	defer shortBorrow.Release()
+	r := &RPCServices{resultReadBinding: c.ResultRead, deliveryFloor: b.deliveryFloor, plan: p, shortRequestBytes: c.ShortRequestBytes, shortResponseBytes: c.ShortResponseBytes, cryptoProfile: c.CryptoProfile, session: c.Session, clock: c.Clock, root: c.Root, owner: c.Owner, accountCount: len(c.Accounts), runtimeBytes: c.RuntimeBytes, hashRuntimeBytes: c.HashRuntimeBytes}
 	r.generalCalls = make([]*unaryInvocation, c.Session.Limits().RPCMaxGeneralOutstanding)
 	r.operations = make([]*UnaryOperation, c.Session.Limits().RPCMaxGeneralOutstanding)
-	r.workloadSlots = make([]*unaryWorkloadSlot, len(r.operations))
-	r.initialWorkloads = make([]*unaryWorkload, len(c.Workloads))
 	r.runtimeStop = make(chan struct{})
 	if c.Session.Limits().ApplicationProfile == "execution" {
 		r.managementResolver = c.ManagementResolver
@@ -581,17 +457,20 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 	r.notifyReceiverConfig.Accounts = nil
 	r.completionGraceMS = c.CompletionGraceMS
 	copy(r.accounts[:], c.Accounts)
+	attached := false
 	defer func() {
 		if err == nil {
 			return
 		}
 		r.Close()
-		b.shortExecutionBorrow.Release()
-		b.shortExecutionBorrow = resourcev4.Reference{}
-		_ = r.retire()
+		if attached {
+			p.Close()
+		} else {
+			_ = r.retire()
+		}
 	}()
 	for index, ref := range refs {
-		if b.ownsExecution(index) || index == rpcServicesDeliveryFloor && b.deliveryFloor != nil || index == rpcServicesCompletionFloor && b.completionFloor != nil || index == rpcServicesNetwork && r.network != nil {
+		if index == rpcServicesDeliveryFloor && b.deliveryFloor != nil {
 			continue
 		}
 		r.refs[index], err = ref.Take(b.charges[index])
@@ -600,7 +479,7 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 		}
 	}
 	if c.Session.Limits().ApplicationProfile == "execution" && c.ExecutionRegistry != nil {
-		r.executionRegistryBorrow, err = b.references.registryBorrows[0].TakeBorrow()
+		r.executionRegistryBorrow, err = c.ExecutionRegistry.Borrow(r.refs[rpcServicesMetadata])
 		if err != nil {
 			return nil, err
 		}
@@ -613,12 +492,18 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 	for index, charge := range caller {
 		ref := r.refs[rpcServicesCallerMetadata+index]
 		if index == 2 || index == 4 || index == 5 {
-			anchor := b.references.callerResult
+			anchor, e := ref.Borrow()
+			if e != nil {
+				return nil, e
+			}
 			var aliases []resourcev4.Reference
 			if index == 4 {
-				anchor, aliases = b.references.callerOwner[0], b.references.callerOwner[1:]
-			} else if index == 5 {
-				anchor = b.references.callerAuthority
+				alias, e := ref.Borrow()
+				if e != nil {
+					anchor.Release()
+					return nil, e
+				}
+				aliases = []resourcev4.Reference{alias}
 			}
 			r.shortCaller[index], err = resourcev4.NewProtectedResultReservation(ref, charge, anchor, aliases...)
 			anchor.Release()
@@ -632,11 +517,9 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 			return nil, err
 		}
 	}
-	if r.completionFloor == nil {
-		r.completionFloor, err = executor.NewCompletionFloor(r.refs[rpcServicesCompletionFloor], r.refs[rpcServicesMetadata])
-		if err != nil {
-			return nil, err
-		}
+	r.completionFloor, err = executor.NewCompletionFloor(r.refs[rpcServicesCompletionFloor], r.refs[rpcServicesMetadata])
+	if err != nil {
+		return nil, err
 	}
 	if c.ReferenceDomain != "" {
 		r.referenceDomain = strings.Clone(c.ReferenceDomain)
@@ -645,11 +528,9 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 			return nil, err
 		}
 	}
-	if r.network == nil {
-		r.network, err = rpcv4.NewNetwork(c.networkConfig(), r.refs[rpcServicesNetwork])
-		if err != nil {
-			return nil, err
-		}
+	r.network, err = rpcv4.NewNetwork(rpcv4.NetworkConfig{ProtectShortCall: true, Session: c.Session, Query: c.Query, ResultRead: c.ResultRead, RuntimeBytes: c.RuntimeBytes}, r.refs[rpcServicesNetwork])
+	if err != nil {
+		return nil, err
 	}
 	r.routes, err = rpcv4.NewContractRoutes(c.Routes, r.refs[rpcServicesRoutes])
 	if err != nil {
@@ -687,44 +568,17 @@ func (b *rpcServicesBatch) build(refs []resourcev4.Reference) (_ *RPCServices, e
 	if err != nil {
 		return nil, err
 	}
-	b.built = r
-	b.completionFloor = nil
-	b.deliveryFloor = nil
-	b.resultPosition = environmentResultProtection{}
-	return r, nil
-}
-
-func (b *rpcServicesBatch) adopt(refs []resourcev4.Reference) (_ *RPCServices, err error) {
-	r, err := b.build(refs)
-	if err != nil {
-		return nil, err
-	}
-	b.used = true
-	p, c := b.plan, b.config
-	attached := false
-	defer func() {
-		if err != nil {
-			r.Close()
-			if attached {
-				p.Close()
-			} else {
-				_ = r.retire()
-			}
-		}
-	}()
 	// Original execution promises must succeed before the plan is attached.
 	// History-capacity failure retires this whole batch and leaves the caller's
 	// unclaimed plan available for a later original admission.
 	dc := c.dispatchConfig()
-	dc.dependencyPreparation = &b.dependencies
 	copy(dc.ShortReservations[:], r.refs[rpcServicesShortCalls:rpcServicesShortCalls+5])
-	dc.ShortExecutionBorrow = b.shortExecutionBorrow
-	b.installExecutionReferences(&dc)
-	dispatch, err := p.installServices(dc, r.network, r.refs[rpcServicesDispatch], b.references.dispatch, b.references.registryBorrows[1])
+	dc.ShortExecutionBorrow = shortBorrow
+	b.installExecutionReferences(&dc, r)
+	dispatch, err := p.InstallServices(dc, r.network, r.refs[rpcServicesDispatch])
 	if err != nil {
 		return nil, err
 	}
-	attached = true
 	r.mu.Lock()
 	r.dispatch = dispatch
 	closed := r.closed
@@ -740,16 +594,13 @@ func (b *rpcServicesBatch) adopt(refs []resourcev4.Reference) (_ *RPCServices, e
 	p.rpc = r
 	attached = true
 	p.mu.Unlock()
-	if err = p.installContractQueries(r.incoming, b.queries); err != nil {
+	if err = p.InstallContractQueries(r.incoming); err != nil {
 		return nil, err
 	}
-	b.queries = nil
 	if err = p.InstallOutgoingContractQueries(r.outgoing); err != nil {
 		return nil, err
 	}
-	nc := c.notificationConfig()
-	nc.dependencyPreparation = &b.dependencies
-	notifications, err := p.installNotifications(nc, r.routes, r.refs[rpcServicesNotifyDispatch], b.references.notification, b.references.registryBorrows[2])
+	notifications, err := p.InstallNotifications(c.notificationConfig(), r.routes, r.refs[rpcServicesNotifyDispatch])
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +612,7 @@ func (b *rpcServicesBatch) adopt(refs []resourcev4.Reference) (_ *RPCServices, e
 		notifications.Close()
 		return nil, cryptov4.ErrClosed
 	}
-	b.built = nil
+	b.deliveryFloor = nil
 	return r, nil
 }
 
@@ -774,7 +625,7 @@ func (r *RPCServices) PrepareBootstrap(g *SharedIngress, pool *ReceivePool, outp
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.retired || r.bootstrap != nil || r.nativeConfigured {
+	if r.closed || r.retired || r.bootstrap != nil {
 		return nil, cryptov4.ErrTransition
 	}
 	a := g.admission
@@ -814,98 +665,28 @@ func (r *RPCServices) OpenFirstChannel(identity [16]byte) (*RPCChannel, error) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	r.mu.Lock()
-	if r.closed || r.retired || r.bound || r.firstBinding || r.bootstrap == nil || r.dispatch == nil || r.firstAllocation == nil {
-		r.mu.Unlock()
+	defer r.mu.Unlock()
+	if r.closed || r.bound || r.bootstrap == nil || r.dispatch == nil {
 		return nil, cryptov4.ErrTransition
 	}
 	if identity == ([16]byte{}) {
-		r.mu.Unlock()
 		return nil, cryptov4.ErrConfiguration
 	}
-	// Claim the original charged construction position before leaving r.mu.
-	// Retirement cannot return its references while Engine/endpoint checks
-	// execute outside the services mutex. A pending prefix remains retryable.
-	r.firstBinding = true
-	r.firstBindingDone = make(chan struct{})
-	done := r.firstBindingDone
-	stream, bootstrap, allocation := r.stream, r.bootstrap, r.firstAllocation
-	r.mu.Unlock()
-	defer func() {
-		r.mu.Lock()
-		r.firstBinding = false
-		close(done)
-		r.mu.Unlock()
-	}()
-	if stream == nil {
-		var err error
-		stream, err = bootstrap.admission.OwnStream(bootstrap.handle, allocation.stream.refs[streamFactoryOwnership])
+	if r.stream == nil {
+		stream, err := r.bootstrap.admission.OwnStream(r.bootstrap.handle, r.firstAllocation.stream.refs[streamFactoryOwnership])
 		if err != nil {
 			return nil, err
 		}
-		r.mu.Lock()
 		r.stream = stream
-		closed := r.closed
-		r.mu.Unlock()
-		if closed {
-			_ = stream.Cancel()
-			return nil, cryptov4.ErrClosed
-		}
 	}
-	return r.bindFirstChannel(stream, identity, allocation)
-}
-
-func (r *RPCServices) sealBusiness() {
-	if r != nil {
-		r.draining.Store(true)
-	}
-}
-
-// The admitted lifecycle worker revisits idle channels while real outstanding
-// calls retain their original publication rights. No new worker or timer is
-// created. Idle send directions use the ordinary FIN and terminal-proof path;
-// the peer's output remains independently owned by the original channel reader.
-func (r *RPCServices) progressDrain() {
-	if r == nil || !r.draining.Load() {
-		return
-	}
-	r.mu.Lock()
-	var channels [8]*RPCChannel
-	var notifications [2]*NotifyChannel
-	for i, job := range r.dynamicChannels {
-		if job != nil {
-			channels[i] = job.channel
-		}
-	}
-	for i, job := range r.notifyChannels {
-		if job != nil {
-			notifications[i] = job.channel
-		}
-	}
-	var management *ManagementChannel
-	if r.bootstrap != nil && r.bootstrap.admission.managementSealed.Load() && r.management != nil {
-		management = r.management.channel
-	}
-	r.mu.Unlock()
-	if management != nil {
-		// Closing only the management channel cancels its bounded work and
-		// preserves each actual cleanup tail on the original channel owner.
-		management.Close()
-	}
-	for _, channel := range channels {
-		if channel != nil {
-			channel.drainIdle()
-		}
-	}
-	for _, channel := range notifications {
-		if channel != nil {
-			channel.drainIdle()
-		}
-	}
+	return r.bindFirstChannelLocked(r.stream, identity)
 }
 
 // The first fixed channel consumes only its original preadmitted references.
-// Its construction position is held by OpenFirstChannel, never by r.mu.
-func (r *RPCServices) bindFirstChannel(stream *StreamOwnership, identity [16]byte, allocation *internalChannelAllocation) (*RPCChannel, error) {
+func (r *RPCServices) bindFirstChannelLocked(stream *StreamOwnership, identity [16]byte) (_ *RPCChannel, err error) {
+	if r.closed || r.retired || r.bound || r.dispatch == nil {
+		return nil, cryptov4.ErrTransition
+	}
 	a := stream.admission
 	if a == nil || a.engine.SessionParameters().Contract != r.session || a.engine.Clock() != r.clock {
 		return nil, cryptov4.ErrConfiguration
@@ -919,49 +700,20 @@ func (r *RPCServices) bindFirstChannel(stream *StreamOwnership, identity [16]byt
 	if err := stream.reservation.CheckAllocationScope(r.root, r.owner, r.accounts[:r.accountCount]); err != nil {
 		return nil, err
 	}
-	r.mu.Lock()
-	if r.closed || r.retired || r.bound || r.dispatch == nil {
-		r.mu.Unlock()
-		return nil, cryptov4.ErrTransition
-	}
-	// Actual construction consumes the original opportunity. Constructors
-	// retain their own partial pieces; no retry creates replacement owners.
+	// Attempting construction consumes this first-channel opportunity. Partial
+	// constructors close their original pieces; they do not justify new owners.
 	r.bound = true
-	network, inputs, dispatch, runtimeBytes := r.network, r.inputs, r.dispatch, r.runtimeBytes
-	r.mu.Unlock()
-	channel, err := NewRPCChannel(stream, network, identity, inputs,
-		allocation.rpc[0], allocation.rpc[1], allocation.rpc[2], allocation.rpc[3], runtimeBytes)
+	channel, err := NewRPCChannel(stream, r.network, identity, r.inputs,
+		r.firstAllocation.rpc[0], r.firstAllocation.rpc[1], r.firstAllocation.rpc[2], r.firstAllocation.rpc[3], r.runtimeBytes)
 	if err != nil {
 		return nil, err
 	}
-	err = dispatch.AttachChannel(channel.Receiver(), channel.Publisher())
-	r.mu.Lock()
-	// Record the actual owner after attachment, so a successful publisher is
-	// never visible before its original dispatch association is installed.
-	// Even a failed/closed construction remains here for physical cleanup.
 	r.channel = channel
-	closed := r.closed
-	if err == nil && !closed {
-		r.settleFirstChannelLocked()
-	}
-	r.mu.Unlock()
-	if err != nil || closed {
+	if err := r.dispatch.AttachChannel(channel.Receiver(), channel.Publisher()); err != nil {
 		channel.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, cryptov4.ErrClosed
+		return nil, err
 	}
 	return channel, nil
-}
-
-// The admitted initializer closes this one-shot rendezvous on publication or
-// terminal failure. Waiting never starts another channel or polls readiness.
-func (r *RPCServices) settleFirstChannelLocked() {
-	if r.firstReady != nil && !r.firstSettled {
-		close(r.firstReady)
-		r.firstSettled = true
-	}
 }
 
 func (r *RPCServices) Close() {
@@ -971,7 +723,6 @@ func (r *RPCServices) Close() {
 	r.mu.Lock()
 	if !r.closed {
 		r.closed = true
-		r.settleFirstChannelLocked()
 		if r.managementChanged != nil {
 			r.signalManagementLocked()
 			if r.managementCalls == 0 {
@@ -982,29 +733,31 @@ func (r *RPCServices) Close() {
 			close(r.runtimeStop)
 		}
 	}
-	var rpcChannels [8]*RPCChannel
-	for i, job := range r.dynamicChannels {
+	for _, job := range r.dynamicChannels {
 		if job != nil {
 			job.cancel()
-			rpcChannels[i] = job.channel
+			if job.channel != nil {
+				job.channel.Close()
+			}
 		}
 	}
-	var managementChannel *ManagementChannel
 	if job := r.management; job != nil {
 		job.cancel()
-		managementChannel = job.channel
+		if job.channel != nil {
+			job.channel.Close()
+		}
 	}
 	channel, network, routes, inputs, incoming, outgoing := r.channel, r.network, r.routes, r.inputs, r.incoming, r.outgoing
-	var notifyChannels [2]*NotifyChannel
-	for i, job := range r.notifyChannels {
+	for _, job := range r.notifyChannels {
 		if job != nil {
 			job.cancel()
-			notifyChannels[i] = job.channel
+			if job.channel != nil {
+				job.channel.Close()
+			}
 		}
 	}
 	stream, bootstrap := r.stream, r.bootstrap
-	bootstrapNative := r.bootstrapNative
-	floor, deliveryFloor, resultPosition := r.completionFloor, r.deliveryFloor, r.shortResultPosition
+	floor, deliveryFloor := r.completionFloor, r.deliveryFloor
 	notifications := r.notifications
 	for _, guard := range r.receiveProtection {
 		guard.Close()
@@ -1021,25 +774,7 @@ func (r *RPCServices) Close() {
 		protected.CloseAfterUse()
 	}
 	r.mu.Unlock()
-	// Cancellation enters channel/Stream/Open gates. It must follow services
-	// publication rather than retain r.mu beneath endpoint or admission locks.
-	bootstrapNative.close()
-	for _, closing := range rpcChannels {
-		if closing != nil {
-			closing.Close()
-		}
-	}
-	if managementChannel != nil {
-		managementChannel.Close()
-	}
-	for _, closing := range notifyChannels {
-		if closing != nil {
-			closing.Close()
-		}
-	}
 	r.advanceOperations()
-	r.advanceWorkloads()
-	resultPosition.close()
 	deliveryFloor.Close()
 	floor.Close()
 	if notifications != nil {
@@ -1070,30 +805,7 @@ func (r *RPCServices) Close() {
 	r.AdvanceCalls()
 }
 func (r *RPCServices) waitChannel(ctx context.Context) error {
-	if ctx == nil {
-		return cryptov4.ErrConfiguration
-	}
-	// The runtime coordinator and the original admission owner may observe
-	// cleanup concurrently, including after a partially constructed bootstrap.
-	// Only one observer may clean and relinquish the same Stream capability;
-	// cancellation leaves the existing physical responsibility intact.
-	select {
-	case r.channelCleanupGate <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-r.channelCleanupGate }()
 	r.mu.Lock()
-	for r.firstBinding {
-		done := r.firstBindingDone
-		r.mu.Unlock()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		r.mu.Lock()
-	}
 	channel, stream := r.channel, r.stream
 	jobs := r.dynamicChannels
 	notifyJobs := r.notifyChannels
@@ -1143,24 +855,9 @@ func (r *RPCServices) waitChannel(ctx context.Context) error {
 	if channel == nil {
 		if stream != nil {
 			if err := stream.Cleanup(ctx); err != nil {
-				// A previous cleanup observer may already have relinquished
-				// this original, partially constructed channel's capability.
-				// The core still joins its flow/provider tails separately.
-				stream.mu.Lock()
-				detached := stream.admission == nil
-				stream.mu.Unlock()
-				if !errors.Is(err, ErrStreamOwned) || !detached {
-					return err
-				}
-			}
-			if err := stream.Release(); err != nil {
 				return err
 			}
-			r.mu.Lock()
-			if r.stream == stream {
-				r.stream = nil
-			}
-			r.mu.Unlock()
+			return stream.Release()
 		}
 		return nil
 	}
@@ -1184,34 +881,11 @@ func (p *SessionPlan) waitRPCChannel(ctx context.Context) error {
 }
 func (r *RPCServices) retire() error {
 	r.mu.Lock()
-	if r.retired {
-		r.mu.Unlock()
-		return nil
-	}
-	var admission *OpenAdmission
-	if r.bootstrap != nil {
-		admission = r.bootstrap.admission
-	}
-	r.mu.Unlock()
-	// Controller publication retains admission before endpoint/services gates.
-	// Observe its monotonic retirement state without reversing that order.
-	if admission != nil {
-		admission.mu.Lock()
-		retired := admission.retired
-		admission.mu.Unlock()
-		if !retired {
-			return cryptov4.ErrCapacity
-		}
-	}
-	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.retired {
 		return nil
 	}
-	if r.bootstrap != nil && r.bootstrap.admission != admission {
-		return cryptov4.ErrCapacity
-	}
-	if !r.closed || r.firstBinding {
+	if !r.closed {
 		return cryptov4.ErrCapacity
 	}
 	if r.management != nil || r.managementCalls != 0 {
@@ -1251,11 +925,6 @@ func (r *RPCServices) retire() error {
 			return cryptov4.ErrCapacity
 		}
 	}
-	for _, slot := range r.workloadSlots {
-		if slot != nil {
-			return cryptov4.ErrCapacity
-		}
-	}
 	for _, operation := range r.operations {
 		if operation != nil {
 			return cryptov4.ErrCapacity
@@ -1273,6 +942,15 @@ func (r *RPCServices) retire() error {
 			return cryptov4.ErrCapacity
 		}
 	}
+	if r.bootstrap != nil {
+		a := r.bootstrap.admission
+		a.mu.Lock()
+		retired := a.retired
+		a.mu.Unlock()
+		if !retired {
+			return cryptov4.ErrCapacity
+		}
+	}
 	if r.network != nil && !r.network.Snapshot().CleanupComplete || !r.inputs.CleanupComplete() || !r.routes.CleanupComplete() || !r.incoming.CleanupComplete() || !r.outgoing.CleanupComplete() {
 		return cryptov4.ErrCapacity
 	}
@@ -1285,19 +963,14 @@ func (r *RPCServices) retire() error {
 	r.executionRegistryBorrow.Release()
 	r.executionRegistryBorrow = resourcev4.Reference{}
 	r.executionRegistry, r.managementResolver = nil, nil
-	r.bootstrapNative = nil
-	r.managementNative = nil
 	r.notifyReceiverConfig = rpcv4.NotifyReceiverConfig{}
 	r.notifyPublisherConfig = rpcv4.NotifyPublisherConfig{}
 	r.clock, r.root = nil, nil
 	r.completionFloor = nil
 	r.deliveryFloor = nil
-	r.shortResultPosition = environmentResultProtection{}
 	r.plan = nil
 	r.generalCalls = nil
 	r.operations = nil
-	r.workloadSlots = nil
-	r.initialWorkloads = nil
 	r.publication = nil
 	r.runtimeContext = nil
 	r.firstFuture = internalChannelFuture{}

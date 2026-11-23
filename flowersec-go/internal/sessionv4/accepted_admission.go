@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // AcceptedAdmissionMaterial is independently verified local material. The
@@ -58,11 +58,8 @@ func newAcceptedSessionAdmissionReservation(ctx context.Context, c SessionAdmiss
 	if err = preauth.CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}
-	binding := PreparedCarrierBinding{Session: c.Core.Session, Role: protocolv4.ServerToClient, Candidate: material.Activation.Winner(), Attempt: material.Attempt, MessageCarrier: e.carrier.binding.MessageCarrier, Native: e.carrier.binding.Native}
-	if e.tunnel != nil && binding != e.carrier.binding {
-		return nil, protocolv4.ErrHopAuthContext
-	}
-	if c.Core.MessageCarrier != binding.MessageCarrier || c.Core.Native != binding.Native {
+	binding := PreparedCarrierBinding{Session: c.Core.Session, Role: protocolv4.ServerToClient, Candidate: material.Activation.Winner(), Attempt: material.Attempt, MessageCarrier: e.carrier.binding.MessageCarrier}
+	if c.Core.MessageCarrier != binding.MessageCarrier {
 		return nil, cryptov4.ErrConfiguration
 	}
 	if err = material.Authority.MatchOriginal(binding.Session, binding.Attempt, binding.Candidate); err != nil {
@@ -167,7 +164,7 @@ func newAcceptedSessionAdmissionReservation(ctx context.Context, c SessionAdmiss
 	if err = batch.reserveDeliveryFloor(material.Subscriptions, refs[:n]); err != nil {
 		return nil, err
 	}
-	p := &SessionAdmissionReservation{host: host, ctx: ctx, prepared: e.carrier, guarantees: e.carrier.guarantees, accepted: e, initial: x, config: c, binding: binding, scope: scope, owner: metadata, initialReservation: initial, preauth: held, environment: environment, sessionSlot: slot, wake: make(chan struct{}, 1), done: make(chan struct{}), acceptedBinding: admissionBinding, acceptedFacts: facts, acceptedFSB: append([]byte(nil), wire...)}
+	p := &SessionAdmissionReservation{ctx: ctx, prepared: e.carrier, guarantees: e.carrier.guarantees, accepted: e, initial: x, config: c, binding: binding, scope: scope, owner: metadata, initialReservation: initial, preauth: held, environment: environment, sessionSlot: slot, wake: make(chan struct{}, 1), done: make(chan struct{}), acceptedBinding: admissionBinding, acceptedFacts: facts, acceptedFSB: append([]byte(nil), wire...)}
 	p.claim.owner = p
 	e.mu.Lock()
 	if e.closed || e.admission != nil {
@@ -246,19 +243,6 @@ func (a *SessionAdmissionReservation) AdmitSQLite(store *ledgerv4.SQLiteStore, a
 		}
 	}()
 	guard := func() error { a.mu.Lock(); defer a.mu.Unlock(); return a.checkLocked() }
-	if scheduler, ok := authority.(ledgerv4.SQLiteAdmissionScheduler); ok {
-		release, scheduleErr := scheduler.ScheduleAdmission(sqliteAdmissionScheduleContext{Context: a.ctx, deadline: a.config.Initial.Deadline, guard: guard, wake: a.wake})
-		if scheduleErr != nil {
-			return nil, response, scheduleErr
-		}
-		if release == nil {
-			return nil, response, cryptov4.ErrConfiguration
-		}
-		defer release()
-		if err = guard(); err != nil {
-			return nil, response, err
-		}
-	}
 	durable, err := ledgerv4.NewSQLiteAdmission(a.ctx, store, authority, a.acceptedFacts, owner, a.config.Core.Clock, a.config.Initial.Deadline, guard, buffers, invocation, a.environment)
 	if err != nil {
 		return nil, response, err

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 func newTestRecordReceiver(t *testing.T, engine *cryptov4.Engine, direction protocolv4.Direction, maxFrame uint32, nodeCap int, decodeContext protocolv4.DecodeContext) (*RecordReceiver, error) {
@@ -137,27 +137,9 @@ func (r *resourceHeldReader) Read(dst []byte) (int, error) {
 	return r.source.Read(dst)
 }
 
-// The prefix returns normally; the actual exact-sized body borrow stays live.
-type recordHeldBodyReader struct {
-	source           io.Reader
-	entered, release chan struct{}
-	prefix           bool
-	once             sync.Once
-}
-
-func (r *recordHeldBodyReader) Read(dst []byte) (int, error) {
-	if !r.prefix {
-		r.prefix = true
-		return r.source.Read(dst)
-	}
-	r.once.Do(func() { close(r.entered) })
-	<-r.release
-	return r.source.Read(dst)
-}
-
 func TestRecordReceiverResourceRetainsOriginalProviderTail(t *testing.T) {
 	r, root, wire := resourceRecordReceiver(t)
-	provider := &recordHeldBodyReader{source: bytes.NewReader(wire), entered: make(chan struct{}), release: make(chan struct{})}
+	provider := &resourceHeldReader{source: bytes.NewReader(wire), entered: make(chan struct{}), release: make(chan struct{})}
 	var release sync.Once
 	t.Cleanup(func() { release.Do(func() { close(provider.release) }) })
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

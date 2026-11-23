@@ -7,9 +7,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // nativeTCPOwnership is the canonical full-endpoint claim. Only sealed SDK
@@ -58,7 +58,7 @@ func (n *NativeTCP) own(reservation resourcev4.Reference, deadline *timev4.Deadl
 	if err != nil {
 		return nil, err
 	}
-	tail, err := n.reservation.BorrowInScopesOf(owned)
+	tail, err := n.reservation.Borrow()
 	if err != nil {
 		owned.Release()
 		return nil, err

@@ -1,9 +1,11 @@
 #if os(macOS) || os(iOS)
 
+import Darwin
 import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import NIOSSL
 import NIOWebSocket
 import XCTest
 
@@ -11,27 +13,86 @@ import XCTest
 
 final class ProxyNIOWebSocketTests: XCTestCase {
   func testConnectCompletesSuccessfulUpgrade() async throws {
-    let server = try LocalWebSocketServer(
-      behavior: .upgrade(
-        selectedProtocol: "flowersec-test",
-        initialPayloads: [],
-        closeAfterPayloads: false
-      )
-    )
-    defer { server.stop() }
-
-    let socket = try await ProxyNIOWebSocketConnector.connect(
-      url: URL(string: "ws://127.0.0.1:\(server.port)/socket?token=test")!,
-      headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
-      maxFrameBytes: 64,
-      timeout: .seconds(1)
-    )
-    defer { Task { await socket.close() } }
-
-    XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
-    let request = try XCTUnwrap(server.request)
-    XCTAssertEqual(request.uri, "/socket?token=test")
-    XCTAssertEqual(request.protocolHeader, "flowersec-test")
+    let fixtures = Bundle.module.resourceURL!.appendingPathComponent("Fixtures")
+    let pem = try Data(contentsOf: fixtures.appendingPathComponent("self_signed_cert.pem"))
+    let certificate = try XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(pem)).first)
+    let ca = try NIOSSLCertificate.fromPEMFile(fixtures.appendingPathComponent("self_signed_ca.pem").path)
+    let key = try NIOSSLPrivateKey(
+      file: fixtures.appendingPathComponent("self_signed_key.pem").path, format: .pem)
+    let configuration = TLSConfiguration.makeServerConfiguration(
+      certificateChain: [.certificate(certificate)], privateKey: .privateKey(key))
+    let tlsContext = try NIOSSLContext(configuration: configuration)
+    for mode in ["direct", "http", "tls-ca", "tls-ca-pipe", "tls-untrusted", "tls-wrong-host", "tls-wrong-pin"] {
+      let tls = mode.hasPrefix("tls-")
+      let rejects = ["tls-untrusted", "tls-wrong-host", "tls-wrong-pin"].contains(mode)
+      let server = try LocalWebSocketServer(
+        behavior: .upgrade(
+          selectedProtocol: "flowersec-test", initialPayloads: [], closeAfterPayloads: false),
+        tlsContext: tls ? tlsContext : nil)
+      defer { server.stop() }
+      let path = mode == "direct" ? "/socket?token=test" : "/flowersec/v5/direct"
+      let host = mode == "tls-wrong-host" ? "wrong.invalid" : "localhost"
+      let endpoint = URL(
+        string: "\(tls ? "wss" : "ws")://\(tls ? host : "127.0.0.1"):\(server.port)\(path)")!
+      let port = Int(server.port)
+      let dial: TLSChannelProvider.Connect = { initialize in
+        if mode == "tls-ca-pipe" {
+          let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+          let address = try SocketAddress(ipAddress: "127.0.0.1", port: port)
+          guard descriptor >= 0 else { throw ChannelError.ioOnClosedChannel }
+          guard address.withSockAddr({ Darwin.connect(descriptor, $0, socklen_t($1)) }) == 0 else {
+            Darwin.close(descriptor)
+            throw ChannelError.ioOnClosedChannel
+          }
+          let output = Darwin.dup(descriptor)
+          guard output >= 0 else {
+            Darwin.close(descriptor)
+            throw ChannelError.ioOnClosedChannel
+          }
+          let channel = try await NIOPipeBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelInitializer(initialize)
+            .takingOwnershipOfDescriptors(input: descriptor, output: output).get()
+          XCTAssertNil(channel.remoteAddress)
+          return channel
+        }
+        return try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+          .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
+      }
+      let provider =
+        mode == "http" ? try HTTPDirectChannelProvider(endpoint: endpoint, connect: dial) : nil
+      let tlsProvider =
+        tls
+        ? try TLSChannelProvider(
+          origin: URL(string: "https://\(host):\(server.port)")!, connect: dial) : nil
+      let policy: TransportSecurityPolicyV3
+      if mode == "tls-wrong-pin" {
+        policy = .pin(serverName: host, activeLeafDERSHA256: [Data(repeating: 1, count: 32)])
+      } else {
+        policy = .ca(
+          serverName: host, rootsSource: mode == "tls-untrusted" ? .platform : .configured)
+      }
+      let handler =
+        tls
+        ? try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+          policy: policy, serverHostname: host, configuredRoots: ca) : nil
+      do {
+        let socket = try await ProxyNIOWebSocketConnector.connect(
+          url: endpoint,
+          headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
+          maxFrameBytes: 64, timeout: .seconds(2), tlsHandler: handler,
+          channelProvider: provider, tlsChannelProvider: tlsProvider)
+        XCTAssertFalse(rejects, "\(mode) must reject TLS")
+        XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
+        let request = try XCTUnwrap(server.request)
+        XCTAssertEqual(request.uri, path)
+        XCTAssertEqual(request.protocolHeader, "flowersec-test")
+        await socket.close()
+      } catch {
+        guard rejects else { XCTFail("\(mode): \(error)"); continue }
+        XCTAssertTrue((error as? ProxyUpstreamFailure)?.tlsLocated == true, "\(mode): \(error)")
+        XCTAssertNil(server.request, "TLS rejection must precede HTTP delivery")
+      }
+    }
   }
 
   func testConnectReportsRejectedUpgrade() async throws {
@@ -130,7 +191,7 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     let socket = try await ProxyNIOWebSocketConnector.connect(
       url: URL(string: "ws://127.0.0.1:\(server.port)/socket")!,
       headers: [],
-      maxFrameBytes: FlowersecSDKDefaults.Proxy.maximumWebSocketFrameBytes,
+      maxFrameBytes: FlowersecSDKDefaults.Proxy.maxWSFrameBytes,
       timeout: .seconds(1)
     )
     defer { Task { await socket.close() } }
@@ -146,7 +207,7 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     XCTAssertEqual(received, payloads)
   }
 
-  func testConnectionBackpressuresAtOriginalInboundBudget() async throws {
+  func testConnectionClosesWhenBufferedInboundFramesExceedBudget() async throws {
     let payloads = (0..<96).map { Data(repeating: UInt8($0), count: 4) }
     let server = try LocalWebSocketServer(
       behavior: .upgrade(
@@ -167,8 +228,22 @@ final class ProxyNIOWebSocketTests: XCTestCase {
 
     try await Task.sleep(for: .milliseconds(100))
     var received: [Data] = []
-    for _ in payloads { received.append(try await socket.receive().payload) }
-    XCTAssertEqual(received, payloads)
+    var terminalError: (any Error)?
+    while received.count < payloads.count {
+      do {
+        received.append(try await socket.receive().payload)
+      } catch {
+        terminalError = error
+        break
+      }
+    }
+    XCTAssertFalse(received.isEmpty)
+    XCTAssertLessThan(received.count, payloads.count)
+    XCTAssertEqual(received, Array(payloads.prefix(received.count)))
+    XCTAssertEqual(
+      terminalError as? ProxyError,
+      .stream("Upstream WebSocket receive buffer exceeded")
+    )
   }
 
   func testConnectionEnforcesInboundAndOutboundFrameSize() async throws {
@@ -227,7 +302,7 @@ private final class LocalWebSocketServer: @unchecked Sendable {
 
   var request: LocalWebSocketRequest? { state.request }
 
-  init(behavior: Behavior) throws {
+  init(behavior: Behavior, tlsContext: NIOSSLContext? = nil) throws {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let state = LocalWebSocketServerState()
     do {
@@ -235,11 +310,12 @@ private final class LocalWebSocketServer: @unchecked Sendable {
         .serverChannelOption(ChannelOptions.backlog, value: 1)
         .childChannelInitializer { channel in
           state.setChildChannel(channel)
-          return configureWebSocketTestChannel(
-            channel,
-            behavior: behavior,
-            state: state
-          )
+          do {
+            if let tlsContext { try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: tlsContext)) }
+            return configureWebSocketTestChannel(channel, behavior: behavior, state: state)
+          } catch {
+            return channel.eventLoop.makeFailedFuture(error)
+          }
         }
         .bind(host: "127.0.0.1", port: 0)
         .wait()

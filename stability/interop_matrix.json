@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 5,
   "languages": [
     "go",
     "typescript",
@@ -49,7 +49,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -73,7 +73,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -96,7 +96,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -120,7 +120,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -143,7 +143,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -167,7 +167,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -190,7 +190,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -214,7 +214,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -236,8 +236,7 @@
         "cleanup"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_rust_raw_quic_direct",
@@ -259,8 +258,7 @@
         "datagram"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_node_websocket_direct",
@@ -281,8 +279,7 @@
         "cleanup"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_node_raw_quic_direct",
@@ -304,8 +301,7 @@
         "datagram"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_go_websocket_direct",
@@ -327,7 +323,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -351,7 +347,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/direct/go-baseline"
+        "interop/v5/native/direct/go-baseline"
       ]
     },
     {
@@ -373,8 +369,7 @@
         "cleanup"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_rust_raw_quic_direct",
@@ -396,8 +391,7 @@
         "datagram"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_node_websocket_direct",
@@ -418,8 +412,7 @@
         "cleanup"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_node_raw_quic_direct",
@@ -441,8 +434,7 @@
         "datagram"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this cell.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this cell."
     }
   ],
   "client_profiles": [
@@ -467,7 +459,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "connector/swift/interop/swift-go/wss/direct"
+        "connector/swift-v5/interop/swift-go/wss/direct"
       ]
     },
     {
@@ -494,7 +486,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "connector/swift/interop/swift-go/wss/tunnel"
+        "connector/swift-v5/interop/swift-go/wss/tunnel"
       ]
     },
     {
@@ -518,7 +510,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "connector/browser/interop/browser-go/wss/direct"
+        "connector/browser-v5/interop/browser-go/wss/direct"
       ]
     },
     {
@@ -545,7 +537,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "connector/browser/interop/browser-go/wss/tunnel"
+        "connector/browser-v5/interop/browser-go/wss/tunnel"
       ]
     }
   ],
@@ -574,7 +566,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -603,7 +595,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -632,7 +624,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -659,7 +651,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -688,7 +680,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -715,7 +707,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -744,7 +736,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -771,7 +763,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -800,7 +792,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -827,7 +819,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -852,10 +844,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
+      "status": "unsupported",
+      "reason": "No registered interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_rust_to_node_raw_quic_tunnel",
@@ -881,10 +871,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
+      "status": "unsupported",
+      "reason": "No registered interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_rust_to_go_websocket_tunnel",
@@ -910,7 +898,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -939,7 +927,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -965,8 +953,7 @@
         "opaque-forwarding"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this topology.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_node_to_rust_raw_quic_tunnel",
@@ -993,8 +980,7 @@
         "datagram-forwarding"
       ],
       "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this topology.",
-      "test_ids": []
+      "reason": "No registered interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_go_to_node_websocket_tunnel",
@@ -1020,7 +1006,7 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     },
     {
@@ -1049,498 +1035,14 @@
       ],
       "status": "supported",
       "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_go_to_go_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "go",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_go_to_rust_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_go_to_go_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_rust_to_rust_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_rust_to_rust_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_node_to_node_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "go_via_node_to_node_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_node_to_go_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_node_to_go_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_go_to_rust_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "go",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_rust_to_node_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "rust_via_rust_to_node_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "node_via_rust_to_go_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "node_via_rust_to_go_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "node_via_node_to_rust_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this topology.",
-      "test_ids": []
-    },
-    {
-      "id": "node_via_node_to_rust_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "No current interoperability test exercises the complete executable case set for this topology.",
-      "test_ids": []
-    },
-    {
-      "id": "node_via_go_to_node_websocket_to_raw_quic_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "go",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "raw-quic",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
-      ]
-    },
-    {
-      "id": "node_via_go_to_node_raw_quic_to_websocket_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "websocket",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/v4/native/tunnel/go-baseline"
+        "interop/v5/native/tunnel/go-baseline"
       ]
     }
   ],
   "capability_coverage": {
     "opaque_artifact": {
       "fixtures": [
-        "transport_v4_corpus"
+        "artifact_admission_v5"
       ],
       "cases": []
     },
@@ -1552,7 +1054,7 @@
     },
     "secure_session": {
       "fixtures": [
-        "transport_v4_records"
+        "session_wire_v5"
       ],
       "cases": [
         "stream-metadata",
@@ -1572,7 +1074,7 @@
     },
     "connection_controller": {
       "fixtures": [
-        "transport_v4_api_results"
+        "controller_v5"
       ],
       "cases": []
     },
@@ -1590,9 +1092,9 @@
     },
     "wire_security": {
       "fixtures": [
-        "transport_v4_signatures",
-        "transport_v4_noise",
-        "transport_v4_corpus"
+        "crypto_v5",
+        "handshake_v5",
+        "open_unicode_v5"
       ],
       "cases": []
     }

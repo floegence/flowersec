@@ -1,7 +1,6 @@
 package performance
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,9 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v7"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/carrier"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
 )
 
 type payloadThroughputContract struct {
@@ -80,18 +80,11 @@ type payloadThroughputSample struct {
 }
 
 type payloadThroughputResult struct {
-	Carrier           carrier.Kind
-	Baseline          caseResourceRecord
-	Resources         []caseResourceRecord
-	Samples           []payloadThroughputSample
-	Summary           payloadThroughputSummary
-	SetupDuration     time.Duration
-	OverheadDurations []time.Duration
-	CycleTimings      []payloadThroughputCycleTiming
-}
-
-type payloadThroughputCycleTiming struct {
-	Connect, Warmup, Transfer, Close, Snapshot time.Duration
+	Carrier   carrier.Kind
+	Baseline  caseResourceRecord
+	Resources []caseResourceRecord
+	Samples   []payloadThroughputSample
+	Summary   payloadThroughputSummary
 }
 
 type payloadThroughputSummary struct {
@@ -157,30 +150,18 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 		contract.Direction = payloadClientToServer
 	}
 	result.Samples = make([]payloadThroughputSample, 0, contract.Samples)
-	result.SetupDuration = time.Since(resourceStarted)
 	for sample := 0; sample < contract.Samples; sample++ {
-		cycleStarted := time.Now()
-		result.CycleTimings = append(result.CycleTimings, payloadThroughputCycleTiming{})
-		timing := &result.CycleTimings[len(result.CycleTimings)-1]
 		pair, connectErr := endpoint.Connect(ctx)
-		timing.Connect = time.Since(cycleStarted)
 		if connectErr != nil {
 			return result, fmt.Errorf("connect %s payload throughput sample %d: %w", kind, sample+1, connectErr)
 		}
 		warmupBytes := min(len(payload), 64<<10)
-		phaseStarted := time.Now()
-		warmupErr := pair.RoundTrip(ctx, payload[:warmupBytes], payload[:warmupBytes])
-		timing.Warmup = time.Since(phaseStarted)
-		if warmupErr != nil {
+		if warmupErr := pair.RoundTrip(ctx, payload[:warmupBytes], payload[:warmupBytes]); warmupErr != nil {
 			_ = pair.Close()
 			return result, fmt.Errorf("warm up %s payload throughput sample %d: %w", kind, sample+1, warmupErr)
 		}
-		phaseStarted = time.Now()
 		measured, err := runPayloadThroughputSample(ctx, pair, payload, contract)
-		timing.Transfer = time.Since(phaseStarted)
-		phaseStarted = time.Now()
 		closeErr := pair.Close()
-		timing.Close = time.Since(phaseStarted)
 		if err != nil {
 			return result, errors.Join(fmt.Errorf("%s payload throughput sample %d: %w", kind, sample+1, err), closeErr)
 		}
@@ -188,9 +169,7 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 			return result, fmt.Errorf("close %s payload throughput sample %d: %w", kind, sample+1, closeErr)
 		}
 		result.Samples = append(result.Samples, measured)
-		phaseStarted = time.Now()
 		snapshot, snapshotErr := transporttest.CaptureResourceSnapshot()
-		timing.Snapshot = time.Since(phaseStarted)
 		if snapshotErr != nil {
 			return result, fmt.Errorf("capture %s payload throughput sample %d resources: %w", kind, sample+1, snapshotErr)
 		}
@@ -198,7 +177,6 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 			return result, errors.New("payload throughput CPU counter moved backwards")
 		}
 		result.Resources = append(result.Resources, caseResourceRecord{Phase: fmt.Sprintf("measured sample %d", sample+1), AtNS: time.Since(resourceStarted).Nanoseconds(), RSSBytes: snapshot.RSSBytes, CPUNanoseconds: snapshot.CPUNanoseconds - base.CPUNanoseconds, OpenFDs: snapshot.OpenFDs, Goroutines: snapshot.Goroutines, Tasks: snapshot.Tasks})
-		result.OverheadDurations = append(result.OverheadDurations, time.Since(cycleStarted)-measured.Duration)
 	}
 	result.Summary = summarizePayloadThroughput(result)
 	if err := validatePayloadThroughputResult(contract, result); err != nil {
@@ -336,15 +314,6 @@ func (owner *payloadThroughputStreamOwner) Finish(clean bool) error {
 			owner.finishErr = owner.resetErr
 			return
 		}
-		if err := owner.stream.Finish(owner.ctx); err != nil {
-			owner.reset()
-			owner.finishErr = errors.Join(err, owner.resetErr)
-			return
-		}
-		if err := owner.stream.Close(); err != nil {
-			owner.finishErr = err
-			return
-		}
 		if owner.lifecycle != nil {
 			owner.lifecycle.cleanFINs.Add(1)
 		}
@@ -452,11 +421,9 @@ func runPayloadThroughputStream(ctx context.Context, pair *transporttest.Product
 	establishMu.Unlock()
 	locked = false
 	ack := make([]byte, 1)
-	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
-		if operations > 0 {
-			if remaining := time.Until(deadline); remaining <= contractPayloadOperationGuard() {
-				break
-			}
+	for time.Now().Before(deadline) {
+		if remaining := time.Until(deadline); remaining <= contractPayloadOperationGuard() {
+			break
 		}
 		operationStarted := time.Now()
 		written, err := stream.Write(payload)
@@ -493,7 +460,6 @@ type throughputByteStream interface {
 	io.Closer
 	CloseWrite() error
 	Reset() error
-	Finish(context.Context) error
 }
 
 func runPayloadThroughputStreamDirection(ctx context.Context, pair *transporttest.ProductDirectPair, payload []byte, deadline time.Time, direction payloadDirection, establishMu *sync.Mutex, lifecycle *payloadThroughputLifecycleCounters) (uint64, []time.Duration, error) {
@@ -538,11 +504,7 @@ func runReversePayloadThroughputStream(ctx context.Context, pair *transporttest.
 			resultErr = joinPayloadThroughputAttemptError(resultErr, receiver.Wait())
 		}
 	}()
-	metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": string(payloadServerToClient)})
-	if err != nil {
-		return 0, nil, err
-	}
-	stream, err := pair.Server.OpenStream(attemptCtx, "performance-throughput", metadata)
+	stream, err := pair.Server.OpenStream(attemptCtx, "performance-throughput", flowersession.Metadata{"direction": string(payloadServerToClient)})
 	if err != nil {
 		return 0, nil, err
 	}
@@ -555,8 +517,8 @@ func runReversePayloadThroughputStream(ctx context.Context, pair *transporttest.
 	establishMu.Unlock()
 	locked = false
 	ack := make([]byte, 1)
-	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
-		if operations > 0 && time.Until(deadline) <= contractPayloadOperationGuard() {
+	for time.Now().Before(deadline) {
+		if time.Until(deadline) <= contractPayloadOperationGuard() {
 			break
 		}
 		operationStarted := time.Now()
@@ -630,8 +592,8 @@ func runFullDuplexPayloadThroughputStream(ctx context.Context, pair *transportte
 	}
 	establishMu.Unlock()
 	locked = false
-	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
-		if operations > 0 && time.Until(deadline) <= contractPayloadOperationGuard() {
+	for time.Now().Before(deadline) {
+		if time.Until(deadline) <= contractPayloadOperationGuard() {
 			break
 		}
 		started := time.Now()
@@ -773,7 +735,15 @@ func readFullPayload(stream interface{ Read([]byte) (int, error) }, buffer []byt
 }
 
 func equalPayload(left, right []byte) bool {
-	return bytes.Equal(left, right)
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePayloadThroughputResult(contract payloadThroughputContract, result payloadThroughputResult) error {
@@ -813,15 +783,8 @@ func summarizePayloadThroughput(result payloadThroughputResult) payloadThroughpu
 
 func makePayload(size int) []byte {
 	payload := make([]byte, size)
-	// The original byte formula repeats every 256 bytes. Build that exact
-	// seed, then copy its repetitions without adding a per-byte instrumented
-	// harness loop to the transport's original end-to-end deadline.
-	seed := min(len(payload), 256)
-	for index := range payload[:seed] {
+	for index := range payload {
 		payload[index] = byte(index*31 + 17)
-	}
-	for filled := seed; filled < len(payload); {
-		filled += copy(payload[filled:], payload[:filled])
 	}
 	return payload
 }

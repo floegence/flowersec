@@ -6,10 +6,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 // StreamExecutionHandler runs once on the operation's original ordinary task.
@@ -82,7 +82,7 @@ func (d ExecutionDispatch) dispatchApplicationStream(ctx context.Context, stream
 			i.release()
 		}
 	}()
-	i.dependencies, err = captureApplicationDependenciesWithFloor(ctx, d.DependencyFloor)
+	i.dependencies, err = captureApplicationDependencies(ctx)
 	if err != nil {
 		return observation, err
 	}
@@ -110,7 +110,7 @@ func (d ExecutionDispatch) dispatchApplicationStream(ctx context.Context, stream
 			return err
 		}
 		var err error
-		permit, err = d.Executor.tryAcquireInGroup(d.group, d.Class, task, backing)
+		permit, err = d.Executor.TryAcquire(d.Class, task, backing)
 		return err
 	}
 	if d.DurableHistory != nil {

@@ -2,13 +2,12 @@ package rpcv4
 
 import (
 	"context"
-	"math"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // NotifySink is the fixed notification attachment on the original Stream
@@ -18,14 +17,6 @@ type NotifySink interface {
 	Published(uint64) (bool, error)
 	NotifyTailReleased(uint64) bool
 	Wake() <-chan struct{}
-}
-
-// AuthorizedNotifySink is the original SDK writer's finite copy attachment.
-// Its Engine check precedes the original publication guard, which remains held
-// across the copy and the exact notification submission facts.
-type AuthorizedNotifySink interface {
-	CheckRequestAcceptance(context.Context) error
-	TryAcceptAuthorizedNotify(context.Context, []byte) (uint64, error)
 }
 
 // NotifyPublicationGuard belongs to the original trusted Session/method
@@ -55,20 +46,12 @@ type NotifyPublisher struct {
 	sink                      NotifySink
 	codec                     *protocolv4.ApplicationHeaderCodec
 	reservation               resourcev4.Reference
-	slots                     []notifyPublisherSlot
-	serial                    uint64
+	slots                     []*notifySource
 	count                     int
 	wake                      chan struct{}
 	stepping, closed, retired bool
 }
-type notifyPublisherSlot struct {
-	source                   *notifySource
-	generation               uint64
-	protected, inUse, closed bool
-}
-
 type notifySource struct {
-	serial          uint64
 	decoded         protocolv4.ApplicationHeader
 	header          [514]byte
 	headerBytes     int
@@ -106,7 +89,7 @@ func NotifyPublisherCharge(c NotifyPublisherConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	n += uint64(unsafe.Sizeof(NotifyPublisher{})) + uint64(c.Pending)*uint64(unsafe.Sizeof(notifyPublisherSlot{}))
+	n += uint64(unsafe.Sizeof(NotifyPublisher{})) + uint64(c.Pending)*uint64(unsafe.Sizeof((*notifySource)(nil)))
 	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 func NotifySourceCharge(bytes uint32, runtimeBytes uint64) (resourcev4.Vector, error) {
@@ -135,20 +118,9 @@ func NewNotifyPublisher(sink NotifySink, c NotifyPublisherConfig, ref resourcev4
 		owned.Release()
 		return nil, err
 	}
-	return &NotifyPublisher{sink: sink, codec: codec, reservation: owned, slots: make([]notifyPublisherSlot, c.Pending), wake: make(chan struct{}, 1)}, nil
+	return &NotifyPublisher{sink: sink, codec: codec, reservation: owned, slots: make([]*notifySource, c.Pending), wake: make(chan struct{}, 1)}, nil
 }
 func (p *NotifyPublisher) Wake() <-chan struct{} { return p.wake }
-
-// DrainIfIdle seals the original sender only after every accepted message and
-// physical send tail has finished. seal is the SDK's local queue transition.
-func (p *NotifyPublisher) DrainIfIdle(seal func() bool) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.closed && !p.retired && !p.stepping && p.count == 0 {
-		return seal()
-	}
-	return false
-}
 func (p *NotifyPublisher) notifyLocked() {
 	select {
 	case p.wake <- struct{}{}:
@@ -161,10 +133,6 @@ func (p *NotifyPublisher) notifyLocked() {
 // this layer checks the exact wire variant/length and never creates history.
 // A queued caller cancellation only wins before first prefix-byte acceptance.
 func (p *NotifyPublisher) Submit(ctx context.Context, header, payload []byte, deadline *timev4.Deadline, guard NotifyPublicationGuard, sourceRef, statusRef resourcev4.Reference, runtimeBytes uint64) (submission *NotifySubmission, err error) {
-	return p.submit(ctx, header, payload, deadline, guard, sourceRef, statusRef, runtimeBytes, NotifyProtection{})
-}
-
-func (p *NotifyPublisher) submit(ctx context.Context, header, payload []byte, deadline *timev4.Deadline, guard NotifyPublicationGuard, sourceRef, statusRef resourcev4.Reference, runtimeBytes uint64, protection NotifyProtection) (submission *NotifySubmission, err error) {
 	if p == nil || ctx == nil || deadline == nil || guard == nil {
 		return nil, ErrConfiguration
 	}
@@ -198,11 +166,7 @@ func (p *NotifyPublisher) submit(ctx context.Context, header, payload []byte, de
 		if p.closed || p.retired {
 			return ErrClosed
 		}
-		position, err := p.admitPositionLocked(protection)
-		if err != nil {
-			return err
-		}
-		if p.serial == math.MaxUint64 {
+		if p.count == len(p.slots) {
 			return ErrCapacity
 		}
 		if err := ctx.Err(); err != nil {
@@ -252,10 +216,7 @@ func (p *NotifyPublisher) submit(ctx context.Context, header, payload []byte, de
 			return err
 		}
 		s.submission = &NotifySubmission{done: make(chan struct{}), submitted: make(chan struct{}), wake: p.wake, reservation: status}
-		p.serial++
-		s.serial = p.serial
-		p.slots[position].source = s
-		p.slots[position].inUse = p.slots[position].protected
+		p.slots[p.count] = s
 		p.count++
 		submission = s.submission
 		p.notifyLocked()
@@ -303,19 +264,20 @@ func (s *NotifySubmission) Release() error {
 }
 
 func (p *NotifyPublisher) retireSourceLocked(s *notifySource, reason string, flushed bool) {
-	submission := s.submission
-	submission.mu.Lock()
-	submission.progress.HeaderAccepted = s.begun
-	submission.progress.MessageAccepted = s.accepted
-	submission.progress.Flushed = flushed
-	submission.progress.Terminal = true
-	submission.progress.Reason = reason
-	submission.wake = nil
-	if !submission.submissionDone {
-		submission.submissionDone = true
-		close(submission.submitted)
+	s.submission.mu.Lock()
+	s.submission.progress.HeaderAccepted = s.begun
+	s.submission.progress.MessageAccepted = s.accepted
+	s.submission.progress.Flushed = flushed
+	s.submission.progress.Terminal = true
+	s.submission.progress.Reason = reason
+	s.submission.cleaned = true
+	s.submission.wake = nil
+	if !s.submission.submissionDone {
+		s.submission.submissionDone = true
+		close(s.submission.submitted)
 	}
-	submission.mu.Unlock()
+	close(s.submission.done)
+	s.submission.mu.Unlock()
 	clear(s.payload)
 	s.payload = nil
 	clear(s.header[:])
@@ -324,24 +286,17 @@ func (p *NotifyPublisher) retireSourceLocked(s *notifySource, reason string, flu
 	s.authority = resourcev4.Reference{}
 	s.reservation = resourcev4.Reference{}
 	s.ctx, s.guard, s.deadline, s.submission = nil, nil, nil, nil
-	for i := range p.slots {
-		position := &p.slots[i]
-		if position.source != s {
+	for i := 0; i < p.count; i++ {
+		if p.slots[i] != s {
 			continue
 		}
-		position.source = nil
-		if position.closed {
-			position.protected, position.inUse = false, false
+		for j := i; j+1 < p.count; j++ {
+			p.slots[j] = p.slots[j+1]
 		}
+		p.slots[p.count-1] = nil
 		p.count--
 		break
 	}
-	// Local submission facts are observable while the original source retires.
-	// Cleanup joins every source reference, byte buffer and publisher position.
-	submission.mu.Lock()
-	submission.cleaned = true
-	close(submission.done)
-	submission.mu.Unlock()
 }
 
 // Step admits one bounded chunk, preserving a single physical message until
@@ -362,11 +317,8 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 		p.mu.Unlock()
 		return false, ErrCapacity
 	}
-	for i := range p.slots {
-		s := p.slots[i].source
-		if s == nil {
-			continue
-		}
+	for i := 0; i < p.count; {
+		s := p.slots[i]
 		if !s.begun {
 			s.submission.mu.Lock()
 			closed := s.submission.closed
@@ -383,12 +335,13 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 				continue
 			}
 		}
+		i++
 	}
 	if p.count == 0 {
 		p.mu.Unlock()
 		return progress, nil
 	}
-	s := p.headLocked()
+	s := p.slots[0]
 	// Completed local publication remains true even when authority or time
 	// changes before this cleanup pass. No further byte acceptance occurs.
 	if s.accepted {
@@ -402,12 +355,6 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 	guard := s.guard
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.stepping = false; p.mu.Unlock() }()
-	if sink, ok := p.sink.(AuthorizedNotifySink); ok {
-		if err := sink.CheckRequestAcceptance(ctx); err != nil {
-			return false, err
-		}
-	}
-	sample, sampleErr := s.deadline.Sample()
 	entered := false
 	err = withNotifyPublication(guard, s.decoded, s.begun, func(resourcev4.Reference) error {
 		entered = true
@@ -430,11 +377,7 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 			progress = true
 			return nil
 		}
-		deadlineErr := sampleErr
-		if deadlineErr == nil {
-			deadlineErr = s.deadline.CheckUsingSample(sample)
-		}
-		if err := deadlineErr; err != nil {
+		if err := s.deadline.Check(); err != nil {
 			if !s.begun {
 				p.retireSourceLocked(s, "deadline_exceeded", false)
 				progress = true
@@ -468,13 +411,7 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 			progress = true
 			return nil
 		}
-		var tail uint64
-		var err error
-		if sink, ok := p.sink.(AuthorizedNotifySink); ok {
-			tail, err = sink.TryAcceptAuthorizedNotify(ctx, chunk)
-		} else {
-			tail, err = p.sink.TryAcceptNotify(ctx, chunk)
-		}
+		tail, err := p.sink.TryAcceptNotify(ctx, chunk)
 		if err != nil {
 			s.submission.mu.Unlock()
 			return err
@@ -515,13 +452,10 @@ func (p *NotifyPublisher) NextWake() (milliseconds uint64, cancel <-chan struct{
 	if p.closed || p.count == 0 {
 		return 0, nil, false
 	}
-	s := p.headLocked()
+	s := p.slots[0]
 	milliseconds = ^uint64(0)
-	for i := range p.slots {
-		if p.slots[i].source == nil {
-			continue
-		}
-		n, err := p.slots[i].source.deadline.RemainingMS()
+	for i := 0; i < p.count; i++ {
+		n, err := p.slots[i].deadline.RemainingMS()
 		if err != nil || n == 0 {
 			n = 1
 		}
@@ -553,7 +487,7 @@ func (p *NotifyPublisher) Retire() error {
 		return ErrCapacity
 	}
 	for p.count != 0 {
-		s := p.headLocked()
+		s := p.slots[0]
 		if s.tail != 0 && !p.sink.NotifyTailReleased(s.tail) {
 			return ErrCapacity
 		}

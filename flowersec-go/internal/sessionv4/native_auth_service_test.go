@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 type nativeServiceStream struct {
@@ -234,7 +234,7 @@ func (r *nativeTerminalReader) Read(dst []byte) (int, error) {
 	return copy(dst, r.bytes), r.err
 }
 
-func TestNativeServicePendingPrefixTerminalScopesFailure(t *testing.T) {
+func TestNativeServicePendingPrefixTerminalKeepsReverseDirection(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		input     []byte
@@ -248,9 +248,8 @@ func TestNativeServicePendingPrefixTerminalScopesFailure(t *testing.T) {
 		{name: "provider failure despite proof", cause: io.ErrClosedPipe, terminal: true, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newNativeServiceFixture(t, 2, 1)
+			f := newNativeServiceFixture(t, 1, 1)
 			stream := f.open(t)
-			healthy := f.open(t)
 			f.start()
 			reader := &nativeTerminalReader{entered: make(chan struct{}), release: make(chan struct{}), bytes: tc.input, err: tc.cause}
 			done := f.read(stream, reader)
@@ -284,29 +283,12 @@ func TestNativeServicePendingPrefixTerminalScopesFailure(t *testing.T) {
 			}
 			_, stopped := stream.flow.send.Terminal()
 			if stopped != tc.wantError {
-				t.Fatal("only malformed input must reset the whole original Stream", stopped, err)
+				t.Fatal("reverse direction stop", stopped)
 			}
 			if !tc.wantError {
 				if result, err := stream.flow.send.Write(f.ctx, []byte("reverse"), false); err != nil || !result.Complete {
-					t.Fatal("proven receive termination harmed reverse publication", result, err)
+					t.Fatal("normal receive EOF harmed reverse publication", result, err)
 				}
-			} else {
-				if _, writeErr := stream.flow.send.Write(f.ctx, []byte("reverse"), false); writeErr == nil {
-					t.Fatal("reset Stream accepted reverse publication")
-				}
-				x := stream.flow.nativeReceive
-				x.pool.mu.Lock()
-				cause := x.cause
-				x.pool.mu.Unlock()
-				if !errors.Is(cause, err) {
-					t.Fatal("reset replaced the original receive failure", cause, err)
-				}
-			}
-			if err := nativeResult(t, f.read(healthy, bytes.NewReader(healthy.data(t, 0, true, []byte("healthy"))))); err != nil {
-				t.Fatal("unrelated native scope lost receive progress", err)
-			}
-			if result, err := healthy.flow.send.Write(f.ctx, []byte("healthy reverse"), false); err != nil || !result.Complete {
-				t.Fatal("unrelated native scope lost send progress", result, err)
 			}
 		})
 	}
@@ -396,31 +378,30 @@ func TestNativeAuthServiceConcurrentWorkersRetainPerDirectionOrder(t *testing.T)
 func TestNativeAuthServiceRetainsOriginalCandidateUntilCryptoSlotReturns(t *testing.T) {
 	f := newNativeServiceFixture(t, 1, 1)
 	stream := f.open(t)
-	// Hold the original inbound lane with another authenticated input. A
-	// blocked outgoing packet no longer owns receive authentication capacity.
-	held, err := f.local.receiver.Receive(f.ctx, stream.data(t, 0, false, nil))
-	if err != nil {
-		t.Fatal(err)
+	var held []*cryptov4.Packet
+	for range f.local.engine.OrdinaryWorkSlots() {
+		p, err := f.local.engine.Seal(protocolv4.FrameStreamData, stream.h.Scope(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, p)
 	}
-	t.Cleanup(held.Release)
-	body, err := held.Body()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.flow.receive.ApplyData(body); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() {
+		for _, p := range held {
+			p.Release()
+		}
+	})
 	f.start()
 	done := f.read(stream, bytes.NewReader(stream.data(t, 0, true, []byte("once"))))
 	waitNativeBlocked(t, f.service, stream.flow.nativeReceive, false)
-	if observed, _, _, _ := stream.flow.receive.Snapshot(); observed != (TerminalTuple{NextSequence: 1}) {
+	if observed, _, _, _ := stream.flow.receive.Snapshot(); observed != (TerminalTuple{}) {
 		t.Fatal("no-attempt capacity refusal advanced frontier", observed)
 	}
-	held.Release()
+	held[0].Release()
 	if err := nativeResult(t, done); err != nil {
 		t.Fatal(err)
 	}
-	if observed, _, _, _ := stream.flow.receive.Snapshot(); observed != (TerminalTuple{NextSequence: 2, Offset: 4}) {
+	if observed, _, _, _ := stream.flow.receive.Snapshot(); observed != (TerminalTuple{NextSequence: 1, Offset: 4}) {
 		t.Fatal("slot return failed to resume same candidate once", observed)
 	}
 }

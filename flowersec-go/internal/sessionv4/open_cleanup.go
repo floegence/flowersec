@@ -4,7 +4,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 // Method tails protect the whole admission graph. Slot references separately
@@ -71,7 +71,6 @@ func (a *OpenAdmission) cleanupClosed(ctx context.Context) error {
 		}
 	}
 	for {
-		a.releaseClosedStreams()
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -174,7 +173,8 @@ func (a *OpenAdmission) cleanupClosed(ctx context.Context) error {
 			*s = openSlot{}
 		}
 		clear(a.index)
-		a.metadata.clear()
+		clear(a.metadata)
+		clear(a.metadataUsed)
 		clear(a.encode)
 		a.active, a.opening, a.pending, a.positiveProofs, a.rejectionProofs = 0, 0, 0, 0, 0
 		a.byOpener = [2][3]uint32{}
@@ -290,15 +290,9 @@ func (a *OpenAdmission) Retire() error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.slots, a.index, a.encode = nil, nil, nil
-	a.metadata = openMetadataArena{}
-	for i := range a.stable {
-		a.stable[i].Clear()
-		a.stable[i] = nil
-	}
+	a.slots, a.index, a.metadata, a.metadataUsed, a.encode = nil, nil, nil, nil, nil
+	a.stable = [2][]uint64{}
 	a.decoder = nil
-	a.diagnostics = nil
-	a.diagnosticOperation = nil
 	a.outcomeWake = nil
 	a.retired, a.cleaning = true, false
 	retired = true

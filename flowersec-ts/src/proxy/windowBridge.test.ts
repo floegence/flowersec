@@ -1,9 +1,9 @@
 import { usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { describe, expect, it } from "vitest";
 
-import { SessionError, type OperationOptions } from "../public/contract.js";
+import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
-import { writeAll, type ProxyStream } from "./stream.js";
+import { ProxyByteReader, writeAll } from "./stream.js";
 import {
   MessagePortByteStream,
   registerProxyAppWindow,
@@ -16,9 +16,7 @@ class TestWindow extends EventTarget {
   parent: Window = this as unknown as Window;
 }
 
-class TestServiceWorkerContainer extends EventTarget {
-  readonly controller = { scriptURL: "https://app.example/sw.js" };
-}
+class TestServiceWorkerContainer extends EventTarget {}
 
 class BridgeTarget {
   constructor(
@@ -38,13 +36,13 @@ class BridgeTarget {
   }
 }
 
-class DuplexStream implements ProxyStream {
+class DuplexStream implements ByteStream {
   readonly kind = "proxy";
   terminalError = undefined;
   readonly written: Uint8Array[] = [];
   closeWriteCalled = false;
   closed = false;
-  private readonly incoming = [new Uint8Array([7]), null];
+  constructor(private readonly incoming: Array<Uint8Array | null> = [new Uint8Array([7]), null]) {}
   async read(): Promise<Uint8Array | null> { return this.incoming.shift() ?? null; }
   async write(data: Uint8Array): Promise<number> { this.written.push(data.slice()); return data.length; }
   async closeWrite(): Promise<void> { this.closeWriteCalled = true; }
@@ -53,19 +51,28 @@ class DuplexStream implements ProxyStream {
 }
 
 describe("proxy controller/app window bridge", () => {
-  it("preserves a large application buffer across bounded acknowledged chunks", async () => {
-    const channel = new MessageChannel(), sender = new MessagePortByteStream(channel.port1), receiver = new MessagePortByteStream(channel.port2);
+  it("writes large application buffers as bounded acknowledged chunks", async () => {
+    const channel = new MessageChannel();
+    const sender = new MessagePortByteStream(channel.port1);
+    const receiver = new MessagePortByteStream(channel.port2);
     const payload = new Uint8Array(4 * 1024 * 1024 + 17).map((_, index) => index % 251);
-    const received: Uint8Array[] = [];
+    const chunks: Uint8Array[] = [];
+    const reading = (async () => {
+      let count = 0;
+      while (count < payload.length) {
+        const chunk = await receiver.read();
+        expect(chunk).not.toBeNull();
+        expect(chunk!.length).toBeLessThanOrEqual(1024 * 1024);
+        chunks.push(chunk!);
+        count += chunk!.length;
+      }
+    })();
     try {
-      await Promise.all([writeAll(sender, payload), (async () => {
-        let length = 0;
-        while (length < payload.length) { const chunk = await receiver.read(); expect(chunk).not.toBeNull(); expect(chunk!.length).toBeLessThanOrEqual(1024 * 1024); received.push(chunk!); length += chunk!.length; }
-      })()]);
-      // Compare every byte without enumerating millions of Buffer properties.
-      expect(Buffer.concat(received).equals(Buffer.from(payload))).toBe(true);
+      await within(Promise.all([writeAll(sender, payload), reading]));
+      expect(Buffer.concat(chunks).equals(Buffer.from(payload))).toBe(true);
     } finally { await sender.close(); await receiver.close(); }
   });
+
   it("removes the abort waiter after an ACK wins the race", async () => {
     const channel = new MessageChannel();
     const stream = new MessagePortByteStream(channel.port1);
@@ -130,16 +137,17 @@ describe("proxy controller/app window bridge", () => {
     }
   });
 
-  it("enforces origin and capability while bridging fetch and duplex WebSocket bytes", async () => {
+  it.each([1, 2 * 1024 * 1024 + 17])("enforces origin and capability while bridging %d duplex bytes", async (size) => {
     const controllerWindow = new TestWindow();
     const appWindow = new TestWindow();
     const controllerOrigin = "https://controller.example";
     const appOrigin = "https://app.example";
-    const stream = new DuplexStream();
+    const payload = new Uint8Array(size).map((_, index) => index % 251);
+    const stream = new DuplexStream([payload, null]);
     let fetchRequest: ProxyFetchRequest | undefined;
     const runtime: ProxyRuntime = {
       limits: {
-        maxMetadataBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
+        maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
         maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
         maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
       },
@@ -185,12 +193,13 @@ describe("proxy controller/app window bridge", () => {
 
     const opened = await app.runtime.openWebSocketStream("/socket", { protocols: ["chat"] });
     expect(opened.protocol).toBe("chat");
-    expect(await opened.stream.read()).toEqual(new Uint8Array([7]));
-    expect(await opened.stream.write(new Uint8Array([9, 8]))).toBe(2);
+    const reader = new ProxyByteReader(opened.stream);
+    expect(Buffer.from(await reader.readExactly(payload.length)).equals(Buffer.from(payload))).toBe(true);
+    await writeAll(opened.stream, payload);
     await opened.stream.closeWrite();
     expect(await opened.stream.read()).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(stream.written).toEqual([new Uint8Array([9, 8])]);
+    expect(Buffer.concat(stream.written).equals(Buffer.from(payload))).toBe(true);
     expect(stream.closeWriteCalled).toBe(true);
 
     app.dispose();
@@ -225,7 +234,6 @@ describe("proxy controller/app window bridge", () => {
       },
       ports: [channel.port1],
     });
-    Object.defineProperty(event, "source", { value: serviceWorker.controller });
     serviceWorker.dispatchEvent(event);
     expect(forwarded).toHaveLength(1);
 
@@ -246,10 +254,10 @@ describe("proxy controller/app window bridge", () => {
       targetWindow: appWindow as unknown as Window,
     });
     const channel = new MessageChannel();
-    // The bridge accepts only messages from its captured controller.
-    const malformedEvent = new MessageEvent("message", { data: { type: "flowersec-proxy:fetch", req: { id: 7 } }, ports: [channel.port1] });
-    Object.defineProperty(malformedEvent, "source", { value: serviceWorker.controller });
-    serviceWorker.dispatchEvent(malformedEvent);
+    serviceWorker.dispatchEvent(new MessageEvent("message", {
+      data: { type: "flowersec-proxy:fetch", req: { id: 7 } },
+      ports: [channel.port1],
+    }));
     await expect(within(nextMessage(channel.port2))).resolves.toMatchObject({
       type: "flowersec-proxy:response_error",
       status: 400,
@@ -302,7 +310,7 @@ describe("proxy controller/app window bridge", () => {
   });
 });
 
-class FailingDuplexStream implements ProxyStream {
+class FailingDuplexStream implements ByteStream {
   readonly kind = "proxy";
   terminalError = undefined;
   resetCalled = false;
@@ -331,7 +339,7 @@ class FailingDuplexStream implements ProxyStream {
   async close(): Promise<void> {}
 }
 
-function bridgeHarness(stream: ProxyStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
+function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
   app: ReturnType<typeof registerProxyAppWindow>;
   controller: ReturnType<typeof registerProxyControllerWindow>;
 }> {
@@ -341,7 +349,7 @@ function bridgeHarness(stream: ProxyStream, dispatchFetch: ProxyRuntime["dispatc
   const appOrigin = "https://app.example";
   const runtime = {
     limits: {
-      maxMetadataBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
+      maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
       maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
       maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
     },

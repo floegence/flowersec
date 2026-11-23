@@ -1,59 +1,39 @@
-import { ProxyCredentialManager, type ProxyCredentialPolicy, type ProxyCredentialAuthentication, type ProxyCredentialRequest } from "./proxyCredentials.js";
-import { PROXY_CREDENTIAL_CONTROL_PATH, decodeProxyCredentialControlRequest, encodeProxyCredentialControlResponse } from "../proxy/credentialControl.js";
 import { createRequire } from "node:module";
-import { Agent as HTTPAgent, request as requestHTTP, type ClientRequest, type IncomingMessage } from "node:http";
-import { Agent as HTTPSAgent, request as requestHTTPS } from "node:https";
-import { Readable } from "node:stream";
 
+import type { ByteStream } from "../public/contract.js";
 import { SessionError } from "../public/contract.js";
-import { PROXY_WIRE_VERSION, readProxyFrame, writeProxyFrame, validateProxyTrailers, type ProxySchema } from "../proxy/wire.js";
-import { ProxyByteReader, writeAll, type ProxyStream } from "../proxy/stream.js";
-import { currentProxyStream } from "../proxy/currentStream.js";
-import type { V4ControllerStreamDeclaration } from "../v4/controller.js";
-import type { V4StreamOpenAuthorizer, V4StreamRegistrationOptions } from "../v4/streamHandlers.js";
-import { inspectProxyHeaders, type ProxyHeaderFacts } from "../proxy/headers.js";
-import { createHandlerPlan, type HandlerPlan, type HandlerPlanOptions } from "../v4/handlerPlan.js";
-import { originalEnvironment } from "../v4/runtime/environment.js";
-import type { V4TransportEnvironment } from "../v4/public.js";
-import { normalizePath as normalizeProxyPath } from "../proxy/policy.js";
-import { ProxyNetworkPolicy, proxyUpstreamHost, type ProxyConnection } from "./proxyNetwork.js";
+import { writeJsonFrame } from "../framing/jsonframe.js";
+import { ProxyByteReader, writeAll, writeProxyWebSocketFrame } from "../proxy/stream.js";
+import {
+  StreamHandlers,
+  registerStreamHandlersAtomically,
+  type StreamHandler,
+} from "../public/streamHandlers.js";
+import {
+  SessionHandlersV3,
+  registerSessionStreamHandlersAtomically,
+} from "./acceptor.js";
 
-export interface ProxyServerRegistrationOptions extends Pick<HandlerPlanOptions, "services" | "maintenanceOwner"> {
-  readonly authorize: V4StreamOpenAuthorizer;
-  readonly applicationBytes: bigint;
-  readonly applicationTimeoutMS?: bigint;
-}
-interface ProxyProtocolIncoming { readonly stream: ProxyStream }
-type ProxyProtocolHandler = (incoming: ProxyProtocolIncoming, options: Readonly<{ signal: AbortSignal }>) => Promise<void>;
-const protocolHandlers = new WeakMap<ProxyServer, readonly (readonly [string, ProxyProtocolHandler])[]>();
-/** Internal protocol-policy fixtures exercise the same upstream handlers as
- * the current Stream projection, without introducing another Session engine. */
-export function captureProxyProtocolHandlers(server: ProxyServer): readonly (readonly [string, ProxyProtocolHandler])[] {
-  const handlers = protocolHandlers.get(server);
-  if (handlers === undefined) throw new ProxyServerError("handler_registration");
-  return handlers;
-}
+export type StreamHandlerRegistrar = StreamHandlers | SessionHandlersV3;
 
 const HTTP_KIND = "flowersec-proxy/http1";
 const WS_KIND = "flowersec-proxy/ws";
-const WIRE_VERSION = PROXY_WIRE_VERSION;
+const WIRE_VERSION = 1;
 const DEFAULT_MAX_JSON = 1 << 20;
 const DEFAULT_MAX_CHUNK = 256 * 1024;
 const DEFAULT_MAX_BODY = 64 * 1024 * 1024;
 const DEFAULT_MAX_WS = 1 << 20;
 const DEFAULT_TIMEOUT = 30_000;
 const MAX_TIMEOUT = 300_000;
-const FORBIDDEN_HEADERS = new Set(["authorization", "connection", "host", "keep-alive", "proxy-authorization", "proxy-authenticate", "proxy-connection", "te", "trailer", "set-cookie", "transfer-encoding", "upgrade"]);
+const FORBIDDEN_HEADERS = new Set(["authorization", "connection", "host", "keep-alive", "proxy-authorization", "set-cookie", "transfer-encoding", "upgrade"]);
 const REQUEST_HEADERS = new Set(["accept", "accept-language", "content-type", "if-match", "if-none-match", "range"]);
-const RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-encoding", "content-language", "content-length", "content-range", "content-type", "etag", "expires", "last-modified", "location"]);
+const RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-language", "content-range", "content-type", "etag", "expires", "last-modified", "location"]);
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 
 export type ProxyServerOptions = Readonly<{
   upstream: string;
   upstreamOrigin: string;
   allowedUpstreamHosts?: readonly string[];
-  /** Numeric addresses or canonical CIDRs; required for DNS upstreams. */
-  allowedUpstreamAddresses?: readonly string[];
   allowedOrigins?: readonly string[];
   maxConcurrentStreams?: number;
   maxConcurrentHTTPStreams?: number;
@@ -71,7 +51,6 @@ export type ProxyServerOptions = Readonly<{
   extraWebSocketHeaders?: readonly string[];
   forbiddenCookieNames?: readonly string[];
   forbiddenCookieNamePrefixes?: readonly string[];
-  credentials?: ProxyCredentialPolicy;
   onError?: (error: unknown) => void;
 }>;
 
@@ -84,7 +63,6 @@ export class ProxyServerError extends Error {
 
 type Config = Readonly<{
   upstream: URL;
-  network: ProxyNetworkPolicy;
   upstreamOrigin: string;
   allowedOrigins: ReadonlySet<string>;
   requestHeaders: ReadonlySet<string>;
@@ -114,17 +92,12 @@ type HTTPMeta = Readonly<{
   headers: readonly Header[];
   external_origin?: string;
   timeout_ms?: number;
-  credential_context?: string;
-  credentials?: string;
-  request_origin?: string;
 }>;
-type WSOpen = Readonly<{ v: number; conn_id: string; path: string; headers: readonly Header[];
-  credential_context?: string; credentials?: string; request_origin?: string }>;
+type WSOpen = Readonly<{ v: number; conn_id: string; path: string; headers: readonly Header[] }>;
 type Header = Readonly<{ name: string; value: string }>;
 
 export class ProxyServer {
   readonly #config: Config;
-  readonly #credentials: ProxyCredentialManager;
   readonly #active = new Set<AbortController>();
   readonly #abortLinks = new WeakMap<AbortController, () => void>();
   readonly #permits: Set<unknown> = new Set();
@@ -136,87 +109,42 @@ export class ProxyServer {
 
   constructor(options: ProxyServerOptions) {
     this.#config = compileConfig(options);
-    this.#credentials = new ProxyCredentialManager(options.credentials, this.#config.upstream);
     this.#completion = new Promise<void>((resolve) => { this.#resolveCompletion = resolve; });
-    protocolHandlers.set(this, Object.freeze([Object.freeze([HTTP_KIND, this.#httpHandler()] as const), Object.freeze([WS_KIND, this.#webSocketHandler()] as const)]));
   }
 
-  /** Build an immutable paid plan for the original current Acceptor/Serve. */
-  register(environment: V4TransportEnvironment, options: ProxyServerRegistrationOptions): HandlerPlan {
+  register(handlers: StreamHandlerRegistrar): void {
     if (this.#closed) throw new ProxyServerError("closed");
     try {
-      originalEnvironment(environment);
-      const streams = this.streamHandlers(options.authorize, options);
-      return createHandlerPlan(environment, { applicationBytes: options.applicationBytes, streams,
-        ...(options.services === undefined ? {} : { services: options.services }),
-        ...(options.maintenanceOwner === undefined ? {} : { maintenanceOwner: options.maintenanceOwner }) });
+      const registrations = [
+        [HTTP_KIND, this.#httpHandler()],
+        [WS_KIND, this.#webSocketHandler()],
+      ] as const;
+      if (handlers instanceof StreamHandlers) {
+        registerStreamHandlersAtomically(handlers, registrations);
+      } else if (handlers instanceof SessionHandlersV3) {
+        registerSessionStreamHandlersAtomically(handlers, registrations);
+      } else {
+        throw new TypeError("invalid Flowersec stream handler registrar");
+      }
     } catch (error) {
-      this.#report(error); throw new ProxyServerError("handler_registration");
+      this.#report(error);
+      throw new ProxyServerError("handler_registration");
     }
-  }
-
-  /** Install these declarations on the current candidate before publication.
-   * Authorization receives the authenticated peer for this configured upstream.
-   * All declarations share this server's aggregate admission and shutdown. */
-  streamHandlers(authorize: V4StreamOpenAuthorizer,
-    options: Pick<V4StreamRegistrationOptions, "applicationBytes" | "applicationTimeoutMS">): readonly V4ControllerStreamDeclaration[] {
-    if (this.#closed) throw new ProxyServerError("closed");
-    if (typeof authorize !== "function" || typeof options?.applicationBytes !== "bigint" || options.applicationBytes < 1n ||
-        this.#config.maxConcurrent > 128) throw new ProxyServerError("handler_registration");
-    const inputBackingBytes = Math.max(8192, this.#config.maxBody, this.#config.maxJSON + 4, this.#config.maxChunk + 4, this.#config.maxWS + 5);
-    if (!Number.isSafeInteger(inputBackingBytes) || inputBackingBytes > 0x7fffffff) throw new ProxyServerError("handler_registration");
-    // The application reservation includes body assembly and metadata/WS
-    // workspaces; the stream adapter separately owns its read and input tails.
-    const applicationBytes = options.applicationBytes + 2n * (BigInt(this.#config.maxBody) + BigInt(this.#config.maxJSON) + BigInt(this.#config.maxWS)) + 16384n;
-    const registration = Object.freeze({ applicationBytes, workClass: "resident" as const,
-      maxConcurrentStreams: this.#config.maxConcurrent,
-      applicationTimeoutMS: options.applicationTimeoutMS ?? BigInt(this.#config.maxTimeout),
-      metadataNamespaces: Object.freeze([Object.freeze({ namespace: "application/json", version: 1 })]),
-    });
-    const allowed: V4StreamOpenAuthorizer = async (context, metadata) => {
-      if (this.#closed || context.signal.aborted) return false;
-      return await authorize(context, metadata);
-    };
-    return Object.freeze([HTTP_KIND, WS_KIND].map(kind => Object.freeze({
-      kind, authorize: allowed, options: registration,
-      handler: async (owner, context) => {
-        let stream: ReturnType<typeof currentProxyStream> | undefined;
-        let release: (() => void) | undefined;
-        const controller = this.#track(context.signal);
-        const stopped = () => controller.abort(new SessionError("stream_reset"));
-        try {
-          stream = currentProxyStream(owner, { readBytes: 65536, inputBackingBytes,
-            finishTimeoutMS: this.#config.maxTimeout, cleanupTimeoutMS: 5000 });
-          stream.signal.addEventListener("abort", stopped, { once: true });
-          if (stream.signal.aborted) stopped();
-          release = this.#acquire(stream);
-          if (release === undefined) { await stream.reset(); return; }
-          if (kind === HTTP_KIND) await this.#serveHTTP(stream, controller.signal, context.authentication);
-          else await this.#serveWebSocket(stream, controller.signal, context.authentication);
-          await stream.finish({ signal: controller.signal });
-        } catch (error) {
-          await owner.reset().catch(() => undefined);
-          this.#report(error);
-          throw error;
-        } finally { stream?.signal.removeEventListener("abort", stopped); stream?.dispose(); this.#untrack(controller); release?.(); }
-      },
-    } satisfies V4ControllerStreamDeclaration)));
   }
 
   async close(): Promise<void> {
     if (!this.#closed) {
-      this.#closed = true; this.#credentials.close(); protocolHandlers.delete(this);
+      this.#closed = true;
       for (const controller of this.#active) controller.abort(new SessionError("closed"));
       if (this.#active.size === 0) this.#resolveCompletion();
     }
     await this.#completion;
-    await this.#config.network.close();
   }
 
   /** @internal */
   get activeCount(): number { return this.#active.size; }
 
-  #httpHandler(): ProxyProtocolHandler {
+  #httpHandler(): StreamHandler {
     return async (incoming, options) => {
       const release = this.#acquire(incoming.stream);
       if (release === undefined) return;
@@ -227,7 +155,7 @@ export class ProxyServer {
     };
   }
 
-  #webSocketHandler(): ProxyProtocolHandler {
+  #webSocketHandler(): StreamHandler {
     return async (incoming, options) => {
       const release = this.#acquire(incoming.stream);
       if (release === undefined) return;
@@ -238,7 +166,7 @@ export class ProxyServer {
     };
   }
 
-  #acquire(stream: ProxyStream): (() => void) | undefined {
+  #acquire(stream: ByteStream): (() => void) | undefined {
     if (this.#closed || this.#permits.size >= this.#config.maxConcurrent) {
       void stream.reset().catch(() => undefined);
       this.#report(new ProxyServerError(this.#closed ? "closed" : "handler_registration"));
@@ -279,17 +207,15 @@ export class ProxyServer {
   }
   #report(error: unknown): void { try { this.#config.report?.(error); } catch { /* reporting is isolated */ } }
 
-  async #serveHTTP(stream: ProxyStream, parentSignal: AbortSignal, authentication?: ProxyCredentialAuthentication): Promise<void> {
+  async #serveHTTP(stream: ByteStream, parentSignal: AbortSignal): Promise<void> {
     const started = performance.now();
     const timeoutController = new AbortController();
     let timer = setTimeout(() => timeoutController.abort(), this.#config.maxTimeout);
     const linked = linkSignals(parentSignal, timeoutController.signal);
-    let signal = linked.signal;
-    let credential: ProxyCredentialRequest | undefined;
+    const signal = linked.signal;
     let reset: Promise<void> | undefined;
     let peerWatch: Promise<void> | undefined;
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    let closeResponse: (() => Promise<void>) | undefined;
     let httpPermit = false;
     let eventPermit = false;
     const releaseEvent = () => { if (eventPermit) { eventPermit = false; this.#eventCount--; } };
@@ -299,11 +225,10 @@ export class ProxyServer {
     try {
       const reader = new ProxyByteReader(stream, { signal });
       let meta: HTTPMeta;
-      try { meta = decodeHTTPMeta(await readProxyFrame(reader, "ProxyHTTPRequest", this.#config.maxJSON)); }
+      try { meta = decodeHTTPMeta(await readFrame(reader, this.#config.maxJSON)); }
       catch { await writeHTTPError(stream, "unknown", "invalid_request_meta"); return; }
       const requestID = meta.request_id.trim();
-      let path: string;
-      try { path = normalizeProxyPath(meta.path); } catch { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
+      const path = normalizePath(meta.path);
       if (meta.v !== WIRE_VERSION || requestID === "" || meta.method.trim() === "" || path === undefined) {
         await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
       }
@@ -313,29 +238,8 @@ export class ProxyServer {
       const remaining = timeout - (performance.now() - started);
       if (remaining <= 0) timeoutController.abort();
       else timer = setTimeout(() => timeoutController.abort(), remaining);
-      let requestFacts: ProxyHeaderFacts;
-      try {
-        requestFacts = inspectProxyHeaders(meta.headers);
-        if (requestFacts.transferEncoding) throw new Error("structured request has transfer coding");
-      } catch { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
-      const incomingBody = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, this.#config.maxJSON, requestFacts);
-      if (incomingBody === undefined || reader.bufferedBytes !== 0) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
-      const { body, trailers: inputTrailers } = incomingBody;
-      if (path.split("?", 1)[0] === PROXY_CREDENTIAL_CONTROL_PATH) {
-        if (path !== PROXY_CREDENTIAL_CONTROL_PATH || meta.method !== "POST" || body.byteLength > 8192 || inputTrailers.length !== 0 || meta.credential_context !== undefined) {
-          await writeHTTPError(stream, requestID, "credential_control_invalid"); return;
-        }
-        const control = decodeProxyCredentialControlRequest(body);
-        const ack = await this.#credentials.control(control, authentication, signal);
-        const encoded = encodeProxyCredentialControlResponse(ack);
-        await writeFrame(stream, { v: WIRE_VERSION, request_id: requestID, ok: true, status: 200,
-          headers: [{ name: "content-type", value: "application/cbor" }, { name: "cache-control", value: "no-store, no-transform" }] }, signal);
-        await writeChunks(stream, encoded, this.#config.maxChunk, signal); return;
-      }
-
-      let requestHeaders: Header[];
-      try { requestHeaders = filterRequestHeaders(requestFacts, this.#config, body.byteLength); }
-      catch { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
+      const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody);
+      if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
       // A peer reset cancels the upstream even when it has no next event to write.
       // A FIN only closes request writes and is valid during response streaming.
       peerWatch = stream.read({ signal }).then((chunk) => {
@@ -356,6 +260,7 @@ export class ProxyServer {
       }
       const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
       if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
+      const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
       if (externalOrigin !== undefined) {
         const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
         if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
@@ -364,24 +269,14 @@ export class ProxyServer {
         const origin = new URL(externalOrigin);
         requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
       }
-      const target = this.#config.upstream;
-      const actualTarget = new URL(target.origin); actualTarget.pathname = path.split("?", 1)[0]!;
-      const question = path.indexOf("?"); if (question >= 0) actualTarget.search = path.slice(question);
-      credential = await this.#credentials.capture(meta, authentication, actualTarget, requestHeaders, signal, requestFacts.fields);
-      signal = credential.signal; requestHeaders = [...credential.headers];
-      credential.check();
-      let responsePublished = false;
+      const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
+      const target = new URL(path, this.#config.upstream);
+      const requestInit: RequestInit & { duplex?: "half" } = {
+        method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
+        ...(body.byteLength === 0 ? {} : { body: body.slice().buffer as ArrayBuffer, duplex: "half" }),
+      };
       try {
-        const method = meta.method;
-        const response = await requestCodedResponse(target, this.#config.network, path, method, requestHeaders, body, filterHeaders(inspectProxyHeaders(inputTrailers), REQUEST_HEADERS, this.#config.requestHeaders), signal, this.#config.maxJSON, () => credential!.check());
-        closeResponse = response.close;
-        credential.check();
-        const responseFacts = inspectProxyHeaders(credential.update(response.headerList, actualTarget));
-        if (responseFacts.connection.has("content-encoding") && responseFacts.fields.some(field => field.name === "content-encoding")) {
-          throw new Error("content coding cannot lose its representation label");
-        }
-        const hasBody = method !== "HEAD" && response.status !== 204 && response.status !== 304 && response.status !== 205 && !(response.status >= 100 && response.status < 200);
-        responseReader = response.body.getReader();
+        const response = await fetch(target, requestInit);
         const persistent = eventRequested && isEventStream(response.headers.get("content-type") ?? "");
         const activity = () => {
           if (!persistent) return;
@@ -389,45 +284,33 @@ export class ProxyServer {
           timer = setTimeout(() => timeoutController.abort(), this.#config.eventIdleTimeout);
         };
         if (persistent) activity(); else releaseEvent();
-        const contentLength = responseFacts.contentLength;
-        if (hasBody && !persistent && contentLength !== undefined && contentLength > BigInt(this.#config.maxBody)) {
+        const contentLength = response.headers.get("content-length");
+        if (!persistent && contentLength !== null && Number(contentLength) > this.#config.maxBody) {
           await writeHTTPError(stream, requestID, "response_body_too_large"); return;
         }
-        credential.check();
-        responsePublished = true;
         await writeFrame(stream, {
           v: WIRE_VERSION, request_id: requestID, ok: true, status: response.status,
-          headers: filterHeaders(responseFacts, RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders, this.#config.responseHeaders.has("set-cookie")),
+          headers: filterHeaders(responseHeaderList(response.headers), RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders),
         }, signal);
         let total = 0;
-        let remainingLength = hasBody ? contentLength : undefined;
-        const reader = responseReader;
+        const reader = response.body?.getReader();
+        responseReader = reader;
         if (reader !== undefined) {
           while (true) {
             const result = await reader.read();
             if (result.done) break;
             activity();
-            if (remainingLength !== undefined) {
-              remainingLength -= BigInt(result.value.length);
-              if (remainingLength < 0n) throw new Error("upstream content length mismatch");
-            }
-            if(!hasBody && result.value.length!==0)throw new Error("unexpected body");
             if (!persistent) total += result.value.length;
             if (total > this.#config.maxBody) throw new Error("upstream response body exceeds limit");
             for (let offset = 0; offset < result.value.length; offset += this.#config.maxChunk) {
-              credential.check();
               await writeChunk(stream, result.value.subarray(offset, offset + this.#config.maxChunk), signal);
             }
           }
-          if (remainingLength !== undefined && remainingLength !== 0n) throw new Error("upstream content length mismatch");
         }
-        credential.check();
-        const trailers = response.trailers().filter(field => !credential!.managed || field.name !== "set-cookie");
-        validateProxyTrailers(trailers, responseFacts.connection);
-        await writeBodyEnd(stream, filterHeaders(inspectProxyHeaders(trailers),RESPONSE_HEADERS,this.#config.responseHeaders,this.#config.blockedResponseHeaders), signal);
+        await writeChunk(stream, new Uint8Array(), signal);
       } catch (error) {
-        if (responsePublished || signal.aborted) throw error;
-        const code = error instanceof Error && error.message === "credential_update_failed" ? "credential_update_failed" : timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
+        if (signal.aborted) throw error;
+        const code = timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
         await writeHTTPError(stream, requestID, code);
         this.#report(error);
       }
@@ -438,121 +321,48 @@ export class ProxyServer {
       linked.dispose();
       signal.removeEventListener("abort", abort);
       timeoutController.abort();
-      try {
-        await responseReader?.cancel().catch(() => undefined);
-        responseReader?.releaseLock();
-      } finally { try { await closeResponse?.(); } finally { credential?.close(); } }
+      await responseReader?.cancel().catch(() => undefined);
+      responseReader?.releaseLock();
       await peerWatch;
       await reset;
     }
   }
 
-  async #serveWebSocket(stream: ProxyStream, signal: AbortSignal, authentication?: ProxyCredentialAuthentication): Promise<void> {
-    const stopRead = new AbortController();
-    let relaySignal = AbortSignal.any([signal, stopRead.signal]);
-    let credential: ProxyCredentialRequest | undefined;
-    const reader = new ProxyByteReader(stream, { signal: relaySignal });
+  async #serveWebSocket(stream: ByteStream, signal: AbortSignal): Promise<void> {
+    const reader = new ProxyByteReader(stream, { signal });
     let open: WSOpen;
-    try { open = decodeWSOpen(await readProxyFrame(reader, "ProxyWebSocketOpen", this.#config.maxJSON)); }
+    try { open = decodeWSOpen(await readFrame(reader, this.#config.maxJSON)); }
     catch { await writeWSError(stream, "unknown", "invalid_ws_open_meta"); return; }
-    let path: string;
-    try { path = normalizeProxyPath(open.path); } catch { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
+    const path = normalizePath(open.path);
     if (open.v !== WIRE_VERSION || open.conn_id.trim() === "" || path === undefined) { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
-    // Only authority enters URL parsing. finishRequest supplies the validated
-    // origin-form spelling before native header serialization.
-    const upstreamURL = new URL(this.#config.upstream.origin);
+    const upstreamURL = new URL(path, this.#config.upstream);
     upstreamURL.protocol = upstreamURL.protocol === "https:" ? "wss:" : "ws:";
     const require = createRequire(import.meta.url);
     const wsModule = require("ws") as any;
     const WebSocketCtor = wsModule?.WebSocket ?? wsModule;
-    let fields: Header[];
-    try {
-      const facts = inspectProxyHeaders(open.headers);
-      if (facts.transferEncoding || facts.contentLength !== undefined && facts.contentLength !== 0n) throw new Error("invalid WebSocket framing");
-      fields = filterHeaders(facts, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders);
-    } catch { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
-    try {
-      const actual = new URL(upstreamURL); actual.pathname = path.split("?", 1)[0]!;
-      const question = path.indexOf("?"); if (question >= 0) actual.search = path.slice(question);
-      credential = await this.#credentials.capture(open, authentication, actual, open.headers, signal);
-      signal = credential.signal; relaySignal = AbortSignal.any([signal, stopRead.signal]);
-      const cookieFields = credential.headers.filter(field => ["cookie", "authorization"].includes(field.name));
-      fields = [...fields.filter(field => !["cookie", "authorization"].includes(field.name)), ...cookieFields];
-    } catch { await writeWSError(stream, open.conn_id, "credential_scope_unavailable"); return; }
-    const protocols = fields.filter(header => header.name === "sec-websocket-protocol").flatMap(header => header.value.split(",").map(value => value.trim()));
-    // Native Node headers support arrays. Repeated fields retain their order;
-    // only the protocol list is combined using its defined list grammar.
-    const headers: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
-    for (const field of fields) {
-      if (field.name === "origin" || field.name === "sec-websocket-protocol") continue;
-      (headers[field.name] ??= []).push(field.value);
-    }
-    headers.origin = [this.#config.upstreamOrigin];
-    let socket: any;
-    let socketClosed = Promise.resolve(), upgradeRequestClosed = Promise.resolve();
-    // Establishment and relay observe operational errors. Keep a listener
-    // through physical close for errors emitted by native abort cleanup.
-    const retainSocketError = (): void => {};
-    let connection: ProxyConnection | undefined;
-    const preparation = new AbortController();
-    const timer = setTimeout(() => preparation.abort(new Error("proxy WebSocket establishment timed out")), 10_000);
-    const establishmentSignal = AbortSignal.any([signal, preparation.signal]);
+    const protocols = open.headers.find((header) => header.name.toLowerCase() === "sec-websocket-protocol")?.value;
+    const headers = filterHeaders(open.headers, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders)
+      .filter((header) => header.name !== "origin");
+    const socket = new WebSocketCtor(upstreamURL.toString(), protocols === undefined ? undefined : protocols.split(",").map((item: string) => item.trim()), {
+      headers: {
+        ...Object.fromEntries(headers.map((header) => [header.name, header.value])),
+        Origin: this.#config.upstreamOrigin,
+      },
+      maxPayload: this.#config.maxWS,
+      perMessageDeflate: false,
+    });
     let opened = false;
     try {
-      connection = await this.#config.network.connect(upstreamURL.protocol === "wss:", establishmentSignal);
-      let used = false;
-      socket = new WebSocketCtor(upstreamURL.toString(), protocols.length === 0 ? undefined : protocols, {
-        headers, maxPayload: this.#config.maxWS, maxHeaderSize: this.#config.maxJSON,
-        perMessageDeflate: false, followRedirects: false, autoPong: false,
-        allowSynchronousEvents: false, maxFragments: 128, maxBufferedChunks: 256,
-        finishRequest: (request: ClientRequest) => {
-          upgradeRequestClosed = new Promise(resolve => request.once("close", resolve));
-          credential!.check(); request.path = path; request.end();
-        },
-        createConnection: () => {
-          establishmentSignal.throwIfAborted();
-          if (used) throw new Error("proxy connection already used");
-          used = true; return connection!.socket;
-        },
-      });
-      socket.on("error", retainSocketError);
-      socketClosed = new Promise(resolve => socket.once("close", resolve));
-      let cookieUpdateFailure: unknown;
-      socket.on("upgrade", (response: { rawHeaders: string[] }) => {
-        try {
-          credential!.check(); const headers: Header[] = [];
-          for (let index = 0; index < response.rawHeaders.length; index += 2) headers.push({ name: response.rawHeaders[index]!.toLowerCase(), value: response.rawHeaders[index + 1]! });
-          const actual = new URL(upstreamURL); actual.pathname = path.split("?", 1)[0]!;
-          credential!.update(headers, actual);
-        } catch (error) { cookieUpdateFailure = error; socket.terminate(); }
-      });
-      socket.on("unexpected-response", (_request: ClientRequest, response: { rawHeaders: string[]; destroy(): void }) => {
-        try {
-          credential!.check(); const fields: Header[] = [];
-          for (let index = 0; index < response.rawHeaders.length; index += 2) fields.push({ name: response.rawHeaders[index]!.toLowerCase(), value: response.rawHeaders[index + 1]! });
-          const actual = new URL(upstreamURL); actual.pathname = path.split("?", 1)[0]!;
-          credential!.update(fields, actual);
-        } catch (error) { cookieUpdateFailure = error; }
-        finally { response.destroy(); preparation.abort(); try { socket.terminate(); } catch { /* Native cleanup remains connection-owned. */ } }
-      });
-      await onceEvent(socket, "open", establishmentSignal);
-      if (cookieUpdateFailure !== undefined) throw cookieUpdateFailure;
-      credential.check();
-      clearTimeout(timer);
+      await onceEvent(socket, "open", signal);
+      await writeFrame(stream, { v: WIRE_VERSION, conn_id: open.conn_id.trim(), ok: true, protocol: socket.protocol ?? "" }, signal);
       opened = true;
-      await relayWebSocket(socket, stream, reader, this.#config.maxWS, relaySignal,
-        async () => { stopRead.abort(new SessionError("canceled")); },
-        () => { credential!.check(); return writeFrame(stream, { v: WIRE_VERSION, conn_id: open.conn_id.trim(), ok: true, protocol: socket.protocol ?? "" }, signal); });
+      await relayWebSocket(socket, stream, reader, this.#config.maxWS, signal);
     } catch (error) {
       if (!opened) await writeWSError(stream, open.conn_id, signal.aborted ? "canceled" : "upstream_ws_dial_failed");
       this.#report(error);
-      if (opened) throw error;
     } finally {
-      clearTimeout(timer);
-      preparation.abort();
-      try { socket?.terminate(); } catch { /* cleanup */ }
-      try { await Promise.allSettled([socketClosed, upgradeRequestClosed, connection?.close()]); }
-      finally { socket?.off("error", retainSocketError); credential?.close(); }
+      try { socket.close(); } catch { /* cleanup */ }
+      await stream.close().catch(() => undefined);
     }
   }
 }
@@ -560,13 +370,11 @@ export class ProxyServer {
 function compileConfig(options: ProxyServerOptions): Config {
   let upstream: URL;
   let origin: URL;
-  let host: string;
-  try { host = proxyUpstreamHost(options.upstream); upstream = new URL(options.upstream); origin = new URL(options.upstreamOrigin); } catch { throw new ProxyServerError("invalid_options"); }
+  try { upstream = new URL(options.upstream); origin = new URL(options.upstreamOrigin); } catch { throw new ProxyServerError("invalid_options"); }
   if ((upstream.protocol !== "http:" && upstream.protocol !== "https:") || upstream.pathname !== "/" || upstream.search || upstream.hash || upstream.username || upstream.hostname === "") throw new ProxyServerError("invalid_options");
   if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.pathname !== "/" || origin.search || origin.hash || origin.username || origin.origin !== origin.toString().replace(/\/$/u, "")) throw new ProxyServerError("invalid_options");
-  if (options.blockedResponseHeaders?.some(name => name.trim().toLowerCase() === "content-encoding")) throw new ProxyServerError("invalid_options");
   const allowedHosts = new Set((options.allowedUpstreamHosts ?? ["127.0.0.1", "::1"]).map((value) => value.trim().toLowerCase()));
-  if (!allowedHosts.has(host)) throw new ProxyServerError("invalid_options");
+  if (!allowedHosts.has(upstream.hostname.toLowerCase())) throw new ProxyServerError("invalid_options");
   const allowedOrigins = new Set(options.allowedOrigins ?? [origin.origin]);
   for (const allowed of allowedOrigins) { try { if (new URL(allowed).origin !== allowed) throw new Error(); } catch { throw new ProxyServerError("invalid_options"); } }
   const positive = (value: number | undefined, fallback: number) => value === undefined ? fallback : value;
@@ -582,17 +390,9 @@ function compileConfig(options: ProxyServerOptions): Config {
   const defaultTimeout = positive(options.defaultHTTPRequestTimeoutMs, DEFAULT_TIMEOUT);
   const maxTimeout = positive(options.maxHTTPRequestTimeoutMs, MAX_TIMEOUT);
   if ([maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout].some((value) => !Number.isSafeInteger(value) || value < 1) || defaultTimeout > maxTimeout) throw new ProxyServerError("invalid_options");
-  let network: ProxyNetworkPolicy;
-  try { network = new ProxyNetworkPolicy(host, Number(upstream.port || (upstream.protocol === "https:" ? 443 : 80)), options.allowedUpstreamAddresses ?? [], maxConcurrent, upstream.protocol === "https:"); }
-  catch { throw new ProxyServerError("invalid_options"); }
   const normalizeHeaders = (values: readonly string[] | undefined) => new Set((values ?? []).map((name) => {
     const lower = name.trim().toLowerCase();
-    if (!HEADER_NAME.test(lower) || FORBIDDEN_HEADERS.has(lower) || lower === "content-length" || lower === "te" || lower === "trailer") throw new ProxyServerError("invalid_options");
-    return lower;
-  }));
-  const normalizeResponseHeaders = (values: readonly string[] | undefined) => new Set((values ?? []).map((name) => {
-    const lower = name.trim().toLowerCase();
-    if (!HEADER_NAME.test(lower) || (FORBIDDEN_HEADERS.has(lower) && lower !== "set-cookie")) throw new ProxyServerError("invalid_options");
+    if (!HEADER_NAME.test(lower) || FORBIDDEN_HEADERS.has(lower)) throw new ProxyServerError("invalid_options");
     return lower;
   }));
   const normalizeCookieValues = (values: readonly string[] | undefined) => (values ?? []).map((value) => {
@@ -602,11 +402,10 @@ function compileConfig(options: ProxyServerOptions): Config {
   });
   return {
     upstream,
-    network,
     upstreamOrigin: origin.origin,
     allowedOrigins,
     requestHeaders: normalizeHeaders(options.extraRequestHeaders),
-    responseHeaders: normalizeResponseHeaders(options.extraResponseHeaders),
+    responseHeaders: normalizeHeaders(options.extraResponseHeaders),
     blockedResponseHeaders: normalizeHeaders(options.blockedResponseHeaders),
     websocketHeaders: normalizeHeaders(options.extraWebSocketHeaders),
     forbiddenCookies: new Set(normalizeCookieValues(options.forbiddenCookieNames)),
@@ -616,10 +415,8 @@ function compileConfig(options: ProxyServerOptions): Config {
   };
 }
 
-function filterRequestHeaders(facts: ProxyHeaderFacts, config: Config, bodyLength: number): Header[] {
-  if (facts.transferEncoding) throw new Error("transfer coding is not allowed");
-  if (facts.contentLength !== undefined && facts.contentLength !== BigInt(bodyLength)) throw new Error("content length mismatch");
-  const headers = filterHeaders(facts, REQUEST_HEADERS, config.requestHeaders);
+function filterRequestHeaders(input: readonly Header[], config: Config): Header[] {
+  const headers = filterHeaders(input, REQUEST_HEADERS, config.requestHeaders);
   return headers.flatMap((header) => {
     if (header.name !== "cookie") return [header];
     const value = header.value.split(";").flatMap((part) => {
@@ -634,235 +431,149 @@ function filterRequestHeaders(facts: ProxyHeaderFacts, config: Config, bodyLengt
   });
 }
 
-function filterHeaders(facts: ProxyHeaderFacts, base: ReadonlySet<string>, extra: ReadonlySet<string>, blocked?: ReadonlySet<string>, allowSetCookie = false): Header[] {
+function filterHeaders(input: readonly Header[], base: ReadonlySet<string>, extra: ReadonlySet<string>, blocked?: ReadonlySet<string>): Header[] {
   const result: Header[] = [];
-  let lengthAdded = false;
-  for (const header of facts.fields) {
-    const name = header.name;
-    if (facts.connection.has(name) || (!base.has(name) && !extra.has(name)) || (FORBIDDEN_HEADERS.has(name) && !(allowSetCookie && name === "set-cookie" && extra.has(name))) || blocked?.has(name)) continue;
-    if (name === "content-length") {
-      if (lengthAdded) continue;
-      lengthAdded = true;
-      result.push({ name, value: String(facts.contentLength) });
-    } else result.push(header);
+  for (const header of input) {
+    const name = header.name.trim().toLowerCase();
+    if ((!base.has(name) && !extra.has(name)) || FORBIDDEN_HEADERS.has(name) || !HEADER_NAME.test(name) || /[\r\n]/u.test(header.value) || blocked?.has(name)) continue;
+    result.push({ name, value: header.value });
   }
   return result;
 }
-// Native HTTP retains the content-coded representation and ordered repeated
-// fields. The browser bridge owns final decoding; fetch would decode here.
-async function requestCodedResponse(target: URL, network: ProxyNetworkPolicy, path: string, method: string, fields: readonly Header[], body: Uint8Array, trailers: readonly Header[], signal: AbortSignal, maxHeaderSize: number, beforeCommit?: () => void): Promise<{
-  status: number; headers: Headers; headerList: Header[]; body: ReadableStream<Uint8Array>; trailers(): Header[]; close(): Promise<void>;
-}> {
-  const connection = await network.connect(target.protocol === "https:", signal);
-  const agent = target.protocol === "https:" ? new HTTPSAgent({ keepAlive: false, maxSockets: 1 }) : new HTTPAgent({ keepAlive: false, maxSockets: 1 });
-  let used = false;
-  agent.createConnection = () => {
-    signal.throwIfAborted();
-    if (used) throw new Error("proxy connection already used");
-    used = true; return connection.socket;
-  };
-  let outgoing: ClientRequest | undefined, incoming: IncomingMessage | undefined;
-  let requestClosed = Promise.resolve(), responseClosed = Promise.resolve(), writeCompleted = Promise.resolve();
-  const close = async (): Promise<void> => {
-    outgoing?.destroy(); incoming?.destroy(); agent.destroy();
-    await Promise.allSettled([writeCompleted, requestClosed, responseClosed, connection.close()]);
-  };
-  try { return await new Promise((resolve, reject) => {
-    const headers: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
-    headers.host = [target.host];
-    for (const { name, value } of fields) (headers[name] ??= []).push(value);
-    if (trailers.length !== 0) {
-      headers["transfer-encoding"] = ["chunked"];
-      headers.trailer = [[...new Set(trailers.map(field => field.name))].join(", ")];
-    } else headers["content-length"] = [String(body.byteLength)];
-    beforeCommit?.(); signal.throwIfAborted();
-    const request = (target.protocol === "https:" ? requestHTTPS : requestHTTP)(target, {
-      method, path, signal, agent, maxHeaderSize, setHost: false,
-    }, (response) => {
-      incoming = response; responseClosed = new Promise(resolve => response.once("close", resolve));
-      const headerList: Header[] = [];
-      const responseHeaders = new Headers();
-      for (let index = 0; index < response.rawHeaders.length; index += 2) {
-        const name = response.rawHeaders[index]!;
-        const value = response.rawHeaders[index + 1]!;
-        headerList.push({ name: name.toLowerCase(), value });
-        responseHeaders.append(name, value);
-      }
-      resolve({ status: response.statusCode!, headers: responseHeaders, headerList, close,
-        body: Readable.toWeb(response) as ReadableStream<Uint8Array>,
-        trailers: () => { const fields: Header[]=[]; for(let i=0;i<response.rawTrailers.length;i+=2) fields.push({name:response.rawTrailers[i]!.toLowerCase(),value:response.rawTrailers[i+1]!}); return fields; } });
-    });
-    outgoing = request; requestClosed = new Promise(resolve => request.once("close", resolve));
-    request.on("error", reject);
-    // ClientRequest normalizes constructor input. Restore the validated token
-    // before its first header encoding so extension methods retain exact case.
-    request.method = method;
-    for (const [name, values] of Object.entries(headers)) request.setHeader(name, values);
-    if (trailers.length !== 0) request.addTrailers(trailers.map(({ name, value }): [string, string] => [name, value]));
-    beforeCommit?.(); signal.throwIfAborted();
-    writeCompleted = new Promise(resolve => {
-      let borrowed = false, settled = false;
-      const settle = () => { if (settled) return; settled = true; resolve(); };
-      request.once("error", settle); request.once("close", settle);
-      try {
-        if (body.byteLength === 0) { settle(); request.end(); }
-        else { request.write(body, settle); borrowed = true; request.end(); }
-      } catch (error) { if (!borrowed) settle(); reject(error); }
-    });
-  }); } catch (error) { await close(); throw error; }
+function responseHeaderList(headers: Headers): Header[] {
+  const values: Header[] = [];
+  headers.forEach((value, name) => values.push({ name, value }));
+  return values;
 }
 
-async function writeFrame(stream: ProxyStream, value: unknown, signal?: AbortSignal): Promise<void> {
-  const schema: ProxySchema = Object.hasOwn(value as object,"request_id") ? "ProxyHTTPResponse" : "ProxyWebSocketResponse";
-  await writeProxyFrame({write: async data => await writeAll(stream,data,signal === undefined ? {} : {signal})},schema,value);
+async function readFrame(reader: ProxyByteReader, maximum: number): Promise<unknown> {
+  const frame = await reader.readExactly(4);
+  const length = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0, false);
+  if (length > maximum) throw new Error("frame too large");
+  return JSON.parse(new TextDecoder().decode(await reader.readExactly(length))) as unknown;
 }
-async function writeBodyEnd(stream: ProxyStream, trailers: readonly Header[], signal?: AbortSignal): Promise<void> {
- validateProxyTrailers(trailers);
- await writeChunk(stream,new Uint8Array(),signal);
- await writeProxyFrame({write: async data => await writeAll(stream,data,signal === undefined ? {} : {signal})},"ProxyBodyEnd",{v:WIRE_VERSION,trailers});
+async function writeFrame(stream: ByteStream, value: unknown, signal?: AbortSignal): Promise<void> {
+  await writeJsonFrame({ write: async (data) => await writeAll(stream, data, signal === undefined ? {} : { signal }) }, value);
 }
-async function writeHTTPError(stream: ProxyStream, requestID: string, code: string): Promise<void> {
+async function writeHTTPError(stream: ByteStream, requestID: string, code: string): Promise<void> {
   await writeFrame(stream, { v: WIRE_VERSION, request_id: requestID.trim() || "unknown", ok: false, error: { code, message: "proxy operation failed" } }).catch(() => undefined);
   await writeChunks(stream, new Uint8Array(), 1, undefined).catch(() => undefined);
 }
-async function writeWSError(stream: ProxyStream, connID: string, code: string): Promise<void> {
+async function writeWSError(stream: ByteStream, connID: string, code: string): Promise<void> {
   await writeFrame(stream, { v: WIRE_VERSION, conn_id: connID.trim() || "unknown", ok: false, error: { code, message: "proxy operation failed" } }).catch(() => undefined);
 }
-async function writeChunks(stream: ProxyStream, body: Uint8Array, chunkSize: number, signal?: AbortSignal): Promise<void> {
+async function writeChunks(stream: ByteStream, body: Uint8Array, chunkSize: number, signal?: AbortSignal): Promise<void> {
   for (let offset = 0; offset < body.length; offset += chunkSize) {
     await writeChunk(stream, body.subarray(offset, Math.min(body.length, offset + chunkSize)), signal);
   }
-  await writeBodyEnd(stream, [], signal);
+  await writeChunk(stream, new Uint8Array(), signal);
 }
-async function writeChunk(stream: ProxyStream, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
+async function writeChunk(stream: ByteStream, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
   const bytes = new Uint8Array(4 + chunk.length);
   new DataView(bytes.buffer).setUint32(0, chunk.length, false); bytes.set(chunk, 4);
   await writeAll(stream, bytes, signal === undefined ? {} : { signal });
 }
-async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number, maxMetadata: number, facts: ProxyHeaderFacts): Promise<{ body: Uint8Array; trailers: Header[] } | undefined> {
+async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number): Promise<Uint8Array | undefined> {
   const chunks: Uint8Array[] = []; let total = 0;
   try {
     while (true) {
       const header = await reader.readExactly(4); const length = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, false);
-      if (length === 0) {
-        const terminal = await readProxyFrame(reader, "ProxyBodyEnd", maxMetadata);
-        validateProxyTrailers(terminal.trailers, facts.connection);
-        return { body: concat(chunks), trailers: terminal.trailers as Header[] };
-      }
+      if (length === 0) return concat(chunks);
       if (length > maxChunk || total + length > maxBody) return undefined;
       const chunk = await reader.readExactly(length); chunks.push(chunk); total += length;
     }
   } catch { return undefined; }
 }
 function concat(chunks: readonly Uint8Array[]): Uint8Array { const out = new Uint8Array(chunks.reduce((sum, item) => sum + item.length, 0)); let offset = 0; for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; } return out; }
+function normalizePath(value: string): string | undefined { if (value.trim() !== value || !value.startsWith("/") || value.startsWith("//") || value.includes("://") || /[\u0000-\u0020\u007f]/u.test(value)) return undefined; try { const parsed = new URL(value, "http://flowersec.invalid"); return parsed.origin === "http://flowersec.invalid" && !parsed.hash ? `${parsed.pathname}${parsed.search}` : undefined; } catch { return undefined; } }
 function normalizeTimeout(value: number | undefined, fallback: number, maximum: number): number | undefined { if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) return undefined; return Math.min(value === undefined || value === 0 ? fallback : value, maximum); }
 function validateOrigin(value: string | undefined, allowed: ReadonlySet<string>): string | undefined { if (value === undefined || value === "") return undefined; try { const origin = new URL(value); return origin.pathname === "/" && !origin.search && !origin.hash && origin.origin === value && allowed.has(origin.origin) ? origin.origin : undefined; } catch { return undefined; } }
 function linkSignals(parent: AbortSignal, timeout: AbortSignal): { signal: AbortSignal; dispose(): void } { const controller = new AbortController(); const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason); parent.addEventListener("abort", abort, { once: true }); timeout.addEventListener("abort", abort, { once: true }); if (parent.aborted) controller.abort(parent.reason); else if (timeout.aborted) controller.abort(timeout.reason); return { signal: controller.signal, dispose: () => { parent.removeEventListener("abort", abort); timeout.removeEventListener("abort", abort); } }; }
-function decodeHTTPMeta(value: unknown): HTTPMeta {
-  if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.request_id !== "string" || typeof value.method !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers) || (value.external_origin !== undefined && typeof value.external_origin !== "string") || (value.timeout_ms !== undefined && typeof value.timeout_ms !== "number")) throw new Error("invalid HTTP metadata");
-  const headers = decodeHeaders(value.headers);
-  return { v: value.v, request_id: value.request_id, method: value.method, path: value.path, headers, ...(value.external_origin === undefined ? {} : { external_origin: value.external_origin }), ...(value.timeout_ms === undefined ? {} : { timeout_ms: value.timeout_ms }) };
-}
-function decodeWSOpen(value: unknown): WSOpen {
-  if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.conn_id !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers)) throw new Error("invalid WS metadata");
-  return { v: value.v, conn_id: value.conn_id, path: value.path, headers: decodeHeaders(value.headers) };
-}
-function decodeHeaders(value: readonly unknown[]): Header[] {
-  // The enclosing metadata frame is already bounded at 1 MiB. Keep a wide
-  // count guard for parser work accounting without silently reducing that
-  // established metadata capability to the old 256-field fixture limit.
-  if (value.length > 65_535 || !value.every(isHeader)) throw new Error("invalid header list");
-  return value.map((header) => {
-    const name = header.name.trim().toLowerCase();
-    if (!HEADER_NAME.test(name) || /[\r\n]/u.test(header.value)) throw new Error("invalid header");
-    return { name, value: header.value };
-  });
-}
+function decodeHTTPMeta(value: unknown): HTTPMeta { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.request_id !== "string" || typeof value.method !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers) || (value.external_origin !== undefined && typeof value.external_origin !== "string") || (value.timeout_ms !== undefined && typeof value.timeout_ms !== "number")) throw new Error("invalid HTTP metadata"); return { v: value.v, request_id: value.request_id, method: value.method, path: value.path, headers: value.headers.filter(isHeader), ...(value.external_origin === undefined ? {} : { external_origin: value.external_origin }), ...(value.timeout_ms === undefined ? {} : { timeout_ms: value.timeout_ms }) }; }
+function decodeWSOpen(value: unknown): WSOpen { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.conn_id !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers)) throw new Error("invalid WS metadata"); return { v: value.v, conn_id: value.conn_id, path: value.path, headers: value.headers.filter(isHeader) }; }
 function isHeader(value: unknown): value is Header { return isRecord(value) && typeof value.name === "string" && typeof value.value === "string"; }
 function isRecord(value: unknown): value is Record<string, any> { return value !== null && typeof value === "object" && !Array.isArray(value); }
-function onceEvent(socket: any, event: string, signal: AbortSignal): Promise<void> { return new Promise((resolve, reject) => { const onAbort = () => { cleanup(); reject(signal.reason ?? new Error("aborted")); }; const onOpen = () => { cleanup(); resolve(); }; const onError = (error: unknown) => { cleanup(); reject(error); }; const cleanup = () => { signal.removeEventListener("abort", onAbort); socket.off?.(event, onOpen); socket.off?.("error", onError); }; socket.once(event, onOpen); socket.once("error", onError); signal.addEventListener("abort", onAbort, { once: true }); if (signal.aborted) onAbort(); }); }
+function onceEvent(socket: any, event: string, signal: AbortSignal): Promise<void> { return new Promise((resolve, reject) => { const onAbort = () => { cleanup(); reject(signal.reason ?? new Error("aborted")); }; const onOpen = () => { cleanup(); resolve(); }; const onError = (error: unknown) => { cleanup(); reject(error); }; const cleanup = () => { signal.removeEventListener("abort", onAbort); socket.off?.(event, onOpen); socket.off?.("error", onError); }; socket.once(event, onOpen); socket.once("error", onError); signal.addEventListener("abort", onAbort, { once: true }); }); }
 async function relayWebSocket(
   socket: any,
-  stream: ProxyStream,
+  stream: ByteStream,
   reader: ProxyByteReader,
   maximum: number,
   signal: AbortSignal,
-  stopInput: () => Promise<void>,
-  publishResponse: () => Promise<void>,
 ): Promise<void> {
-  let done = false, queuedItems = 0, queuedBytes = 0;
+  let done = false;
+  let pendingBytes = 0;
+  let pendingMessages = 0;
   let writeChain = Promise.resolve();
-  let resolveUpstream!: () => void, rejectUpstream!: (error: unknown) => void;
-  const upstream = new Promise<void>((resolve, reject) => { resolveUpstream = resolve; rejectUpstream = reject; });
-  // Install all native listeners before publishing the response. Early frames
-  // share the same bounded queue and remain ordered after response metadata.
-  writeChain = Promise.resolve().then(publishResponse).catch(rejectUpstream);
-  const enqueue = (operation: number, payload: Uint8Array): void => {
-    if (done) return;
-    const terminal = operation === 8;
-    // One bounded data window plus a terminal control reserve. Pausing native
-    // reads also prevents a slow Flowersec writer from growing a Promise queue.
-    if (queuedItems >= (terminal ? 17 : 16) || payload.length > (operation >= 8 ? 125 : maximum) ||
-        queuedBytes > maximum - (terminal ? 0 : payload.length)) {
-      rejectUpstream(new Error("proxy WebSocket receive capacity exhausted")); return;
-    }
-    queuedItems++; queuedBytes += payload.length; socket.pause();
-    const current = writeChain.then(async () => {
+  const enqueue = (task: () => Promise<void>): Promise<void> => {
+    const current = writeChain.then(task);
+    writeChain = current.catch(() => undefined);
+    return current;
+  };
+  const upstream = new Promise<"upstream_close">((resolve, reject) => {
+    socket.on("message", (data: Uint8Array, isBinary: boolean) => {
       if (done) return;
-      const frame = new Uint8Array(5 + payload.length);
-      frame[0] = operation; new DataView(frame.buffer).setUint32(1, payload.length, false); frame.set(payload, 5);
-      await writeAll(stream, frame, { signal });
-      if (terminal) resolveUpstream();
-    }).finally(() => {
-      queuedItems--; queuedBytes -= payload.length;
-      if (!done && queuedItems === 0) socket.resume();
+      const payload = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (payload.length > maximum) { reject(new Error("websocket frame too large")); return; }
+      if (pendingMessages >= 128 || pendingBytes + payload.length > Math.max(maximum, 4 * 1024 * 1024)) {
+        reject(new SessionError("resource_exhausted")); return;
+      }
+      pendingBytes += payload.length;
+      pendingMessages++;
+      socket.pause();
+      void enqueue(async () => {
+        if (!done) await writeProxyWebSocketFrame(stream, isBinary ? 2 : 1, payload, maximum, { signal });
+      }).catch(reject).finally(() => {
+        pendingBytes -= payload.length;
+        if (--pendingMessages === 0 && !done) socket.resume();
+      });
     });
-    writeChain = current.catch(rejectUpstream);
-  };
-  const message = (data: Uint8Array, binary: boolean): void => enqueue(binary ? 2 : 1, data);
-  const ping = (data: Uint8Array): void => enqueue(9, data);
-  const pong = (data: Uint8Array): void => enqueue(10, data);
-  const closed = (code: number, reason: Buffer): void => {
-    if (code === 1006) { rejectUpstream(new Error("proxy WebSocket upstream closed without a Close frame")); return; }
-    enqueue(8, encodeWebSocketClose(code, reason));
-  };
-  const aborted = (): void => rejectUpstream(signal.reason ?? new Error("proxy WebSocket canceled"));
-  socket.on("message", message); socket.on("ping", ping); socket.on("pong", pong);
-  socket.once("close", closed); socket.on("error", rejectUpstream);
-  signal.addEventListener("abort", aborted, { once: true });
-  if (signal.aborted) aborted();
-  const downstream = (async (): Promise<void> => {
+    socket.once("close", (code: number, reason: Buffer) => {
+      if (done) return;
+      const closePayload = encodeWebSocketClose(code, reason);
+      void enqueue(async () => {
+        const frame = new Uint8Array(5 + closePayload.length);
+        frame[0] = 8;
+        new DataView(frame.buffer).setUint32(1, closePayload.length, false);
+        frame.set(closePayload, 5);
+        await writeAll(stream, frame, { signal });
+      }).then(() => resolve("upstream_close"), reject);
+    });
+    socket.once("error", reject);
+  });
+  const downstream = (async (): Promise<"downstream_close"> => {
     while (!done) {
       const frame = await reader.readExactly(5);
-      if (done) return;
-      const operation = frame[0]!, length = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1, false);
-      if (length > maximum || ![1, 2, 8, 9, 10].includes(operation) || operation >= 8 && length > 125) throw new Error("invalid websocket frame");
+      const operation = frame[0]!;
+      const length = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1, false);
+      if (length > maximum || ![1, 2, 8, 9, 10].includes(operation)) throw new Error("invalid websocket frame");
       const payload = await reader.readExactly(length);
-      if (done) return;
       if (operation === 8) {
-        const close = decodeWebSocketClose(payload); socket.close(close.code, close.reason); return;
+        const close = decodeWebSocketClose(payload);
+        socket.close(close.code, close.reason);
+        return "downstream_close";
       }
       if (operation === 9) { await sendSocketControl(socket, "ping", payload); continue; }
       if (operation === 10) { await sendSocketControl(socket, "pong", payload); continue; }
-      if (operation === 1) await sendSocketFrame(socket, new TextDecoder("utf-8", { fatal: true }).decode(payload), false);
-      else await sendSocketFrame(socket, payload, true);
+      if (operation === 1) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+        await sendSocketFrame(socket, text, undefined);
+      } else {
+        await sendSocketFrame(socket, payload, true);
+      }
     }
+    return "downstream_close";
   })();
-  let closeTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const winner = await Promise.race([upstream.then(() => "upstream"), downstream.then(() => "downstream")]);
-    await Promise.race([winner === "downstream" ? upstream : downstream, new Promise<void>((_, reject) => {
-      closeTimer = setTimeout(() => reject(new Error("proxy WebSocket close exchange timed out")), 1_000);
-    })]);
+    const winner = await Promise.race([upstream, downstream]);
+    if (winner === "downstream_close") {
+      await Promise.race([upstream, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+    }
   } finally {
-    done = true; clearTimeout(closeTimer);
-    socket.off("message", message); socket.off("ping", ping); socket.off("pong", pong); socket.off("close", closed);
-    signal.removeEventListener("abort", aborted);
-    try { socket.terminate(); } catch { /* already closed */ }
-    // Logical completion cannot release the handler while a real read or
-    // output callback still owns the original stream and backing.
-    await Promise.allSettled([stopInput(), downstream, writeChain]);
-    socket.off("error", rejectUpstream);
+    done = true;
+    try { socket.close(); } catch { /* cleanup */ }
+    await stream.close().catch(() => undefined);
+    await Promise.allSettled([writeChain, downstream]);
   }
 }
 

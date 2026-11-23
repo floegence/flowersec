@@ -17,6 +17,9 @@ refs=(
   "refs/tags/${version}"
   "refs/tags/flowersec-rust/v${version}"
 )
+if git cat-file -e "$expected_commit:flowersec-go/adapters/sqlite/go.mod" 2>/dev/null; then
+  refs+=("refs/tags/flowersec-go/adapters/sqlite/v${version}")
+fi
 
 for ref in "${refs[@]}"; do
   if ! git fetch --quiet --no-tags "$remote" "$ref"; then

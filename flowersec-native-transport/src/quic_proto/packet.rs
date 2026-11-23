@@ -935,14 +935,12 @@ mod tests {
         }
     }
 
-    #[cfg(any(any(), all()))]
     #[test]
     fn header_encoding() {
         use crate::quic_proto::Side;
         use crate::quic_proto::crypto::rustls::{initial_keys, initial_suite_from_provider};
-        #[cfg(all(any(), not(all())))]
+        #[cfg(any())]
         use rustls::crypto::aws_lc_rs::default_provider;
-        #[cfg(all())]
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 

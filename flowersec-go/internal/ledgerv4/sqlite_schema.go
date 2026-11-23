@@ -9,7 +9,7 @@ import (
 	"math"
 )
 
-const sqliteManifestSQL = `CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), format TEXT NOT NULL CHECK(format='flowersec-v4-sqlite'), revision INTEGER NOT NULL CHECK(revision=7), authority TEXT NOT NULL CHECK(length(CAST(authority AS BLOB)) BETWEEN 1 AND 128), instance BLOB NOT NULL CHECK(length(instance)=32), generation BLOB NOT NULL CHECK(length(generation)=8), epoch BLOB NOT NULL CHECK(length(epoch)=8), max_pages INTEGER NOT NULL, max_records INTEGER NOT NULL, max_record_bytes INTEGER NOT NULL, admission_rows INTEGER NOT NULL CHECK(admission_rows>=0), spend_rows INTEGER NOT NULL CHECK(spend_rows>=0), winner_rows INTEGER NOT NULL CHECK(winner_rows>=0), issuance_rows INTEGER NOT NULL CHECK(issuance_rows>=0), relay_rows INTEGER NOT NULL CHECK(relay_rows>=0)) STRICT, WITHOUT ROWID`
+const sqliteManifestSQL = `CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), format TEXT NOT NULL CHECK(format='flowersec-v4-sqlite'), revision INTEGER NOT NULL CHECK(revision=2), authority TEXT NOT NULL CHECK(length(CAST(authority AS BLOB)) BETWEEN 1 AND 128), instance BLOB NOT NULL CHECK(length(instance)=32), generation BLOB NOT NULL CHECK(length(generation)=8), epoch BLOB NOT NULL CHECK(length(epoch)=8), max_pages INTEGER NOT NULL, max_records INTEGER NOT NULL, max_record_bytes INTEGER NOT NULL, admission_rows INTEGER NOT NULL CHECK(admission_rows>=0), spend_rows INTEGER NOT NULL CHECK(spend_rows>=0)) STRICT, WITHOUT ROWID`
 const sqliteAdmissionSQL = `CREATE TABLE admission (lease BLOB PRIMARY KEY CHECK(length(lease) BETWEEN 34 AND 161), version BLOB NOT NULL CHECK(length(version)=8), fence BLOB NOT NULL CHECK(length(fence)=8), state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 3), admission_count INTEGER NOT NULL CHECK(admission_count IN (0,1)), projection BLOB NOT NULL CHECK(length(projection) BETWEEN 1 AND 1048576), CHECK((state=1 AND admission_count=1) OR (state<>1 AND admission_count=0))) STRICT, WITHOUT ROWID`
 
 // Purpose tables have independent lease keys; one admission does not stand in
@@ -94,21 +94,6 @@ func named(ordinal int, value driver.Value) driver.NamedValue {
 }
 
 func (s *sqliteStore) createSchema() (err error) {
-	if s.publication != nil {
-		return s.publication.createSchema()
-	}
-	if s.archive != nil {
-		return s.archive.createSchema()
-	}
-	if s.namespace != nil {
-		return s.namespace.createSchema()
-	}
-	if s.topUpServer != nil {
-		return s.topUpServer.createSchema()
-	}
-	if s.topUps != nil {
-		return s.topUps.createSchema()
-	}
 	if s.business != nil {
 		return s.business.createSchema()
 	}
@@ -126,17 +111,17 @@ func (s *sqliteStore) createSchema() (err error) {
 			_ = s.exec("ROLLBACK")
 		}
 	}()
-	for _, sql := range sqliteMainSchemaSQL() {
+	for _, sql := range []string{sqliteManifestSQL, sqliteAdmissionSQL, sqliteSpendSQL} {
 		if err = s.exec(sql); err != nil {
 			return err
 		}
 	}
 	l := s.backing.limits
-	err = s.exec("INSERT INTO manifest VALUES (1,'flowersec-v4-sqlite',7,?1,?2,?3,?4,?5,?6,?7,0,0,0,0,0)", named(1, s.identity.Authority), named(2, s.identity.StoreID[:]), named(3, sqliteUint(s.identity.Generation)), named(4, sqliteUint(1)), named(5, int64(l.MaxPages)), named(6, int64(l.MaxRecords)), named(7, int64(l.MaxRecordBytes)))
+	err = s.exec("INSERT INTO manifest VALUES (1,'flowersec-v4-sqlite',2,?1,?2,?3,?4,?5,?6,?7,0,0)", named(1, s.identity.Authority), named(2, s.identity.StoreID[:]), named(3, sqliteUint(s.identity.Generation)), named(4, sqliteUint(1)), named(5, int64(l.MaxPages)), named(6, int64(l.MaxRecords)), named(7, int64(l.MaxRecordBytes)))
 	if err != nil {
 		return err
 	}
-	if err = s.exec("PRAGMA user_version=7"); err != nil {
+	if err = s.exec("PRAGMA user_version=2"); err != nil {
 		return err
 	}
 	if err = s.exec("COMMIT"); err != nil {
@@ -160,24 +145,6 @@ func (s *sqliteStore) checkpoint() error {
 	return nil
 }
 
-// RESTART performs the same full synchronized checkpoint and additionally
-// requires every reader to release the old WAL before the next write reuses
-// its first frame. Keeping allocated space avoids truncation/extension on each
-// transaction. With cache_spill disabled, a transaction writes each dirty page
-// once; max_page_count bounds that complete frame set and the reserved WAL.
-// Explicit lifecycle cleanup still uses the truncating checkpoint above.
-func (s *sqliteStore) checkpointForWrite() error {
-	var output [3]driver.Value
-	if err := s.one("PRAGMA wal_checkpoint(RESTART)", output[:]); err != nil {
-		return err
-	}
-	frames, valid := output[1].(int64)
-	if output[0] != int64(0) || !valid || frames < 0 || frames > int64(s.backing.limits.MaxPages) || output[2] != frames {
-		return ErrStorageUnavailable
-	}
-	return nil
-}
-
 func (s *sqliteStore) verifySchema() error {
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil {
@@ -190,20 +157,20 @@ func (s *sqliteStore) verifySchema() error {
 	if err != nil {
 		return err
 	}
-	if count != int64(len(sqliteMainSchemaObjects())) {
+	if count != int64(3) {
 		return ErrStorageFormat
 	}
-	for _, table := range sqliteMainSchemaObjects() {
+	for _, table := range []struct{ name, sql string }{{"manifest", sqliteManifestSQL}, {"admission", sqliteAdmissionSQL}, {"spend", sqliteSpendSQL}} {
 		// Table names are compile-time constants, never caller input. Check the
 		// length first to avoid loading an oversized incompatible definition.
-		n, err := s.scalar("SELECT length(sql) FROM sqlite_schema WHERE type='" + table.kind + "' AND name='" + table.name + "'")
+		n, err := s.scalar("SELECT length(sql) FROM sqlite_schema WHERE type='table' AND name='" + table.name + "'")
 		if err != nil {
 			return ErrStorageFormat
 		}
 		if n != int64(len(table.sql)) {
 			return ErrStorageFormat
 		}
-		actual, err := s.scalar("SELECT sql FROM sqlite_schema WHERE type='" + table.kind + "' AND name='" + table.name + "'")
+		actual, err := s.scalar("SELECT sql FROM sqlite_schema WHERE type='table' AND name='" + table.name + "'")
 		if err != nil {
 			return ErrStorageFormat
 		}
@@ -214,36 +181,21 @@ func (s *sqliteStore) verifySchema() error {
 	return nil
 }
 
-func (s *sqliteStore) openSchema(readOnly bool) (err error) {
-	if s.publication != nil {
-		return s.publication.openSchema(readOnly)
-	}
-	if s.archive != nil {
-		return s.archive.openSchema(readOnly)
-	}
-	if s.namespace != nil {
-		return s.namespace.openSchema(readOnly)
-	}
-	if s.topUpServer != nil {
-		return s.topUpServer.openSchema(readOnly)
-	}
-	if s.topUps != nil {
-		return s.topUps.openSchema(readOnly)
-	}
+func (s *sqliteStore) openSchema() (err error) {
 	if s.business != nil {
-		return s.business.openSchema(readOnly)
+		return s.business.openSchema()
 	}
 	if s.references != nil {
-		return s.references.openSchema(readOnly)
+		return s.references.openSchema()
 	}
 	if err = s.verifySchema(); err != nil {
 		return err
 	}
-	rows, err := s.querier.QueryContext(context.Background(), "SELECT format,revision,authority,instance,generation,epoch,max_pages,max_records,max_record_bytes,admission_rows,spend_rows,winner_rows,issuance_rows,relay_rows FROM manifest WHERE id=1", nil)
+	rows, err := s.querier.QueryContext(context.Background(), "SELECT format,revision,authority,instance,generation,epoch,max_pages,max_records,max_record_bytes,admission_rows,spend_rows FROM manifest WHERE id=1", nil)
 	if err != nil {
 		return ErrStorageFormat
 	}
-	var values [14]driver.Value
+	var values [11]driver.Value
 	readErr := rows.Next(values[:])
 	if readErr != nil {
 		_ = rows.Close()
@@ -255,10 +207,7 @@ func (s *sqliteStore) openSchema(readOnly bool) (err error) {
 	l := s.backing.limits
 	count, countOK := values[9].(int64)
 	spendCount, spendCountOK := values[10].(int64)
-	winnerCount, winnerCountOK := values[11].(int64)
-	issueCount, issueCountOK := values[12].(int64)
-	relayCount, relayCountOK := values[13].(int64)
-	valid := values[0] == "flowersec-v4-sqlite" && values[1] == int64(sqliteStorageRevision) && values[2] == s.identity.Authority && idOK && bytes.Equal(id, s.identity.StoreID[:]) && genErr == nil && generation == s.identity.Generation && epochErr == nil && epoch > 0 && epoch < math.MaxUint64 && values[6] == int64(l.MaxPages) && values[7] == int64(l.MaxRecords) && values[8] == int64(l.MaxRecordBytes) && countOK && count >= 0 && count <= int64(l.MaxRecords) && spendCountOK && spendCount >= 0 && spendCount <= int64(l.MaxRecords)-count && winnerCountOK && winnerCount >= 0 && winnerCount <= int64(l.MaxRecords)-count-spendCount && issueCountOK && issueCount >= 0 && issueCount <= int64(l.MaxRecords)-count-spendCount-winnerCount && relayCountOK && relayCount >= 0 && relayCount <= int64(l.MaxRecords)-count-spendCount-winnerCount-issueCount
+	valid := values[0] == "flowersec-v4-sqlite" && values[1] == int64(sqliteStorageRevision) && values[2] == s.identity.Authority && idOK && bytes.Equal(id, s.identity.StoreID[:]) && genErr == nil && generation == s.identity.Generation && epochErr == nil && epoch > 0 && epoch < math.MaxUint64 && values[6] == int64(l.MaxPages) && values[7] == int64(l.MaxRecords) && values[8] == int64(l.MaxRecordBytes) && countOK && count >= 0 && count <= int64(l.MaxRecords) && spendCountOK && spendCount >= 0 && spendCount <= int64(l.MaxRecords)-count
 	if !valid {
 		_ = rows.Close()
 		return ErrStorageFormat
@@ -283,25 +232,6 @@ func (s *sqliteStore) openSchema(readOnly bool) (err error) {
 	}
 	if actualSpend != spendCount {
 		return ErrStorageFormat
-	}
-	actualWinners, err := s.scalar("SELECT count(*) FROM parent_winner")
-	if err != nil {
-		return err
-	}
-	if actualWinners != winnerCount {
-		return ErrStorageFormat
-	}
-	if err = s.verifyRelayRows(relayCount); err != nil {
-		return err
-	}
-	if err = s.verifyDirectIssuanceRows(issueCount); err != nil {
-		return err
-	}
-	if err = s.inspectMainRecords(epoch); err != nil {
-		return err
-	}
-	if readOnly {
-		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err

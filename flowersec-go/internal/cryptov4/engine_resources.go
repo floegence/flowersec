@@ -8,10 +8,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // EngineResourceOptions completes the source-sized SDK backing with the
@@ -20,6 +19,11 @@ import (
 // their stacks and scheduling. Shared registries, clock, authorization and crypto
 // caches belong to the Environment whose original reservation is borrowed.
 type EngineResourceOptions struct{ RuntimeBytes uint64 }
+
+const (
+	recordAEADBytes        = 1024
+	recordConstructorBytes = 4096
+)
 
 type engineStreamLimits struct {
 	Client  uint64 `json:"client_ordinals"`
@@ -43,12 +47,12 @@ var engineRegistry = sync.OnceValues(func() (*engineRegistryData, error) {
 	return &engineRegistryData{usage.Profiles, streams}, nil
 })
 
-// These backend allowances were sized from Go 1.27.2 and the module's pinned
+// These backend allowances were sized from Go 1.27.4 and the module's pinned
 // golang.org/x/crypto v0.57.0, with assembly enabled on amd64/arm64. Dependency
 // replacements or different crypto sources require a separately qualified bound.
 // Runtime FIPS/frozen modules and unsupported build backends fail admission.
 func engineResourceBackend() error {
-	if !engineResourceAssembly || runtime.Version() != "go1.27.2" || fips140.Enabled() || fips140.Version() != "latest" {
+	if !engineResourceAssembly || runtime.Version() != "go1.27.4" || fips140.Enabled() || fips140.Version() != "latest" {
 		return ErrConfiguration
 	}
 	return nil
@@ -112,36 +116,34 @@ func EngineCharge(config Config, options EngineResourceOptions) (resourcev4.Vect
 	}
 	c, w := uint64(capacity), uint64(config.WorkSlots)
 	// Original owners survive index removal and epoch replacement. Count both
-	// tables, the stage snapshot, two owners per ordinary job, maintenance and
-	// up to one detached original reliable publication per admitted scope.
-	scopes, keys := 4*c+2*w+2, 8*c+4*w+4
+	// tables, the stage snapshot, two owners per ordinary job, and maintenance.
+	scopes, keys := 3*c+2*w+2, 6*c+4*w+4
 	// Every ordinary job can retain two old epochs while subsequent rekeys
 	// progress. Current/candidate, maintenance and round metadata are additional.
-	epochs := 2*w + c + 8
+	epochs := 2*w + 8
 	m := uint64(config.MaxFrame) - uint64(protocolv4.RecordHeaderSize()+p.TagBytes)
 	charge := engineByteCharge{}
 	for _, part := range [...]struct{ count, size uint64 }{
 		{1, uint64(unsafe.Sizeof(Engine{}))},
 		{w + 2, uint64(unsafe.Sizeof(workspace{}))},
 		{2 * (w + 2), uint64(config.MaxFrame) + uint64(protocolv4.EnvelopePrefixSize)},
-		{2 * w, uint64(unsafe.Sizeof((*workspace)(nil)))}, // Outgoing/native input indexes.
+		{w, uint64(unsafe.Sizeof((*workspace)(nil)))},
 		{2 * uint64(slots), uint64(unsafe.Sizeof(scopeBucket{}))},
 		{2 * c, uint64(unsafe.Sizeof(epochKeyJob{}))},
-		{1, ordinalbits.BackingBytes(r.streams.Client)},
-		{1, ordinalbits.BackingBytes(r.streams.Server)},
+		{(r.streams.Client + 63) / 64, 8},
+		{(r.streams.Server + 63) / 64, 8},
 		{scopes, uint64(unsafe.Sizeof(scopeKeys{}))},
-		{keys, uint64(unsafe.Sizeof(recordKey{})) + 1024},
+		{keys, uint64(unsafe.Sizeof(recordKey{})) + recordAEADBytes},
 		{epochs, uint64(unsafe.Sizeof(epochState{})) + uint64(unsafe.Sizeof(timev4.Deadline{}))},
 		{w, uint64(unsafe.Sizeof(scopeKeyWork{}))},
-		{c + w + 2, uint64(unsafe.Sizeof(Packet{}))},
-		{w + 2, uint64(unsafe.Sizeof(TicketError{}))},
+		{w + 2, uint64(unsafe.Sizeof(Packet{})) + uint64(unsafe.Sizeof(TicketError{}))},
 		{c + w + 1, uint64(unsafe.Sizeof(IncomingScope{}))},
 		{1, uint64(unsafe.Sizeof(ApplicationFreeze{})) + uint64(unsafe.Sizeof(epochSwitch{})) + uint64(unsafe.Sizeof(RekeyRound{}))},
 		{1, uint64(unsafe.Sizeof(timev4.Idle{})) + uint64(unsafe.Sizeof(timev4.Delay{}))},
 		{4, uint64(unsafe.Sizeof(timev4.Deadline{}))},
-		{w + 1, 4096},      // Sequential constructors per ordinary/stage position.
-		{6, m},             // Four round buffers and the exact two-frame transcript.
-		{1, 127 + 16*1024}, // Transcript prefix plus DH/HMAC/HKDF/small input scratch.
+		{w + 1, recordConstructorBytes}, // Sequential constructors per ordinary/stage position.
+		{6, m},                          // Four round buffers and the exact two-frame transcript.
+		{1, 127 + 16*1024},              // Transcript prefix plus DH/HMAC/HKDF/small input scratch.
 		{1, options.RuntimeBytes},
 	} {
 		if err := charge.add(part.count, part.size); err != nil {
@@ -226,7 +228,10 @@ func (e *Engine) resourceLive() error {
 	if e.reservation == (resourcev4.Reference{}) {
 		return nil // Internal unreserved protocol primitive.
 	}
-	return e.reservation.CheckSameEnvironment(e.environment)
+	if err := e.reservation.Check(); err != nil {
+		return err
+	}
+	return e.environment.Check()
 }
 
 // CheckEnvironment binds another admitted component to this original Engine's
@@ -264,8 +269,6 @@ func (e *Engine) Retire() error {
 		return ErrTransition
 	}
 	e.config.Authorization, e.config.Clock = nil, nil
-	e.config.DiagnosticEvents = nil
-	e.config.Diagnostics = nil
 	e.clock.Store(nil)
 	e.config.RootBorn = timev4.Sample{}
 	e.idle = nil

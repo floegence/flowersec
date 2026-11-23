@@ -88,8 +88,11 @@ pub(super) fn decrypt_packet_body(
         &zero_rtt_crypto.unwrap().packet
     } else if packet_key_phase == conn_key_phase || space != SpaceId::Data {
         &spaces[space].crypto.as_ref().unwrap().packet.remote
-    } else if let Some(prev) =
-        prev_crypto.filter(|&crypto| crypto.end_packet.is_none_or(|(pn, _)| number < pn))
+    } else if let Some(prev) = prev_crypto.filter(|&crypto|
+        // Use the previous keys if this packet comes prior to acknowledgment of the
+        // key update by the peer; otherwise, this must be a remotely-initiated key
+        // update, so fall through to the final case.
+        crypto.end_packet.is_none_or(|(pn, _)| number < pn))
     {
         &prev.crypto.remote
     } else {

@@ -12,7 +12,6 @@
 /flowersec-rust/target/
 /flowersec-native-transport/target/
 /flowersec-node-native/target/
-/flowersec-ts/crypto-noise/target/
 /examples/rust/target/
 
 # Node
@@ -32,6 +31,7 @@ test-results/
 .build/
 Package.resolved
 !/Package.resolved
+!/flowersec-swift/Package.resolved
 !/examples/swift/Package.resolved
 DerivedData/
 
@@ -43,6 +43,3 @@ DerivedData/
 !/.develop.md
 
 .DS_Store
-
-# Stray local build artifact
-/check

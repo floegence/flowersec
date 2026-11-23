@@ -42,21 +42,6 @@ export async function openConnectionPath(
   });
 }
 
-/** Admitted providers retain their reservation until the actual route attempt exits. */
-export async function openOwnedConnectionPath(path: NodeConnectionPath, hostname: string, port: number, signal: AbortSignal): Promise<Duplex> {
-  if (signal.aborted) throw new Error("Connection path canceled");
-  const stream = await path.connect({ hostname, port, signal });
-  if (!(stream instanceof Duplex)) throw new Error("Invalid connection path stream");
-  if (signal.aborted || stream.destroyed) {
-    if (!stream.closed) {
-      const closed = new Promise<void>(resolve => stream.once("close", resolve));
-      stream.on("error", () => undefined); stream.destroy(); await closed;
-    }
-    throw new Error("Connection path canceled");
-  }
-  return stream;
-}
-
 export type ConnectionPathAgentOptions = Readonly<{
   connectionPath: NodeConnectionPath;
   ca?: ConnectionOptions["ca"];

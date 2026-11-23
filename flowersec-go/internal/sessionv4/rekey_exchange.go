@@ -5,9 +5,9 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // RekeyExchange executes the four flights for an already admitted round. The
@@ -99,7 +99,6 @@ func NewRekeyExchange(a *OpenAdmission, b *Barriers, w *RecordWriter, deadlineMS
 		a.termination.notify()
 	}
 	a.mu.Unlock()
-	timing.startDiagnostics(a.diagnostics, a.diagnosticOperation)
 	installed = true
 	return x, nil
 }
@@ -109,9 +108,6 @@ func NewRekeyExchange(a *OpenAdmission, b *Barriers, w *RecordWriter, deadlineMS
 func (x *RekeyExchange) releaseOwner() { x.releaseOwnerResult(false) }
 
 func (x *RekeyExchange) releaseOwnerResult(completed bool) {
-	if x.timing != nil {
-		x.timing.finishDiagnostics(completed)
-	}
 	a := x.admission
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -492,11 +488,7 @@ func (x *RekeyExchange) Progress(ctx context.Context) (result RecordWriteResult,
 }
 
 func (x *RekeyExchange) complete() error {
-	var guard cryptov4.RekeySwitchGuard
-	if x.intent != nil {
-		guard = x.intent
-	}
-	if err := x.round.CompleteWithGuard(guard); err != nil {
+	if err := x.round.Complete(); err != nil {
 		return err
 	}
 	frontier, err := x.admission.engine.ScopeFrontier(0, x.admission.direction)

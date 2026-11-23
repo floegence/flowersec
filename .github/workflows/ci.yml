@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - release/5.x
   pull_request:
     branches:
       - main
+      - release/5.x
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -51,8 +53,15 @@ jobs:
         with:
           node-version: "26.8.1"
 
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/releasenotes/go.mod
+          cache: false
+
       - name: Check toolchain declarations
         run: |
+          node scripts/toolchains.mjs --check-runtime go
           node scripts/check-toolchain-policy.mjs
           node scripts/check-go-toolchain-policy.mjs
 

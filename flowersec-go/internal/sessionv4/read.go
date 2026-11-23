@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 var (
@@ -86,14 +86,6 @@ func (f *ReceiveFlow) readIntoOwned(ctx context.Context, dst []byte, owner *Stre
 			f.notifyCleanupLocked()
 			p.mu.Unlock()
 			return result, err
-		}
-		// This gate has observed an empty, open direction. A hint left by
-		// an earlier synchronous read cannot make new bytes available. Drain
-		// it before unlocking; the next producer uses this same pool gate and
-		// supplies a fresh wake, so no input or terminal event can be lost.
-		select {
-		case <-f.readWake:
-		default:
 		}
 		p.mu.Unlock()
 		select {

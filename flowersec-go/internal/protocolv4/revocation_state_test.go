@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 func (f *namespaceFixture) certificate(t *testing.T) (*SignedMap, IssuerPermission) {
@@ -136,50 +136,5 @@ func TestRuntimeNamespaceLeaseAndSegmentEvidenceCannotChange(t *testing.T) {
 	changed := f.bindState(t, 6, [2]uint64{0, 1})
 	if err := before.CheckSuccessor(changed, nil); err != CBORFailure("revocation_segment_retained") {
 		t.Fatal("existing cohort policy changed", err)
-	}
-}
-
-func TestRuntimeNamespaceStateArenaReuseKeepsCurrentDenials(t *testing.T) {
-	f := newNamespaceFixture(t)
-	state := f.bindState(t, 1, [2]uint64{})
-	w := state.workspace
-	certificate, permission := f.certificate(t)
-	credential, err := certificate.DetachCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	facts, err := state.CheckDetachedCredential(credential, permission, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.Release()
-	if state.document != nil || state.head != nil || state.revokedIssuers != (Value{}) || state.revokedCertificates != (Value{}) || state.revokedLeases != (Value{}) {
-		t.Fatal("released State retained its original decoder or Head")
-	}
-	for _, segments := range w.segments {
-		for _, segment := range segments[:cap(segments)] {
-			if segment != (cohortSegment{}) {
-				t.Fatal("released State retained encoded cohort evidence")
-			}
-		}
-	}
-	entry := f.mapValue(t, "RevokedCertificateEntry", map[string]*cborRefValue{"certificate_digest": namespaceBytes(facts.Digest[:]), "cohort": namespaceNumber(0), "expires_at_ms": namespaceNumber(2000)})
-	f.set(t, "RevocationState", f.state, "revoked_certificates", namespaceArray(entry))
-	head, input := f.bindHead(t, 2, [2]uint64{})
-	next, err := w.Bind(head, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := state.CheckDetachedCredential(credential, permission, f.now); err != CBORFailure("revocation_state_owner") {
-		t.Fatal("released State borrowed the replacement's arena", err)
-	}
-	if _, err := next.CheckDetachedCredential(credential, permission, f.now); err != CBORFailure("revocation_certificate_rejected") {
-		t.Fatal("replacement State reused an earlier revocation view", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if next.document != nil || next.head != nil || next.revokedIssuers != (Value{}) || next.revokedCertificates != (Value{}) || next.revokedLeases != (Value{}) || w.decoder != nil || w.segments[0] != nil || w.segments[1] != nil {
-		t.Fatal("destroyed workspace retained State backing")
 	}
 }

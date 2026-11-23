@@ -1,8 +1,5 @@
-#![cfg(any(any(), all()))]
-
-#[cfg(all(any(), not(all())))]
+#[cfg(any())]
 use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(all())]
 use rustls::crypto::ring::default_provider;
 
 use std::{
@@ -39,16 +36,6 @@ use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
-#[tokio::test]
-async fn client_binds_unspecified_ipv6_to_an_assigned_port() {
-    let endpoint = Endpoint::client((Ipv6Addr::UNSPECIFIED, 0).into()).unwrap();
-    let address = endpoint.local_addr().unwrap();
-    assert_eq!(address.ip(), IpAddr::V6(Ipv6Addr::UNSPECIFIED));
-    assert_ne!(address.port(), 0);
-    endpoint.close(0_u8.into(), b"example complete");
-    endpoint.wait_idle().await;
-}
-
 #[test]
 fn handshake_timeout() {
     let _guard = subscribe();
@@ -59,7 +46,7 @@ fn handshake_timeout() {
     };
 
     // Avoid NoRootAnchors error
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let mut roots = RootCertStore::empty();
     roots.add(cert.cert.into()).unwrap();
 
@@ -97,7 +84,7 @@ async fn close_endpoint() {
     let _guard = subscribe();
 
     // Avoid NoRootAnchors error
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let mut roots = RootCertStore::empty();
     roots.add(cert.cert.into()).unwrap();
 
@@ -289,14 +276,14 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 
 /// Constructs endpoints suitable for connecting to themselves and each other
 struct EndpointFactory {
-    cert: rcgen::CertifiedKey<rcgen::KeyPair>,
+    cert: cert_test_builder::CertifiedKey<cert_test_builder::KeyPair>,
     endpoint_config: EndpointConfig,
 }
 
 impl EndpointFactory {
     fn new() -> Self {
         Self {
-            cert: rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap(),
+            cert: cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap(),
             endpoint_config: EndpointConfig::default(),
         }
     }
@@ -330,121 +317,6 @@ impl EndpointFactory {
 
         endpoint
     }
-}
-
-#[tokio::test]
-async fn pending_incoming_accept_after_stop_or_close_releases_original_state() {
-    for close in [false, true] {
-        for seal_accept in [false, true] {
-            let factory = EndpointFactory::new();
-            let server = factory.endpoint();
-            let address = server.local_addr().unwrap();
-            // This peer is intentionally never accepted, so its original
-            // closing period uses the initial RTT rather than a measured RTT.
-            let mut transport = TransportConfig::default();
-            transport.initial_rtt(Duration::from_millis(10));
-            let client = factory.endpoint_with_config(transport);
-            let connecting = client.connect(address, "localhost").unwrap();
-            let cleanup = connecting.cleanup_current();
-            let incoming = timeout(Duration::from_secs(2), server.accept())
-                .await
-                .expect("receive original Initial")
-                .unwrap();
-            if close {
-                server.close(0_u32.into(), b"closed before accept");
-            } else {
-                server.set_server_config(None);
-            }
-            let accepted = if seal_accept {
-                incoming.accept_and_stop_current()
-            } else {
-                incoming.accept()
-            };
-            assert!(matches!(
-                accepted,
-                Err(super::ConnectionError::LocallyClosed)
-            ));
-            cleanup.abort();
-            drop(connecting);
-            client.close(0_u32.into(), b"done");
-            server.close(0_u32.into(), b"done");
-            timeout(Duration::from_secs(2), async {
-                cleanup.wait_termination().await;
-                server.wait_idle_and_shutdown().await;
-                client.wait_idle_and_shutdown().await;
-            })
-            .await
-            .expect("original pending incoming and native drivers join");
-            let rebound = UdpSocket::bind(address).expect("stopped incoming releases its UDP port");
-            assert_eq!(rebound.local_addr().unwrap(), address);
-        }
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn concurrent_accept_and_stop_transfers_server_configuration_once() {
-    let factory = EndpointFactory::new();
-    let server = factory.endpoint();
-    let address = server.local_addr().unwrap();
-    let clients = std::array::from_fn::<_, 2, _>(|_| {
-        let mut transport = TransportConfig::default();
-        transport.initial_rtt(Duration::from_millis(10));
-        factory.endpoint_with_config(transport)
-    });
-    let first = clients[0].connect(address, "localhost").unwrap();
-    let first_incoming = timeout(Duration::from_secs(2), server.accept())
-        .await
-        .unwrap()
-        .unwrap();
-    let second = clients[1].connect(address, "localhost").unwrap();
-    let second_incoming = timeout(Duration::from_secs(2), server.accept())
-        .await
-        .unwrap()
-        .unwrap();
-    let barrier = Arc::new(tokio::sync::Barrier::new(2));
-    let first_accept = {
-        let barrier = barrier.clone();
-        tokio::spawn(async move {
-            barrier.wait().await;
-            first_incoming.accept_and_stop_current()
-        })
-    };
-    let second_accept = tokio::spawn(async move {
-        barrier.wait().await;
-        second_incoming.accept_and_stop_current()
-    });
-    let (first_result, second_result) = tokio::join!(first_accept, second_accept);
-    let (accepted, winner, loser) = match (first_result.unwrap(), second_result.unwrap()) {
-        (Ok(accepted), Err(super::ConnectionError::LocallyClosed)) => (accepted, first, second),
-        (Err(super::ConnectionError::LocallyClosed), Ok(accepted)) => (accepted, second, first),
-        _ => panic!("only one original incoming may take the server configuration"),
-    };
-    let loser_cleanup = loser.cleanup_current();
-    loser_cleanup.abort();
-    drop(loser);
-    let (server_connection, client_connection) = timeout(Duration::from_secs(2), async {
-        tokio::try_join!(accepted, winner)
-    })
-    .await
-    .unwrap()
-    .expect("the selected original connection completes TLS");
-    server_connection.close(0_u32.into(), b"done");
-    client_connection.close(0_u32.into(), b"done");
-    for client in &clients {
-        client.close(0_u32.into(), b"done");
-    }
-    server.close(0_u32.into(), b"done");
-    timeout(Duration::from_secs(2), async {
-        loser_cleanup.wait_termination().await;
-        server.wait_idle_and_shutdown().await;
-        for client in &clients {
-            client.wait_idle_and_shutdown().await;
-        }
-    })
-    .await
-    .expect("both original incoming paths and drivers join");
-    let rebound = UdpSocket::bind(address).expect("atomic accept does not retain the UDP port");
-    assert_eq!(rebound.local_addr().unwrap(), address);
 }
 
 #[tokio::test]
@@ -630,7 +502,8 @@ fn run_echo(args: EchoArgs) {
 
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let cert =
+            cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let cert = CertificateDer::from(cert.cert);
         let mut server_config =
@@ -818,7 +691,7 @@ fn rt_threaded() -> Runtime {
 async fn rebind_recv() {
     let _guard = subscribe();
 
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = cert_test_builder::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
 

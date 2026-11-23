@@ -3,15 +3,12 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"math"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 var (
@@ -142,7 +139,6 @@ type AuthorizeApplicationResult struct {
 // before consumer spend or accepted admission. Services/execution declarations
 // are validated by their own profile assembly; this component grants none.
 type SessionPlanConfig struct {
-	MaintenanceOwner           *MaintenanceOwner
 	Services                   bool
 	Handlers                   *StreamHandlerPlan
 	AuthorizeApplication       func(context.Context, AuthenticatedRequestContext) (AuthorizeApplicationResult, error)
@@ -156,136 +152,21 @@ type SessionPlan struct {
 	notifications                                          *NotificationDispatch
 	rpc                                                    *RPCServices
 	rpcPreparing                                           bool
-	registrationPreparing                                  bool
 	services                                               *ServiceDispatch
 	queries                                                *sessionContractQueries
-	queryPreparation                                       *sessionContractQueries
 	applicationGroup                                       *applicationGroup
 	host                                                   *EnvironmentSession
 	mu                                                     sync.Mutex
 	config                                                 SessionPlanConfig
 	executor                                               *ApplicationExecutor
 	reservation, taskReservation, dependencies             resourcev4.Reference
-	dependencyFloor                                        *resourcev4.BorrowPool
 	completion                                             *CompletionReservation
 	releaseTask                                            *CompletionTask
 	invocation                                             *applicationInvocation
 	lease                                                  *ApplicationLease
 	cancel                                                 context.CancelFunc
 	claimed, started, running, authorized, closed, retired bool
-	diagnosticSink                                         *DiagnosticSink
 	callbackDone                                           chan struct{}
-}
-
-func beginApplicationDiagnosticForSink(sink *DiagnosticSink) *DiagnosticOperation {
-	if sink == nil {
-		return nil
-	}
-	op := sink.Begin()
-	if op != nil {
-		op.applicationReferences = 1
-		op.Emit(diagnosticv4.Fields{State: diagnosticv4.StateStarting, Phase: diagnosticv4.PhaseApplication, Code: diagnosticv4.CodeOK})
-	}
-	return op
-}
-
-func (p *SessionPlan) beginApplicationDiagnostic() *DiagnosticOperation {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	sink := p.diagnosticSink
-	p.mu.Unlock()
-	return beginApplicationDiagnosticForSink(sink)
-}
-
-func finishApplicationDiagnostic(op *DiagnosticOperation) {
-	finishApplicationDiagnosticError(op, nil)
-}
-
-// retainApplicationDiagnostic holds the original operation through a real SDK
-// tail, such as an execution cancellation request's late management response.
-func retainApplicationDiagnostic(op *DiagnosticOperation) bool {
-	if op == nil {
-		return false
-	}
-	op.applicationMu.Lock()
-	defer op.applicationMu.Unlock()
-	if op.applicationReferences == 0 || op.applicationReferences == math.MaxUint32 {
-		return false
-	}
-	op.applicationReferences++
-	return true
-}
-
-// recordApplicationDiagnosticFailure fixes the finite outcome without retiring
-// a reference whose original engine, provider or native tail is still live.
-func recordApplicationDiagnosticFailure(op *DiagnosticOperation, cause error) {
-	if op == nil || cause == nil {
-		return
-	}
-	// Keep only the finite projection through late physical tails. An
-	// application error must neither retain its graph in diagnostics nor
-	// run arbitrary Error/Is/Unwrap methods during final cleanup.
-	code, _ := diagnosticFailure(cause)
-	recordApplicationDiagnosticFailureCode(op, code)
-}
-
-func recordApplicationDiagnosticFailureCode(op *DiagnosticOperation, code diagnosticv4.Code) {
-	if op == nil {
-		return
-	}
-	op.applicationMu.Lock()
-	defer op.applicationMu.Unlock()
-	if op.applicationReferences != 0 && !op.applicationFailed {
-		op.applicationFailure = code
-		op.applicationFailed = true
-	}
-}
-
-func finishApplicationDiagnosticError(op *DiagnosticOperation, cause error) {
-	if op == nil {
-		return
-	}
-	recordApplicationDiagnosticFailure(op, cause)
-	op.applicationMu.Lock()
-	if op.applicationReferences == 0 {
-		op.applicationMu.Unlock()
-		return
-	}
-	op.applicationReferences--
-	if op.applicationReferences != 0 {
-		op.applicationMu.Unlock()
-		return
-	}
-	code, failed := op.applicationFailure, op.applicationFailed
-	op.applicationFailure, op.applicationFailed = diagnosticv4.CodeOther, false
-	op.applicationMu.Unlock()
-	if failed {
-		op.Emit(diagnosticv4.Fields{State: diagnosticv4.StateFailed, Phase: diagnosticv4.PhaseApplication, Code: code})
-	} else {
-		code = diagnosticv4.CodeOK
-	}
-	op.Emit(diagnosticv4.Fields{State: diagnosticv4.StateClosed, Phase: diagnosticv4.PhaseApplication, Code: code})
-	op.Close()
-}
-
-func (p *SessionPlan) sealBusiness() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	rpc, services, notifications := p.rpc, p.services, p.notifications
-	p.mu.Unlock()
-	if rpc != nil {
-		rpc.sealBusiness()
-	}
-	if services != nil {
-		services.draining.Store(true)
-	}
-	if notifications != nil {
-		notifications.draining.Store(true)
-	}
 }
 
 func SessionPlanCharge(c SessionPlanConfig) (resourcev4.Vector, error) {
@@ -308,14 +189,6 @@ func SessionPlanCharge(c SessionPlanConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	dependencyCharge, err := resourcev4.BorrowPoolCharge(dependencyFloorCapacity)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	charge, err = charge.Add(dependencyCharge)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
 	return charge.Add(query)
 }
 
@@ -329,11 +202,6 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 	}
 	for _, ref := range []resourcev4.Reference{task, completion, dependenciesBorrow} {
 		if err := metadata.CheckSameEnvironment(ref); err != nil {
-			return nil, err
-		}
-	}
-	if c.MaintenanceOwner != nil {
-		if err := c.MaintenanceOwner.check(metadata); err != nil {
 			return nil, err
 		}
 	}
@@ -356,14 +224,7 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 		dependencies.Release()
 		return nil, err
 	}
-	dependencyFloor, err := resourcev4.NewBorrowPoolForSources(owned, dependencyFloorCapacity)
-	if err != nil {
-		owned.Release()
-		dependencies.Release()
-		return nil, err
-	}
-	owned = dependencyFloor.Metadata()
-	p := &SessionPlan{config: c, executor: executor, applicationGroup: group, reservation: owned, dependencies: dependencies, dependencyFloor: dependencyFloor, lease: &ApplicationLease{}, invocation: &applicationInvocation{}, callbackDone: make(chan struct{})}
+	p := &SessionPlan{config: c, executor: executor, applicationGroup: group, reservation: owned, dependencies: dependencies, lease: &ApplicationLease{}, invocation: &applicationInvocation{}, callbackDone: make(chan struct{})}
 	p.initializeContractQueryMethods(c.ContractQueryMethods)
 	p.initializeExecutionHistory(c.ExecutionHistoryNamespaces)
 	defer func() {
@@ -373,17 +234,10 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 				p.completion.Close()
 			}
 			p.taskReservation.Release()
-			if p.dependencyFloor != nil {
-				p.dependencyFloor.Close()
-				p.dependencyFloor = nil
-			}
 			p.reservation.Release()
 			p.dependencies.Release()
 		}
 	}()
-	if err = executor.attachApplicationGroup(group, p.reservation); err != nil {
-		return nil, err
-	}
 	p.taskReservation, err = task.Take(executor.TaskCharge())
 	if err != nil {
 		return nil, err
@@ -407,7 +261,7 @@ func (a *SessionAdmissionReservation) adoptApplicationCore(batch *sessionCoreBat
 	if p != nil {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if p.closed || p.claimed || p.rpcPreparing || p.registrationPreparing || p.config.Handlers != a.config.Core.Handlers.Plan || p.host != a.config.applicationHost {
+		if p.closed || p.claimed || p.rpcPreparing || p.config.Handlers != a.config.Core.Handlers.Plan || p.host != a.config.applicationHost {
 			return cryptov4.ErrTransition
 		}
 		if p.config.Services && p.services == nil {
@@ -436,10 +290,7 @@ func (a *SessionAdmissionReservation) adoptApplicationCore(batch *sessionCoreBat
 // Its original Environment watcher still reports cancellation promptly; no
 // canceled waiter can refund a blocked callback or manufacture a second call.
 func (p *SessionPlan) authorize(ctx context.Context, binding ApplicationBinding, guard func() error) error {
-	p.mu.Lock()
-	dependencyFloor := p.dependencyFloor
-	p.mu.Unlock()
-	dependencies, dependencyErr := captureApplicationDependenciesWithFloor(ctx, dependencyFloor)
+	dependencies, dependencyErr := captureApplicationDependencies(ctx)
 	if dependencyErr != nil {
 		return dependencyErr
 	}
@@ -455,39 +306,12 @@ func (p *SessionPlan) authorize(ctx context.Context, binding ApplicationBinding,
 	}
 	p.started, p.running = true, true
 	callCtx, cancel := context.WithCancel(ctx)
-	diagnosticSink := p.diagnosticSink
 	p.cancel = cancel
 	p.invocation.mu.Lock()
 	p.invocation.lease, p.invocation.ctx = p.lease, callCtx
 	p.invocation.mu.Unlock()
 	callback := p.config.AuthorizeApplication
 	request := AuthenticatedRequestContext{p.invocation, binding}
-	p.mu.Unlock()
-	// DiagnosticSink.Begin may allocate and acquire its own bounded gate. Never
-	// call it while holding SessionPlan.mu; this admission path is otherwise
-	// re-entered by close/cancel cleanup.
-	applicationDiagnostic := beginApplicationDiagnosticForSink(diagnosticSink)
-	callCtx = withDiagnosticOperation(callCtx, applicationDiagnostic)
-	// Reacquire the plan gate before publishing the diagnostic-bearing context.
-	// Close may have canceled and detached the admission while Begin was outside
-	// the gate; in that case do not overwrite the canceled invocation state.
-	p.mu.Lock()
-	if p.closed || !p.running || p.cancel == nil {
-		p.mu.Unlock()
-		cancel()
-		p.invocation.mu.Lock()
-		p.invocation.lease, p.invocation.ctx = nil, nil
-		p.invocation.mu.Unlock()
-		p.mu.Lock()
-		p.running, p.cancel = false, nil
-		close(p.callbackDone)
-		p.mu.Unlock()
-		finishApplicationDiagnosticError(applicationDiagnostic, cryptov4.ErrClosed)
-		return cryptov4.ErrClosed
-	}
-	p.invocation.mu.Lock()
-	p.invocation.ctx = callCtx
-	p.invocation.mu.Unlock()
 	p.mu.Unlock()
 	var result AuthorizeApplicationResult
 	callbackErr := ErrApplicationAuthorization
@@ -523,7 +347,7 @@ func (p *SessionPlan) authorize(ctx context.Context, binding ApplicationBinding,
 		}
 	} else {
 		var task *ApplicationTask
-		task, err = p.executor.trySubmitInGroup(p.applicationGroup, ApplicationShort, p.taskReservation, p.reservation, work)
+		task, err = p.executor.TrySubmit(ApplicationShort, p.taskReservation, p.reservation, work)
 		if err == nil {
 			done = task.Done()
 		}
@@ -547,13 +371,6 @@ func (p *SessionPlan) authorize(ctx context.Context, binding ApplicationBinding,
 	p.invocation.lease, p.invocation.ctx = nil, nil
 	p.invocation.mu.Unlock()
 	cancel()
-	if callbackErr != nil {
-		finishApplicationDiagnosticError(applicationDiagnostic, callbackErr)
-	} else if err != nil {
-		finishApplicationDiagnosticError(applicationDiagnostic, err)
-	} else {
-		finishApplicationDiagnostic(applicationDiagnostic)
-	}
 	// Do not hold the plan lock while reentering original admission gates.
 	if err == nil {
 		err = guard()
@@ -587,7 +404,7 @@ func (p *SessionPlan) checkPreparation() error {
 	if p.closed {
 		return cryptov4.ErrClosed
 	}
-	if p.rpcPreparing || p.registrationPreparing {
+	if p.rpcPreparing {
 		return cryptov4.ErrTransition
 	}
 	if p.config.Services && p.services == nil {
@@ -623,7 +440,6 @@ func (p *SessionPlan) Close() {
 	p.closed = true
 	cancel := p.cancel
 	queries := p.queries
-	queryPreparation := p.queryPreparation
 	services := p.services
 	notifications := p.notifications
 	rpc := p.rpc
@@ -633,7 +449,6 @@ func (p *SessionPlan) Close() {
 	authorization := p.lease.authorization
 	p.lease.mu.Unlock()
 	p.mu.Unlock()
-	queryPreparation.releasePreparation()
 	if rpc != nil {
 		rpc.Close()
 	}
@@ -672,7 +487,7 @@ func (p *SessionPlan) releaseAfterCleanup(ctx context.Context) error {
 	services := p.services
 	notifications := p.notifications
 	rpc := p.rpc
-	preparing := p.rpcPreparing || p.registrationPreparing
+	preparing := p.rpcPreparing
 	p.mu.Unlock()
 	if preparing {
 		return cryptov4.ErrCapacity
@@ -715,14 +530,6 @@ func (p *SessionPlan) releaseAfterCleanup(ctx context.Context) error {
 		case <-p.callbackDone:
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-	}
-	if rpc != nil {
-		// Session bindings are closed by the original Environment coordinator
-		// after RPCServices closes. Join their retained semantic captures before
-		// reporting cleanup complete and attempting irreversible retirement.
-		if err := rpc.routes.WaitCleanup(ctx); err != nil {
-			return err
 		}
 	}
 	p.mu.Lock()
@@ -768,7 +575,7 @@ func (p *SessionPlan) Retire() error {
 	if p.retired {
 		return nil
 	}
-	if !p.closed || p.running || p.rpcPreparing || p.registrationPreparing {
+	if !p.closed || p.running || p.rpcPreparing {
 		return cryptov4.ErrCapacity
 	}
 	if p.applicationGroup != nil {
@@ -835,10 +642,6 @@ func (p *SessionPlan) Retire() error {
 	}
 	p.config, p.executor, p.host = SessionPlanConfig{}, nil, nil
 	p.applicationGroup = nil
-	if p.dependencyFloor != nil {
-		p.dependencyFloor.Close()
-		p.dependencyFloor = nil
-	}
 	p.reservation.Release()
 	p.taskReservation.Release()
 	p.dependencies.Release()
@@ -859,13 +662,6 @@ func (g *applicationAuthorization) Check() error {
 		return err
 	}
 	return g.endpoint.Check()
-}
-
-func (g *applicationAuthorization) CheckWithSample(sample timev4.Sample) error {
-	if err := g.lease.Check(); err != nil {
-		return err
-	}
-	return g.endpoint.CheckWithSample(sample)
 }
 func (g *applicationAuthorization) RemainingMS() (uint64, error) {
 	if err := g.lease.Check(); err != nil {
@@ -946,13 +742,13 @@ func (p *SessionPlan) claimPreparation(s *EnvironmentSession) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.config.Services && (!s.environment.services || p.services != nil && (p.services.clock != s.environment.materialClock || p.services.executionRegistry != nil && p.services.executionRegistry != s.environment.serviceRegistry)) {
+	if p.config.Services && (!s.environment.services || p.services == nil || p.services.clock != s.environment.materialClock || p.services.executionRegistry != nil && p.services.executionRegistry != s.environment.serviceRegistry) {
 		return cryptov4.ErrConfiguration
 	}
 	if p.notifications != nil && p.notifications.executionRegistry != nil && p.notifications.executionRegistry != s.environment.serviceRegistry {
 		return cryptov4.ErrConfiguration
 	}
-	if p.closed || p.claimed || p.rpcPreparing || p.registrationPreparing || p.host != nil && p.host != s {
+	if p.closed || p.claimed || p.rpcPreparing || p.host != nil && p.host != s {
 		return cryptov4.ErrTransition
 	}
 	if err := p.reservation.CheckSameEnvironment(s.environment.reservation); err != nil {
@@ -999,15 +795,4 @@ func (p *SessionPlan) retireUnclaimed() error {
 		}
 	}
 	return p.Retire()
-}
-
-func (g *applicationAuthorization) WithApplicationPublication(action func() error) error {
-	return g.endpoint.WithCurrentAuthorization(func() error {
-		g.lease.mu.Lock()
-		defer g.lease.mu.Unlock()
-		if !g.lease.reserved || !g.lease.authorized || g.lease.revoked || g.lease.authorization != g.endpoint {
-			return ErrApplicationAuthorization
-		}
-		return action()
-	})
 }

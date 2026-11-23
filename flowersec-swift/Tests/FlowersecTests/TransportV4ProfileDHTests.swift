@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportProfileDHTests: XCTestCase {
+final class TransportV4ProfileDHTests: XCTestCase {
   private struct Vector: Decodable {
     let id: String
     let profile: String

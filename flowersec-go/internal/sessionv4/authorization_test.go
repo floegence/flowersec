@@ -3,31 +3,28 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // Synthetic authority for isolated transport tests only; it is never an SDK
 // default and does not authenticate a deployment.
 type testAuthorization struct{}
 
-func (testAuthorization) Check() error                                         { return nil }
-func (testAuthorization) RemainingMS() (uint64, error)                         { return ^uint64(0), nil }
-func (testAuthorization) Wake() <-chan struct{}                                { return nil }
-func (testAuthorization) Notify()                                              {}
-func (testAuthorization) Close(error)                                          {}
-func (testAuthorization) WithApplicationPublication(action func() error) error { return action() }
+func (testAuthorization) Check() error                 { return nil }
+func (testAuthorization) RemainingMS() (uint64, error) { return ^uint64(0), nil }
+func (testAuthorization) Wake() <-chan struct{}        { return nil }
+func (testAuthorization) Notify()                      {}
+func (testAuthorization) Close(error)                  {}
 
 type revocableAuthorization struct {
-	publication sync.Mutex
-	rejected    atomic.Bool
-	wake        chan struct{}
+	rejected atomic.Bool
+	wake     chan struct{}
 }
 
 var errAuthorizationRejected = errors.New("original trust rejected")
@@ -46,19 +43,7 @@ func (g *revocableAuthorization) Notify() {
 	default:
 	}
 }
-func (g *revocableAuthorization) Close(error) {
-	g.publication.Lock()
-	defer g.publication.Unlock()
-	g.rejected.Store(true)
-}
-func (g *revocableAuthorization) WithApplicationPublication(action func() error) error {
-	g.publication.Lock()
-	defer g.publication.Unlock()
-	if err := g.Check(); err != nil {
-		return err
-	}
-	return action()
-}
+func (g *revocableAuthorization) Close(error) { g.rejected.Store(true) }
 
 type deadlineAuthorization struct{ *timev4.Deadline }
 

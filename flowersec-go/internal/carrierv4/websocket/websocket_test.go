@@ -21,10 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv4"
 	ws "github.com/gorilla/websocket"
 )
+
+var _ sessionv4.InitialMessages = (*Messages)(nil)
 
 func testOptions() Options {
 	return Options{MaxMessageBytes: 264, ReadBufferBytes: 125, WriteBufferBytes: 125,
@@ -178,6 +181,54 @@ func TestMessageBoundariesAndFragmentation(t *testing.T) {
 	kind, body, err := peer.ReadMessage()
 	if err != nil || kind != ws.BinaryMessage || !bytes.Equal(body, first) {
 		t.Fatalf("write: %d %x %v", kind, body, err)
+	}
+}
+
+func TestMessageInputRejectsEnvelopeBoundaries(t *testing.T) {
+	valid, err := (protocolv4.Envelope{FrameType: protocolv4.FramePing, Payload: []byte{1}}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		frames [][]byte
+	}{
+		{"empty", [][]byte{{}}}, {"short", [][]byte{{1, 2}}},
+		{"split", [][]byte{valid[:8], valid[8:]}},
+		{"concatenated", [][]byte{append(append([]byte{}, valid...), valid...)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			provider, peer, _ := dialPair(t, testOptions())
+			options := sessionv4.SessionMessageInputOptions{MaxFrame: 256, WriteSlots: 3, RuntimeBytes: 16384}
+			charge, err := sessionv4.SessionMessageInputCharge(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, ref, environment := reservations(t, charge)
+			input, err := sessionv4.NewSessionMessageInput(context.Background(), provider, options, ref, environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = input.Close()
+				if err := input.WaitCleanup(context.Background()); err != nil {
+					t.Error(err)
+				}
+				if err := input.Retire(); err != nil {
+					t.Error(err)
+				}
+			})
+			for _, wire := range tc.frames {
+				if err := peer.WriteMessage(ws.BinaryMessage, wire); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var dst [512]byte
+			if n, err := input.Read(dst[:]); n != 0 || !errors.Is(err, sessionv4.ErrSessionMessageFraming) {
+				t.Fatalf("exposed invalid envelope: %d %v", n, err)
+			}
+		})
 	}
 }
 
@@ -396,44 +447,6 @@ func TestCancellationActualCloseAndRetirement(t *testing.T) {
 	}
 }
 
-func TestCancellationAfterAdjacentMessageReads(t *testing.T) {
-	m, peer, _ := dialPair(t, testOptions())
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	for range 2 {
-		if err := peer.WriteMessage(ws.BinaryMessage, []byte("message")); err != nil {
-			t.Fatal(err)
-		}
-		if n, err := m.ReadMessage(ctx, make([]byte, 264)); n != len("message") || err != nil {
-			t.Fatal("adjacent message read failed", n, err)
-		}
-	}
-	finished := make(chan error, 1)
-	go func() { _, err := m.ReadMessage(ctx, make([]byte, 264)); finished <- err }()
-	deadline := time.Now().Add(time.Second)
-	for {
-		m.mu.Lock()
-		started := m.reading
-		m.mu.Unlock()
-		if started {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("original read did not start")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	cancel()
-	select {
-	case err := <-finished:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatal("adjacent read lost original cancellation", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("adjacent read retained its physical socket")
-	}
-}
-
 func TestDeadlineAndControlRate(t *testing.T) {
 	t.Run("message-deadline", func(t *testing.T) {
 		o := testOptions()
@@ -556,94 +569,6 @@ func TestOwnedConnectionCloseExactlyOnce(t *testing.T) {
 	}
 	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatal(err)
-	}
-}
-
-type tlsShutdownConn struct {
-	net.Conn
-	failWrites atomic.Bool
-	closes     atomic.Int32
-	closeErr   error
-}
-
-func (c *tlsShutdownConn) Write(body []byte) (int, error) {
-	if c.failWrites.Load() {
-		return 0, &net.OpError{Op: "write", Net: "pipe", Err: io.ErrClosedPipe}
-	}
-	return c.Conn.Write(body)
-}
-
-func (c *tlsShutdownConn) Close() error {
-	c.closes.Add(1)
-	if c.closeErr != nil {
-		return c.closeErr
-	}
-	return c.Conn.Close()
-}
-
-func TestTLSAlertWriteFailureDoesNotRetainClosedTransport(t *testing.T) {
-	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	defer certificate.Close()
-	for _, closeFails := range []bool{false, true} {
-		t.Run(fmt.Sprintf("physical_close_fails_%v", closeFails), func(t *testing.T) {
-			left, right := net.Pipe()
-			defer left.Close()
-			defer right.Close()
-			physical := &tlsShutdownConn{Conn: left}
-			if closeFails {
-				physical.closeErr = &net.OpError{Op: "close", Net: "pipe", Err: errors.New("physical close refused")}
-			}
-			server := tls.Server(physical, certificate.TLS.Clone())
-			clientConfig := certificate.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
-			clientConfig.ServerName = "127.0.0.1"
-			client := tls.Client(right, clientConfig)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			serverHandshake := make(chan error, 1)
-			go func() { serverHandshake <- server.HandshakeContext(ctx) }()
-			if err := client.HandshakeContext(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if err := <-serverHandshake; err != nil {
-				t.Fatal(err)
-			}
-			physical.failWrites.Store(true)
-			o := testOptions()
-			charge, err := Charge(o)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, reservation, environment := reservations(t, charge)
-			owner, err := newOwner(ctx, o, reservation, environment)
-			if err != nil {
-				t.Fatal(err)
-			}
-			owner.mu.Lock()
-			owner.transport = &ownedConn{Conn: server}
-			owner.mu.Unlock()
-			owner.finishPrepare(true)
-			messages := &Messages{owner}
-			_ = messages.Close()
-			err = messages.WaitCleanup(ctx)
-			if closeFails {
-				if err != physical.closeErr {
-					t.Fatal("physical close failure was hidden", err)
-				}
-			} else {
-				if err != nil {
-					t.Fatal("completed physical close retained the alert write error", err)
-				}
-				if err = messages.Retire(); err != nil {
-					t.Fatal(err)
-				}
-				if _, err = client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-					t.Fatal("underlying socket did not close", err)
-				}
-			}
-			if physical.closes.Load() != 1 {
-				t.Fatal("physical close was repeated", physical.closes.Load())
-			}
-		})
 	}
 }
 

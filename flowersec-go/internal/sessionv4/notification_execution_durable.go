@@ -4,12 +4,11 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
-func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMessage, history *rpcv4.DurableExecutions, access *notificationExecutionAccess, registration NotificationMethod, digest [32]byte) (bool, error) {
+func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMessage, history *rpcv4.DurableExecutions, access *notificationExecutionAccess, registration NotificationMethod) (bool, error) {
 	deadline, err := message.MessageDeadline(d.clock)
 	if err != nil {
 		return false, err
@@ -40,12 +39,8 @@ func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMes
 	if err = d.reserveLocked([]resourcev4.Vector{charge}, refs[:]); err != nil {
 		return false, err
 	}
-	if err := registration.services.retainRegistration(); err != nil {
-		refs[0].Release()
-		return false, err
-	}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	i := &notificationExecution{dispatch: d, method: registration, access: access, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial, started: true, durableHistory: history, message: message, contractDigest: digest}
+	i := &notificationExecution{dispatch: d, method: registration, access: access, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial, started: true, durableHistory: history, message: message}
 	d.executions[index] = i
 	d.durableProvider.signalDurable()
 	return true, nil
@@ -176,16 +171,16 @@ func (i *notificationExecution) runDurable() {
 	}
 	d := i.dispatch
 	var request NotificationRequest
-	err = d.withAuthoritySample(i.method.Method, func(_ notificationMethod, sample timev4.Sample) error {
+	err = d.withAuthority(i.method.Method, func(notificationMethod) error {
 		if i.ctx.Err() != nil {
 			return rpcv4.ErrClosed
 		}
-		if err := i.deadline.CheckAt(sample); err != nil {
+		if err := i.deadline.Check(); err != nil {
 			return err
 		}
 		for _, token := range d.tokens {
-			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.identity <= i.subscriberBoundary {
-				if err := token.enqueueLocked(i.deadline, payload, sample, i.contractDigest); err != nil {
+			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.subscription.identity <= i.subscriberBoundary {
+				if err := token.enqueueLocked(i.deadline, payload); err != nil {
 					token.gapLocked("dropped_budget")
 				}
 			}
@@ -201,16 +196,13 @@ func (i *notificationExecution) runDurable() {
 		return
 	}
 	defer exit()
-	if attachInvocationServices(callCtx, i.method.services) != nil {
-		return
-	}
 	if i.method.ExecutionHandler(callCtx, request) == nil {
 		_ = i.durableWork.Finish(context.Background(), 0, nil)
 	}
 }
 
 func (d *NotificationDispatch) advanceDurableNotification(index int, i *notificationExecution) {
-	err := i.access.withExecutionAccessSample(rpcv4.ExecutionTarget{Service: i.access.service, Caller: i.access.caller}, func(_ resourcev4.Reference, sample timev4.Sample) error { return i.deadline.CheckAt(sample) })
+	err := i.access.WithExecutionAccess(rpcv4.ExecutionTarget{Service: i.access.service, Caller: i.access.caller}, func(resourcev4.Reference) error { return i.deadline.Check() })
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err != nil {

@@ -13,7 +13,7 @@ export default [
         ecmaVersion: "latest",
         sourceType: "module",
         projectService: {
-          allowDefaultProject: ["vitest.config.ts", "playwright.config.ts"]
+          allowDefaultProject: ["vitest.config.ts", "playwright.config.ts", "browser-e2e/*.ts"]
         },
         tsconfigRootDir: import.meta.dirname
       }

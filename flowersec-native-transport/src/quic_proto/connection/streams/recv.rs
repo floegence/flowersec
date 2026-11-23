@@ -522,6 +522,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn partial_reset_checks_reliable_and_final_sizes_before_releasing_credit() {
+        let mut recv = Recv::new(1024);
+        let code = 7u32.into();
+        assert_eq!(
+            recv.reset_at(code, 2u32.into(), Some(3u32.into()), 0, 1024)
+                .unwrap_err()
+                .code,
+            crate::quic_proto::TransportErrorCode::FRAME_ENCODING_ERROR
+        );
+        assert!(recv.final_offset().is_none());
+        assert_eq!(
+            recv.reset_at(code, 4u32.into(), Some(0u32.into()), 0, 1024)
+                .unwrap(),
+            (true, 4, 4)
+        );
+        assert_eq!(recv.reset_code(), Some(code));
+        assert_eq!(
+            recv.reset_at(code, 4u32.into(), None, 4, 1024).unwrap(),
+            (false, 0, 0)
+        );
+        assert_eq!(
+            recv.reset_at(code, 5u32.into(), None, 4, 1024)
+                .unwrap_err()
+                .code,
+            crate::quic_proto::TransportErrorCode::FINAL_SIZE_ERROR
+        );
+    }
+
+    #[test]
     fn partial_reset_waits_for_missing_prefix_and_credits_suffix_once() {
         let mut recv = Recv::new(1024);
         assert_eq!(

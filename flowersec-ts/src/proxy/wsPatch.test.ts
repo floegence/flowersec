@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { u16be, u32be } from "../utils/bin.js";
-import type { OperationOptions } from "../public/contract.js";
-import type { ProxyStream } from "./stream.js";
+import type { ByteStream, OperationOptions } from "../public/contract.js";
 import type { ProxyRuntimeLimits } from "./types.js";
 import { installWebSocketPatch } from "./wsPatch.js";
 
@@ -34,7 +33,7 @@ class TestCloseEvent extends Event {
   }
 }
 
-class ControlledStream implements ProxyStream {
+class ControlledStream implements ByteStream {
   readonly kind = "test";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
@@ -99,7 +98,7 @@ class ControlledStream implements ProxyStream {
 }
 
 const limits: ProxyRuntimeLimits = {
-  maxMetadataBytes: 1024,
+  maxJsonFrameBytes: 1024,
   maxChunkBytes: 1024,
   maxBodyBytes: 4096,
   maxWsFrameBytes: 1024,
@@ -164,6 +163,32 @@ function installBrowserGlobals(): void {
 }
 
 describe("WebSocket v2 proxy patch", () => {
+  it("keeps each outbound frame in one stream write without a header-only encrypted record", async () => {
+    installBrowserGlobals();
+    class FullWriteStream extends ControlledStream {
+      override async write(data: Uint8Array): Promise<number> {
+        this.writes.push(data.slice());
+        return data.length;
+      }
+    }
+    const stream = new FullWriteStream(true);
+    installWebSocketPatch({
+      runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) },
+      shouldProxy: () => true,
+    });
+    const socket = new WebSocket("wss://app.example/socket");
+    await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+    const binary = new Uint8Array([1, 2, 3]);
+    socket.send(binary);
+    socket.send("key");
+    await waitFor(() => socket.bufferedAmount === 0);
+    expect(stream.writes).toEqual([
+      frame(2, binary), frame(1, new TextEncoder().encode("key")),
+    ]);
+    stream.push(frame(8, u16be(1000)));
+    await waitFor(() => stream.closed);
+  });
+
   it("completes a locally initiated close handshake without reporting 1006", async () => {
     installBrowserGlobals();
     const stream = new ControlledStream();

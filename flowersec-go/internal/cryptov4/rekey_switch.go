@@ -3,7 +3,7 @@ package cryptov4
 import (
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 var ErrInputPending = errors.New("cryptov4: original application epoch pending")
@@ -66,15 +66,6 @@ func (e *Engine) sendEpoch(scope uint64) *epochState {
 }
 
 func (e *Engine) receiveEpoch(frame protocolv4.FrameType, header protocolv4.RecordHeader, marker *RekeyRound) (*epochState, error) {
-	// Unreliable input never waits for a candidate epoch. Only local completion
-	// changes its receive key and replay window; a private staged key grants no
-	// admission or authentication attempt before that point.
-	if frame == protocolv4.FrameDatagram {
-		if marker != nil || header.Epoch != e.current.number {
-			return nil, ErrEpoch
-		}
-		return e.current, nil
-	}
 	s := e.switching
 	if header.Epoch == e.current.number {
 		if marker != nil || s != nil && s.received {
@@ -279,19 +270,6 @@ func (e *Engine) OpenRekeyMarker(input []byte, decode func(protocolv4.FrameType,
 // Complete follows the server ACK ticket or the client's authenticated ACK.
 // Application resumption remains owned by the original Session barrier owner.
 func (r *RekeyRound) Complete() error {
-	return r.CompleteWithGuard(nil)
-}
-
-// RekeySwitchGuard joins the original Session cause gate to the Engine switch.
-// Like TicketGuard, it is called under the Engine gate and cannot reenter it.
-// LockEpochSwitch must unlock on failure; UnlockEpochSwitch records the actual
-// switch before allowing deadline observers to inspect the original cause.
-type RekeySwitchGuard interface {
-	LockEpochSwitch() error
-	UnlockEpochSwitch(switched bool)
-}
-
-func (r *RekeyRound) CompleteWithGuard(guard RekeySwitchGuard) error {
 	if err := r.begin(); err != nil {
 		return err
 	}
@@ -305,36 +283,12 @@ func (r *RekeyRound) CompleteWithGuard(guard RekeySwitchGuard) error {
 		e.mu.Unlock()
 		return r.end(ErrTransition)
 	}
-	if guard != nil {
-		if err := guard.LockEpochSwitch(); err != nil {
-			e.mu.Unlock()
-			return r.end(err)
-		}
-	}
-	// Waiting for either gate cannot extend the original round or root limits.
-	err := e.live()
-	if err == nil {
-		err = securityTimeError(r.deadline.Check())
-	}
-	if err == nil && r.rootAge != nil {
-		err = securityTimeError(r.rootAge.Check())
-	}
-	if err != nil {
-		if guard != nil {
-			guard.UnlockEpochSwitch(false)
-		}
-		e.mu.Unlock()
-		return r.end(err)
-	}
 	old := e.current
 	e.current = e.staged
 	e.staged = nil
 	e.switching = nil
 	clear(old.root[:])
 	e.recycleScopeTable(&old.keys)
-	if guard != nil {
-		guard.UnlockEpochSwitch(true)
-	}
 
 	e.mu.Unlock()
 	r.mu.Lock()

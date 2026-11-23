@@ -2,25 +2,19 @@ package sessionv4
 
 import (
 	"context"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"math"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // SendFlow is installed only after the Stream's accepted/prefix gate. It owns
 // one bounded send operation and never queues application payloads or waiters.
 // Its original writer is private to this flow after construction.
 type SendFlow struct {
-	// The accepted native receive owner seals this same Stream's reverse
-	// acceptance before exposing its first fault. Terminal proof cleanup still
-	// runs through the original admission owner without reversing lock order.
-	reset                                                atomic.Bool
 	mu                                                   sync.Mutex
 	writer                                               *RecordWriter
 	direction                                            protocolv4.Direction
@@ -37,7 +31,6 @@ type SendFlow struct {
 	queue                                                *SendQueue
 	queueOwner                                           *SendQueue
 	completion                                           *sendCompletion
-	diagnosticSink                                       *DiagnosticSink
 	termination                                          directionTermination
 	finTerminal                                          bool
 }
@@ -52,7 +45,7 @@ type sendTicket struct {
 
 func (g sendTicket) LockTicket() error {
 	g.flow.mu.Lock()
-	if g.flow.reset.Load() || g.flow.stopping || g.flow.hasTerminal {
+	if g.flow.stopping || g.flow.hasTerminal {
 		g.flow.mu.Unlock()
 		return ErrAbandoned
 	}
@@ -75,46 +68,14 @@ func (g sendTicket) UnlockTicket(committed bool) {
 }
 
 // SendFlowCharge is the backing/task minimum before allocation. The actual
-// runtime profile adds channel/allocator/task overhead. The Stream's ciphertext
-// publication backing is distinct from its plaintext input and shared crypto
-// workspaces; blocked provider output cannot retain an authentication position.
+// runtime profile adds channel/allocator/task overhead; the record engine's
+// codec/output/key reservations and provider buffers have their own owners.
 func SendFlowCharge(capacity uint64) (resourcev4.Vector, error) {
 	metadata := uint64(unsafe.Sizeof(SendFlow{})) + uint64(unsafe.Sizeof(RecordWriter{})) + uint64(unsafe.Sizeof(sendCompletion{}))
-	publication, err := sendPublicationBytes(capacity)
-	if err != nil || capacity > math.MaxUint64-metadata-uint64(publication) {
+	if capacity > uint64(math.MaxInt) || capacity > math.MaxUint64-metadata {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	return resourcev4.Vector{resourcev4.SDKBytes: capacity + uint64(publication) + metadata, resourcev4.Items: 1, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}, nil
-}
-
-func sendPublicationBytes(capacity uint64) (int, error) {
-	if capacity > uint64(protocolv4.MaxPayloadLength) || capacity > uint64(math.MaxInt) {
-		return 0, cryptov4.ErrConfiguration
-	}
-	plaintext, err := protocolv4.StreamDataPlaintextSize(math.MaxInt64, protocolv4.ServerToClient, int(capacity))
-	if err != nil {
-		return 0, err
-	}
-	kind, err := protocolv4.FieldByteLimit("OPEN_STREAM", "kind")
-	if err != nil {
-		return 0, err
-	}
-	metadata, err := protocolv4.FieldByteLimit("OPEN_STREAM", "metadata")
-	if err != nil {
-		return 0, err
-	}
-	// Match the admission encoder's complete OPEN bound, including its
-	// immutable metadata snapshot and every fixed-width field/digest.
-	plaintext = max(plaintext, kind+metadata+256)
-	tag := 0
-	for _, name := range [...]string{protocolv4.DHProfileX25519, protocolv4.DHProfileP256} {
-		profile, err := protocolv4.Profile(name)
-		if err != nil {
-			return 0, err
-		}
-		tag = max(tag, profile.TagBytes)
-	}
-	return plaintext + protocolv4.EnvelopePrefixSize + protocolv4.RecordHeaderSize() + tag, nil
+	return resourcev4.Vector{resourcev4.SDKBytes: capacity + metadata, resourcev4.Items: 1, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}, nil
 }
 
 func NewSendFlow(writer *RecordWriter, direction protocolv4.Direction, peerLimit uint64, frontier TerminalTuple, capacity uint64, maxPlaintext int, reservation resourcev4.Reference) (*SendFlow, error) {
@@ -135,17 +96,10 @@ func NewSendFlow(writer *RecordWriter, direction protocolv4.Direction, peerLimit
 	if _, err := protocolv4.RecordPrefix(protocolv4.FrameStreamData, protocolv4.RecordHeader{Scope: writer.scope}, maxPlaintext, profile, writer.engine.MaxFrame()); err != nil {
 		return nil, err
 	}
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	if writer.closed || writer.active || writer.output != nil {
-		return nil, cryptov4.ErrTransition
-	}
 	owned, err := reservation.Take(charge)
 	if err != nil {
 		return nil, err
 	}
-	publication, _ := sendPublicationBytes(capacity) // Validated by SendFlowCharge.
-	writer.output = make([]byte, publication)
 	return &SendFlow{writer: writer, direction: direction, limit: peerLimit, frontier: frontier, storage: make([]byte, int(capacity)), reservation: owned, maxPlaintext: maxPlaintext, idle: make(chan struct{}), completion: newSendCompletion()}, nil
 }
 
@@ -168,17 +122,10 @@ func (f *SendFlow) ApplyCredit(ack, limit uint64) error {
 }
 
 func (f *SendFlow) Write(ctx context.Context, payload []byte, fin bool) (result RecordWriteResult, err error) {
-	return f.write(ctx, payload, fin, nil, nil)
+	return f.write(ctx, payload, fin, nil)
 }
 
-func (f *SendFlow) write(ctx context.Context, payload []byte, fin bool, queue *SendQueue, published func()) (result RecordWriteResult, err error) {
-	return f.writeParts(ctx, payload, nil, fin, queue, published)
-}
-
-// writeParts copies the original ring's two possible contiguous ranges into
-// the already admitted plaintext backing. A ring boundary does not reduce the
-// configured publication quantum or require another record/workspace owner.
-func (f *SendFlow) writeParts(ctx context.Context, first, second []byte, fin bool, queue *SendQueue, published func()) (result RecordWriteResult, err error) {
+func (f *SendFlow) write(ctx context.Context, payload []byte, fin bool, queue *SendQueue) (result RecordWriteResult, err error) {
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
@@ -187,7 +134,7 @@ func (f *SendFlow) writeParts(ctx context.Context, first, second []byte, fin boo
 		f.mu.Unlock()
 		return result, cryptov4.ErrConfiguration
 	}
-	if f.reset.Load() || f.stopping || f.hasTerminal {
+	if f.stopping || f.hasTerminal {
 		f.mu.Unlock()
 		return result, ErrFlowClosed
 	}
@@ -199,21 +146,15 @@ func (f *SendFlow) writeParts(ctx context.Context, first, second []byte, fin boo
 		f.mu.Unlock()
 		return result, err
 	}
-	if len(first) > len(f.storage) || len(second) > len(f.storage)-len(first) {
+	if len(payload) > len(f.storage) || uint64(len(payload)) > math.MaxUint64-f.frontier.Offset || f.frontier.Offset+uint64(len(payload)) > f.limit {
 		f.mu.Unlock()
 		return result, ErrCredit
 	}
-	size := len(first) + len(second)
-	if uint64(size) > math.MaxUint64-f.frontier.Offset || f.frontier.Offset+uint64(size) > f.limit {
-		f.mu.Unlock()
-		return result, ErrCredit
-	}
-	copy(f.storage, first)
-	copy(f.storage[len(first):], second)
+	copy(f.storage, payload)
 	f.active = true
-	offset := f.frontier.Offset
+	offset, size := f.frontier.Offset, len(payload)
 	f.mu.Unlock()
-	result, err = f.writer.writeBuildPublished(ctx, protocolv4.FrameStreamData, f.maxPlaintext, func(header protocolv4.RecordHeader, dst []byte) (int, error) {
+	result, err = f.writer.WriteBuildGuard(ctx, protocolv4.FrameStreamData, f.maxPlaintext, func(header protocolv4.RecordHeader, dst []byte) (int, error) {
 		f.mu.Lock()
 		defer func() { f.encoding = false; f.mu.Unlock() }()
 		// Even a build canceled after the engine ticket must retain the exact
@@ -240,22 +181,16 @@ func (f *SendFlow) writeParts(ctx context.Context, first, second []byte, fin boo
 			f.finTerminal = true
 		}
 		return len(encoded), nil
-	}, nil, sendTicket{flow: f, fin: fin}, published)
+	}, nil, sendTicket{flow: f, fin: fin})
 	f.mu.Lock()
 	clear(f.storage[:size])
 	f.active = false
 	f.ticketed, f.encoding = false, false
 	if err != nil && result.Submitted {
 		f.stopping = true
-		if err == native.ErrNormalDrained {
-			// Preserve an already sealed FIN and wait for its exact authenticated
-			// DRAINED. A physical stop alone neither succeeds nor aborts that proof.
-			f.termination.start(false, nil)
-		} else {
-			f.finTerminal = false
-			f.termination.start(true, err)
-			f.completion.fail(err)
-		}
+		f.finTerminal = false
+		f.termination.start(true, err)
+		f.completion.fail(err)
 	}
 	if f.stopping && !f.hasTerminal {
 		f.terminal = f.frontier
@@ -328,8 +263,6 @@ func (f *SendFlow) retire() error {
 	f.queueOwner = nil
 	f.writer.mu.Lock()
 	f.writer.writer = nil
-	clear(f.writer.output)
-	f.writer.output = nil
 	f.writer.mu.Unlock()
 	f.reservation.Release()
 	f.termination.retire()

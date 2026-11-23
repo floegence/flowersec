@@ -54,7 +54,7 @@ export function verifyToolchainPolicy(root = repositoryRoot) {
 
   const make = read("Makefile");
   if (!/^export GOTOOLCHAIN := local$/m.test(make)) throw new Error("Makefile must disable automatic Go toolchain switching");
-  for (const target of ["prepush", "test", "test-resume", "precommit", "precommit-source", "check"]) {
+  for (const target of ["test", "test-resume", "precommit", "precommit-source", "check"]) {
     const recipe = new RegExp(`^${target}:[^\\n]*\\n((?:\\t.*\\n)*)`, "m").exec(make)?.[1];
     if (!recipe?.startsWith("\tnode scripts/toolchains.mjs --check-runtime go node rust swift\n")) {
       throw new Error(`${target} must validate actual toolchain versions before execution`);

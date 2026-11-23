@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/egress"
+	"github.com/floegence/flowersec/flowersec-go/v7/egress"
 )
 
 func proxyFixture(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *tls.Config) {
@@ -149,6 +149,19 @@ func TestHTTPSProxyRejectsInvalidPolicy(t *testing.T) {
 		if _, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URL: "https://proxy.test", TLSConfig: config}); !errors.Is(err, egress.ErrInvalidProxy) {
 			t.Fatalf("invalid TLS accepted: %v", err)
 		}
+	}
+}
+
+func TestHTTPSProxyRouteCount(t *testing.T) {
+	routes := make([]string, 17)
+	for i := range routes {
+		routes[i] = fmt.Sprintf("https://proxy-%d.test", i)
+	}
+	if _, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URLs: routes[:16]}); err != nil {
+		t.Fatalf("16 routes: %v", err)
+	}
+	if _, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URLs: routes}); !errors.Is(err, egress.ErrInvalidProxy) {
+		t.Fatalf("17 routes: got %v, want ErrInvalidProxy", err)
 	}
 }
 

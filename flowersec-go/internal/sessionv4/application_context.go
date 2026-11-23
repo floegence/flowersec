@@ -7,8 +7,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 var ErrApplicationDependency = errors.New("sessionv4: dependency_unavailable")
@@ -18,10 +18,6 @@ var ErrApplicationDependency = errors.New("sessionv4: dependency_unavailable")
 // context can manufacture an invocation or remove a Completion ancestor.
 const maxApplicationAncestors = 8
 
-// Each dependency floor serves one bounded ancestor chain. Independent SDK
-// components admit their own floor and therefore share no checkout slots.
-const dependencyFloorCapacity = maxApplicationAncestors
-
 type applicationLane uint8
 
 const (
@@ -30,8 +26,6 @@ const (
 )
 
 type applicationContextKey struct{}
-type diagnosticOperationKey struct{}
-type diagnosticOperationOwnerKey struct{}
 type cleanupOnlyContextKey struct{}
 
 // Cleanup inherits only its original finite cancellation/deadline. The SDK
@@ -67,65 +61,29 @@ func (c *applicationContext) Value(key any) any {
 // cannot retain an old Session, input or executor after actual callback exit.
 // A known SDK child pins the original metadata with a real reference below.
 type applicationContextState struct {
-	mu                  sync.Mutex
-	diagnosticOperation *DiagnosticOperation
-	services            *invocationServices
-	executor            *ApplicationExecutor
-	result              *UnaryCall
-	streamResult        *StreamMessages
-	messageResult       *typedMessageDecode
-	backing             resourcev4.Reference
-	dependencyFloor     *resourcev4.BorrowPool
-	lane                applicationLane
-	class               ApplicationWorkClass
-	live                bool
-	deadline            time.Time
-	serial              [maxApplicationAncestors]uint64
-	depth               int
-	sequence            uint64
+	mu            sync.Mutex
+	executor      *ApplicationExecutor
+	result        *UnaryCall
+	streamResult  *StreamMessages
+	messageResult *typedMessageDecode
+	backing       resourcev4.Reference
+	lane          applicationLane
+	class         ApplicationWorkClass
+	live          bool
+	deadline      time.Time
+	serial        [maxApplicationAncestors]uint64
+	depth         int
+	sequence      uint64
 }
 
 type applicationDependencies struct {
 	states [maxApplicationAncestors]*applicationContextState
 	refs   [maxApplicationAncestors]resourcev4.Reference
 	count  int
-	floor  *resourcev4.BorrowPool
 }
 
 func applicationContextBytes() uint64 {
 	return uint64(unsafe.Sizeof(applicationContext{})) + uint64(unsafe.Sizeof(applicationContextState{}))
-}
-
-func withDiagnosticOperation(ctx context.Context, operation *DiagnosticOperation) context.Context {
-	if ctx == nil {
-		return ctx
-	}
-	ctx = context.WithValue(ctx, diagnosticOperationKey{}, operation)
-	return context.WithValue(ctx, diagnosticOperationOwnerKey{}, false)
-}
-
-func withOwnedDiagnosticOperation(ctx context.Context, operation *DiagnosticOperation) context.Context {
-	if ctx == nil {
-		return ctx
-	}
-	ctx = context.WithValue(ctx, diagnosticOperationKey{}, operation)
-	return context.WithValue(ctx, diagnosticOperationOwnerKey{}, operation != nil)
-}
-
-func diagnosticOperationOwnedFromContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	owned, _ := ctx.Value(diagnosticOperationOwnerKey{}).(bool)
-	return owned
-}
-
-func diagnosticOperationFromContext(ctx context.Context) *DiagnosticOperation {
-	if ctx == nil {
-		return nil
-	}
-	op, _ := ctx.Value(diagnosticOperationKey{}).(*DiagnosticOperation)
-	return op
 }
 
 // enterApplicationContext is used only by an already running SDK application
@@ -157,34 +115,20 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 		return nil, nil, err
 	}
 	deadline, _ := parent.Deadline()
-	var dependencyFloor *resourcev4.BorrowPool
-	if dependencies != nil {
-		dependencyFloor = dependencies.floor
-	}
-	diagnosticOperation := diagnosticOperationFromContext(parent)
-	// An application callback may use this context to start a new operation;
-	// the prepared owner marker is consumed at the admission boundary and must
-	// not leak into descendants.
-	parent = withDiagnosticOperation(parent, diagnosticOperation)
-	s := &applicationContextState{diagnosticOperation: diagnosticOperation, deadline: deadline, executor: executor, backing: backing, dependencyFloor: dependencyFloor, lane: lane, class: class, live: true}
+	s := &applicationContextState{deadline: deadline, executor: executor, backing: backing, lane: lane, class: class, live: true}
 	c := &applicationContext{Context: parent, state: s}
 	if dependencies != nil {
 		c.ancestors, c.count = dependencies.states, dependencies.count
 	}
 	return c, func() {
 		s.mu.Lock()
-		services := s.services
 		s.live = false
-		s.services = nil
 		s.executor = nil
 		s.result = nil
 		s.streamResult = nil
 		s.messageResult = nil
-		s.diagnosticOperation = nil
 		s.backing = resourcev4.Reference{}
-		s.dependencyFloor = nil
 		s.mu.Unlock()
-		services.releaseInvocation()
 	}, nil
 }
 
@@ -192,11 +136,6 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 // and pins only real original references. An exited parent cannot be used to
 // create work. Already accepted children retain their own independent rights.
 func captureApplicationDependencies(ctx context.Context) (d applicationDependencies, err error) {
-	return captureApplicationDependenciesWithFloor(ctx, nil)
-}
-
-func captureApplicationDependenciesWithFloor(ctx context.Context, floor *resourcev4.BorrowPool) (d applicationDependencies, err error) {
-	d.floor = floor
 	if ctx == nil {
 		return d, cryptov4.ErrConfiguration
 	}
@@ -224,10 +163,6 @@ func captureApplicationDependenciesWithFloor(ctx context.Context, floor *resourc
 			s = c.ancestors[j]
 		}
 		s.mu.Lock()
-		if j == c.count && s.services != nil && s.services.sealed.Load() {
-			s.mu.Unlock()
-			return d, ErrApplicationDependency
-		}
 		if !s.live || j == c.count && !s.currentSerialLocked(c.serial) {
 			s.mu.Unlock()
 			if j == c.count {
@@ -235,7 +170,7 @@ func captureApplicationDependenciesWithFloor(ctx context.Context, floor *resourc
 			}
 			continue
 		}
-		ref, e := d.borrowLocked(s)
+		ref, e := s.backing.Borrow()
 		s.mu.Unlock()
 		if e != nil {
 			return d, e
@@ -257,9 +192,6 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 	if source == nil {
 		return nil
 	}
-	if d.floor == nil {
-		d.floor = source.floor
-	}
 	for j := 0; j < source.count; j++ {
 		s := source.states[j]
 		found := false
@@ -278,7 +210,7 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 			s.mu.Unlock()
 			return ErrApplicationDependency
 		}
-		ref, err := d.borrowLocked(s)
+		ref, err := s.backing.Borrow()
 		s.mu.Unlock()
 		if err != nil {
 			return err
@@ -289,26 +221,6 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 	return nil
 }
 
-// The child's already admitted workload owns these positions, even when its
-// original parent belongs to another invocation or result. A declared floor
-// never falls back to an unreserved root slot while an earlier use is live.
-func (d *applicationDependencies) borrowLocked(s *applicationContextState) (resourcev4.Reference, error) {
-	if d.floor != nil {
-		return d.floor.Borrow(s.backing)
-	}
-	return s.borrowDependencyLocked()
-}
-
-// The invocation gate orders entry/exit with a future dependency checkout.
-// A configured floor cannot silently compete for a fresh root reference when
-// its admitted aliases are occupied by real children or result tails.
-func (s *applicationContextState) borrowDependencyLocked() (resourcev4.Reference, error) {
-	if s.dependencyFloor != nil {
-		return s.dependencyFloor.Borrow(s.backing)
-	}
-	return s.backing.Borrow()
-}
-
 func (d *applicationDependencies) checkOrigin() error {
 	if d.count == 0 {
 		return nil
@@ -316,7 +228,7 @@ func (d *applicationDependencies) checkOrigin() error {
 	s := d.states[d.count-1]
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.live || s.services != nil && s.services.sealed.Load() {
+	if !s.live {
 		return ErrApplicationDependency
 	}
 	return nil
@@ -351,7 +263,7 @@ func checkApplicationContext(ctx context.Context) (bool, error) {
 	}
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
-	if !c.state.live || !c.state.currentSerialLocked(c.serial) || c.state.services != nil && c.state.services.sealed.Load() {
+	if !c.state.live || !c.state.currentSerialLocked(c.serial) {
 		return true, ErrApplicationDependency
 	}
 	return true, nil

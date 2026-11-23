@@ -261,7 +261,7 @@ esac
         PATH: `${fakeBin}:${process.env.PATH}`,
         IMAGE_DIGEST: testImageDigest,
         IMAGE_REPOSITORY: "ghcr.io/test/flowersec-runtime",
-        IMAGE_VERSION: "3.0.1",
+        IMAGE_VERSION: mode.version ?? "3.0.1",
         FAKE_COUNT_FILE: countFile,
         FAKE_DOCKER_MODE: mode.docker ?? "match",
         FAKE_SLEEP_FILE: sleepFile,
@@ -580,7 +580,7 @@ esac
   });
 }
 
-function runNpmCommandTimeoutHarness(t, phase, timeoutExit) {
+function runNpmCommandTimeoutHarness(t, phase, timeoutExit, version = "3.0.1") {
   const run = extractWorkflowStepRun(
     path.join(sourceRoot, ".github/workflows/release.yml"),
     "npm-recovery",
@@ -600,7 +600,7 @@ if [[ "$1" == npm && "$2" == view ]]; then
   printf '{"error":{"code":"E404"}}\n'
   exit 1
 fi
-if [[ "$1" == npx && "$FAKE_TIMEOUT_PHASE" == publish ]]; then exit "$FAKE_TIMEOUT_EXIT"; fi
+if [[ "$1" == npx && "$FAKE_TIMEOUT_PHASE" == publish ]]; then printf '%s\\n' "$@"; exit "$FAKE_TIMEOUT_EXIT"; fi
 printf 'unexpected timeout command: %s\n' "$*" >&2
 exit 70
 `);
@@ -608,7 +608,7 @@ exit 70
   const archive = path.join(root, "package.tgz");
   fs.writeFileSync(archive, "release archive");
   const shell = `set -euo pipefail
-VERSION=3.0.1
+VERSION="$2"
 SHA=88d8064370733ca512b7994479d52fae33d91665
 ${publishFunction}
 set +e
@@ -617,7 +617,7 @@ status=$?
 set -e
 exit "$status"
 `;
-  return spawnSync("bash", ["-c", shell, "--", archive], {
+  return spawnSync("bash", ["-c", shell, "--", archive, version], {
     cwd: root,
     encoding: "utf8",
     env: isolatedEnvironment({
@@ -864,7 +864,7 @@ test("Rust publication installs the shared native driver before the SDK", () => 
   assert.match(makefile, /cargo package --manifest-path flowersec-rust\/Cargo\.toml --locked --allow-dirty --list/);
   assert.match(rustWorkflow, /name: Publish native transport crate[\s\S]*working-directory: flowersec-native-transport[\s\S]*timeout --kill-after=5s 600s cargo publish --locked/);
   assert.match(rustWorkflow, /name: Wait for native transport registry readback/);
-  assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*timeout --kill-after=5s 600s cargo publish --locked/);
+  assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*timeout --kill-after=5s 600s cargo publish --locked -p flowersec$/m);
   assert.match(rustWorkflow, /name: Verify Flowersec Rust SDK registry readback/);
   assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec-native-transport/);
   assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec /);
@@ -1234,6 +1234,12 @@ test("GHCR tag readback retries both promoted tags and classifies marker timeout
   assert.equal(Number(fs.readFileSync(eventual.countFile, "utf8")), 4);
   assert.deepEqual(fs.readFileSync(eventual.sleepFile, "utf8").trim().split("\n"), ["5", "5"]);
 
+  const maintenance = runGhcrTagReadbackHarness(t, { version: "5.7.0" });
+  assert.equal(maintenance.result.status, 0, maintenance.result.stderr);
+  assert.match(maintenance.result.stdout, /flowersec-runtime:5\.7\.0/);
+  assert.doesNotMatch(maintenance.result.stdout, /:latest/);
+  assert.equal(Number(fs.readFileSync(maintenance.countFile, "utf8")), 1);
+
   for (const timeoutExit of [124, 137]) {
     const timedOut = runGhcrTagReadbackHarness(t, { timeout: true, timeoutExit });
     assert.notEqual(timedOut.result.status, 0);
@@ -1396,6 +1402,17 @@ test("release workflow reports bounded asset and registry publication timeouts",
   }
 });
 
+test("npm publishes major 5 under its maintenance tag and leaves the current major on the default tag", (t) => {
+  for (const version of ["5.7.0", "7.0.0"]) {
+    const result = runNpmCommandTimeoutHarness(t, "publish", 124, version);
+    assert.equal(result.status, 124, result.stderr);
+    const args = result.stdout.trim().split("\n");
+    assert.ok(args.includes("publish"));
+    if (version.startsWith("5.")) assert.equal(args[args.indexOf("--tag") + 1], "legacy-v5");
+    else assert.equal(args.includes("--tag"), false);
+  }
+});
+
 test("registry readback bounds chunked bodies and metadata deadlines", async (t) => {
   let mode = "stall";
   let closedConnections = 0;
@@ -1468,21 +1485,22 @@ test("bounded child readback classifies limits and kills background descendants"
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
   const matrix = fs.readFileSync(path.join(sourceRoot, "docs/TEST_MATRIX.md"), "utf8");
-  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V4_BINDING.md"), "utf8");
+  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V3_ARCHITECTURE.md"), "utf8");
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/direct/);
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/tunnel\/representative/);
   assert.match(matrix, /Go-owned/);
   assert.match(matrix, /performance\/throughput\/\{wss,raw-quic\}/);
   assert.match(matrix, /performance-optional/);
   assert.doesNotMatch(matrix, /Swift WSS against Go, Rust, and Node/);
-  assert.match(architecture, /provider qualification/u);
-  assert.match(architecture, /WebTransport/u);
+  assert.match(architecture, /typescript\/node[^\n]*node_webtransport_driver_unavailable/);
+  assert.match(architecture, /\| go\/native \|[^\n]*no migration \|/);
   assert.doesNotMatch(architecture, /Linux system tests include[^\n]*real path migration[^\n]*IPv4\/IPv6 PMTUD/);
 });
 
-test("npm release readback verifies published tarballs and platform package metadata", () => {
+test("npm release verifies registry packages and keeps consumer exercises outside publication", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
+  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-consumer.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
   assert.match(
     readback,
@@ -1503,61 +1521,26 @@ test("npm release readback verifies published tarballs and platform package meta
   assert.match(readback, /manifest\.main/);
   assert.match(readback, /flowersec-node-native/);
   assert.doesNotMatch(workflow, /npm-consumer-smoke:/);
-});
-
-test("main recovery preserves the tagged product source and rejects untrusted or changed inputs", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-ref-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const repo = path.join(root, "repo");
-  const origin = path.join(root, "origin.git");
-  runGit(["init", "--bare", origin]);
-  runGit(["init", "--initial-branch=main", repo]);
-  runGit(["-C", repo, "config", "user.name", "Release Ref Fixture"]);
-  runGit(["-C", repo, "config", "user.email", "fixture@example.invalid"]);
-  fs.mkdirSync(path.join(repo, "scripts"));
-  fs.mkdirSync(path.join(repo, "flowersec-rust", "src"), { recursive: true });
-  fs.writeFileSync(path.join(repo, "flowersec-rust", "src", "lib.rs"), "pub fn existing() {}\n");
-  fs.writeFileSync(path.join(repo, "scripts", "verify-crates-release-consumer.mjs"), "// original tooling\n");
-  runGit(["-C", repo, "add", "."]);
-  runGit(["-C", repo, "commit", "-m", "feat: product source"]);
-  const releaseSHA = runGit(["-C", repo, "rev-parse", "HEAD"]);
-  runGit(["-C", repo, "remote", "add", "origin", origin]);
-  runGit(["-C", repo, "push", "origin", "main"]);
-  const invoke = (overrides = {}) => spawnSync("bash", [path.join(sourceRoot, "scripts/verify-release-main.sh")], {
-    cwd: repo,
-    encoding: "utf8",
-    env: isolatedEnvironment({
-      GITHUB_EVENT_NAME: "workflow_dispatch",
-      GITHUB_REF: "refs/heads/main",
-      GITHUB_SHA: runGit(["--git-dir", origin, "rev-parse", "refs/heads/main"]),
-      GITHUB_REPOSITORY: "floegence/flowersec",
-      GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/release.yml@refs/heads/main",
-      ...overrides,
-    }),
-  });
-  assert.equal(invoke({ GITHUB_EVENT_NAME: "push" }).status, 0, "new releases require the exact main tip");
-  fs.writeFileSync(path.join(repo, "scripts", "verify-crates-release-consumer.mjs"), "// repaired publication tooling\n");
-  runGit(["-C", repo, "add", "."]);
-  runGit(["-C", repo, "commit", "-m", "fix: publication tooling"]);
-  runGit(["-C", repo, "push", "origin", "main"]);
-  runGit(["-C", repo, "checkout", "--detach", releaseSHA]);
-  const recovered = invoke();
-  assert.equal(recovered.status, 0, recovered.stderr);
-  for (const overrides of [
-    { GITHUB_EVENT_NAME: "push" },
-    { GITHUB_REF: "refs/heads/recovery" },
-    { GITHUB_SHA: releaseSHA },
-    { GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/release.yml@refs/heads/recovery" },
-  ]) assert.notEqual(invoke(overrides).status, 0, JSON.stringify(overrides));
-  runGit(["-C", repo, "checkout", "main"]);
-  fs.appendFileSync(path.join(repo, "flowersec-rust", "src", "lib.rs"), "pub fn changed() {}\n");
-  runGit(["-C", repo, "add", "."]);
-  runGit(["-C", repo, "commit", "-m", "feat: different product source"]);
-  runGit(["-C", repo, "push", "origin", "main"]);
-  runGit(["-C", repo, "checkout", "--detach", releaseSHA]);
-  const rejected = invoke();
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /cannot cross a product change/);
+  assert.doesNotMatch(workflow, /verify-npm-release-consumer|npm-release-go-node-raw-quic/);
+  assert.match(consumer, /addon\.contractVersion\(\), 3/);
+  assert.match(consumer, /release\/npm-consumer\/cli-websocket GREEN/);
+  assert.match(consumer, /cliPath, "server"/);
+  assert.match(consumer, /cliPath, "client"/);
+  assert.match(consumer, /\{ origin: ready\.origin, roots: ready\.trust_pem \}/);
+  assert.doesNotMatch(consumer, /tls:\s*\{\s*ca:/);
+  assert.match(workflow, /actions\/setup-go/);
+  const goConsumer = fs.readFileSync(
+    path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
+    "utf8",
+  );
+  assert.match(goConsumer, /NewRawQUICDirectListener/);
+  assert.match(goConsumer, /NewAcceptor/);
+  assert.match(goConsumer, /IssueDirect/);
+  assert.match(goConsumer, /HandleRPC/);
+  assert.match(goConsumer, /HandleStream/);
+  assert.match(goConsumer, /SessionClosed/);
+  assert.match(goConsumer, /accepted lease was not released/);
+  assert.doesNotMatch(goConsumer, /\/internal\//);
 });
 
 test("release recovery restores readback scripts from the reviewed workflow SHA after immutable tag checkout", () => {
@@ -1571,10 +1554,63 @@ test("release recovery restores readback scripts from the reviewed workflow SHA 
     assert.ok(checkout >= 0);
     for (const file of files) {
       assert.match(workflow.slice(restore, restore + 700), new RegExp(file.replaceAll(".", "\\.")));
-      assert.ok(fs.existsSync(path.join(sourceRoot, file)), `restored release script is missing: ${file}`);
+      assert.ok(fs.existsSync(path.join(sourceRoot, file)), file);
     }
     assert.ok(workflow.indexOf(invocation) > restore);
   }
+});
+
+test("main recovery keeps tagged products immutable and requires the current reviewed workflow", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-ref-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  const origin = path.join(root, "origin.git");
+  runGit(["init", "--bare", origin]);
+  runGit(["init", "--initial-branch=main", repo]);
+  const git = (...args) => runGit(["-C", repo, ...args]);
+  git("config", "user.name", "Release Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  git("remote", "add", "origin", origin);
+  const commit = (file, text) => {
+    const target = path.join(repo, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+    git("add", file);
+    git("commit", "-m", text);
+    return git("rev-parse", "HEAD");
+  };
+  const product = "flowersec-go/adapters/sqlite/go.mod";
+  const release = commit(product, "tagged product");
+  git("push", "origin", "main");
+  const invoke = (overrides = {}) => spawnSync("bash", [path.join(sourceRoot, "scripts/verify-release-main.sh"), "7.0.0"], {
+    cwd: repo, encoding: "utf8", env: isolatedEnvironment({
+      GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: git("rev-parse", "main"), GITHUB_REPOSITORY: "floegence/flowersec",
+      GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/release.yml@refs/heads/main", ...overrides,
+    }),
+  });
+  assert.equal(invoke({ GITHUB_EVENT_NAME: "push" }).status, 0);
+  const reviewed = commit("scripts/verify-crates-release-consumer.mjs", "reviewed release tooling");
+  git("push", "origin", "main");
+  git("checkout", "--detach", release);
+  for (const workflow of ["release.yml", "rust-release.yml"]) {
+    const result = invoke({ GITHUB_WORKFLOW_REF: `floegence/flowersec/.github/workflows/${workflow}@refs/heads/main` });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  for (const overrides of [
+    { GITHUB_EVENT_NAME: "push" }, { GITHUB_REF: "refs/heads/topic" }, { GITHUB_SHA: release },
+    { GITHUB_REPOSITORY: "another/repo" }, { GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/ci.yml@refs/heads/main" },
+  ]) assert.notEqual(invoke(overrides).status, 0, JSON.stringify(overrides));
+  commit("scripts/verify-crates-release-consumer.mjs", "unrelated publication source");
+  assert.match(invoke().stderr, /not an ancestor/);
+  git("checkout", "main");
+  assert.equal(git("rev-parse", "HEAD"), reviewed);
+  commit(product, "different product");
+  git("push", "origin", "main");
+  git("checkout", "--detach", release);
+  assert.match(invoke().stderr, /cannot cross a product change: flowersec-go\/adapters\/sqlite\/go\.mod/);
+  assert.equal(git("rev-parse", "HEAD"), release);
+  assert.equal(fs.readFileSync(path.join(repo, product), "utf8"), "tagged product");
 });
 
 test("standalone npm recovery restores only registry readback scripts", () => {
@@ -1592,7 +1628,70 @@ test("standalone npm recovery restores only registry readback scripts", () => {
     "scripts/release-readback.mjs",
     "scripts/verify-npm-release-package.mjs",
   ]);
-  assert.doesNotMatch(recovery, /verify-npm-release-consumer|native-addon-smoke|npm-release-go-node-raw-quic/);
+});
+
+test("the independent npm consumer exercise follows the target tag Go requirement", async (t) => {
+  const copiedFiles = [
+    "scripts/verify-npm-release-consumer.mjs",
+    "scripts/native-addon-smoke.mjs",
+    "scripts/fixtures/npm-release-go-node-raw-quic/main.go",
+  ];
+
+  for (const fixture of [
+    { name: "old tag", goModule: "module github.com/floegence/flowersec/flowersec-go/v5\n\ngo 1.27.0\n", expected: "1.27.0" },
+    { name: "current tag", goModule: fs.readFileSync(path.join(sourceRoot, "flowersec-go/go.mod"), "utf8"), expected: toolchains.go.minimum },
+    { name: "Go requirement differs from toolchain suggestion", goModule: "module github.com/floegence/flowersec/flowersec-go/v5\r\n\r\ngo\t1.27.0 // release requirement\r\ntoolchain go1.27.1\r\n", expected: "1.27.0" },
+    { name: "missing Go requirement", goModule: "module github.com/floegence/flowersec/flowersec-go/v5\n// go 1.27.0\ntoolchain go1.27.1\n", expected: null },
+  ]) {
+    await t.test(fixture.name, (t) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-old-tag-"));
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      for (const file of copiedFiles) {
+        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+        fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
+      }
+      fs.mkdirSync(path.join(root, "flowersec-go"));
+      fs.writeFileSync(path.join(root, "flowersec-go/go.mod"), fixture.goModule);
+      const bin = path.join(root, "bin");
+      fs.mkdirSync(bin);
+      const capture = path.join(root, "consumer.json");
+      writeExecutable(path.join(bin, "npm"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+fs.writeFileSync(process.env.FLOWERSEC_TEST_CONSUMER_CAPTURE, JSON.stringify({
+  root: process.cwd(),
+  goSource: fs.readFileSync(path.join(process.cwd(), "go-consumer/main.go"), "utf8"),
+  goModule: fs.readFileSync(path.join(process.cwd(), "go-consumer/go.mod"), "utf8"),
+}));
+process.stderr.write("stopped before registry access\\n");
+process.exit(73);
+`);
+      assert.equal(fs.existsSync(path.join(root, "toolchains.json")), false);
+      assert.equal(fs.existsSync(path.join(root, "scripts/toolchains.mjs")), false);
+      const version = fixture.name === "current tag" ? "7.0.0" : "5.12.0";
+      const result = spawnSync(process.execPath, ["scripts/verify-npm-release-consumer.mjs", version], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: isolatedEnvironment({
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+          FLOWERSEC_TEST_CONSUMER_CAPTURE: capture,
+        }),
+      });
+      assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+      if (fixture.expected === null) {
+        assert.match(result.stderr, /must contain exactly one Go version requirement/);
+        assert.equal(fs.existsSync(capture), false, "invalid Go requirements must fail before npm");
+      } else {
+        assert.match(result.stderr, /stopped before registry access/);
+        const consumer = JSON.parse(fs.readFileSync(capture, "utf8"));
+        const targetModule = fixture.goModule.match(/^module (\S+)/m)[1];
+        assert.ok(consumer.goSource.includes(`"${targetModule}"`) && consumer.goSource.includes(`"${targetModule}/controlplane"`));
+        assert.equal(consumer.goModule, `module flowersec_release_consumer\n\ngo ${fixture.expected}\n\nrequire ${targetModule} v${version}\n`);
+        assert.equal(fs.existsSync(consumer.root), false, "failed readback must clean its scratch directory");
+      }
+    });
+  }
 });
 
 test("release recovery preserves immutable assets and publishes npm from those exact archives", () => {
@@ -1659,6 +1758,7 @@ test("release recovery preserves immutable assets and publishes npm from those e
   assert.match(workflow, /\.os == \[\$os\] and \.cpu == \[\$cpu\]/);
   assert.match(workflow, /\.error\.code == "E404"/);
   assert.match(workflow, /npm@11\.5\.1 publish "\$\{publish_args\[\@\]\}" "\.\/\$archive"/);
+  assert.match(workflow, /local publish_args=\(--access public\)\s+if \[\[ "\$VERSION" == 5\.\* \]\]; then publish_args\+=\(--tag legacy-v5\); fi/);
   assert.match(workflow, /--provenance=false/);
   assert.match(workflow, /repository_url/);
   assert.match(workflow, /if \[\[ -z "\$repository_url" \]\]/);
@@ -2065,7 +2165,8 @@ function executablePath(name) {
   return result.stdout.trim();
 }
 
-function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
+function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n", version = "0.26.0") {
+  const major = version.split(".")[0];
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-script-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, "repo");
@@ -2094,20 +2195,20 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.chmodSync(path.join(repo, "scripts/release.sh"), 0o755);
   fs.writeFileSync(
     path.join(repo, "flowersec-ts/package.json"),
-    JSON.stringify({ version: "0.26.0" }),
+    JSON.stringify({ version }),
   );
   fs.writeFileSync(
     path.join(repo, "flowersec-ts/package-lock.json"),
-    JSON.stringify({ version: "0.26.0", packages: { "": { version: "0.26.0" } } }),
+    JSON.stringify({ version, packages: { "": { version } } }),
   );
   fs.writeFileSync(
     path.join(repo, "flowersec-go/go.mod"),
-    "module github.com/floegence/flowersec/flowersec-go/v0\n",
+    `module github.com/floegence/flowersec/flowersec-go/v${major}\n`,
   );
-  fs.writeFileSync(path.join(repo, "Package.swift"), "// Flowersec release major: 0\n");
+  fs.writeFileSync(path.join(repo, "Package.swift"), `// Flowersec release major: ${major}\n`);
   fs.writeFileSync(
     path.join(repo, "flowersec-rust/Cargo.toml"),
-    "[package]\nname = \"flowersec\"\nversion = \"0.26.0\"\n",
+    `[package]\nname = "flowersec"\nversion = "${version}"\n`,
   );
   fs.writeFileSync(path.join(repo, "flowersec-rust/fuzz/Cargo.toml"), "[package]\nname = \"fuzz\"\n");
   fs.writeFileSync(path.join(repo, "examples/rust/Cargo.toml"), "[package]\nname = \"example\"\n");
@@ -2115,15 +2216,22 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
 
   fs.writeFileSync(
     path.join(bin, "cargo"),
-    "#!/bin/sh\nprintf '%s\\n' '{\"packages\":[{\"name\":\"flowersec\",\"version\":\"0.26.0\",\"source\":null}]}'\n",
+    `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ packages: [{ name: "flowersec", version, source: null }] })}'\n`,
   );
   fs.chmodSync(path.join(bin, "cargo"), 0o755);
+  writeExecutable(path.join(bin, "gh"), `#!/bin/sh
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+printf '%s\\n' "$*" >> "$FLOWERSEC_TEST_GO_LOG.dispatch"
+[ "$1 $2" = "workflow run" ] && exit "\${FLOWERSEC_TEST_DISPATCH_EXIT:-0}"
+exit 91
+`);
   fs.writeFileSync(path.join(bin, "make"), makeScript);
   fs.chmodSync(path.join(bin, "make"), 0o755);
   fs.writeFileSync(
     path.join(bin, "go"),
     [
       "#!/bin/sh",
+      'if [ "$1" = mod ]; then exec "$FLOWERSEC_TEST_REAL_GO" "$@"; fi',
       "printf '%s\\n' \"$*\" >> \"$FLOWERSEC_TEST_GO_LOG\"",
       "if [ \"${FLOWERSEC_TEST_FAIL_NOTES:-0}\" = 1 ]; then exit 88; fi",
       "output=''",
@@ -2142,6 +2250,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
     [
       "#!/bin/sh",
       "printf '%s\\n' \"$*\" >> \"$FLOWERSEC_TEST_GIT_LOG\"",
+      'if [ "$*" = "remote get-url --push origin" ]; then echo git@github.com:floegence/flowersec.git; exit 0; fi',
       "if [ \"$1\" = tag ] && [ \"${FLOWERSEC_TEST_FAIL_TAG:-}\" = \"${2:-}\" ]; then",
       "  exit 86",
       "fi",
@@ -2163,17 +2272,18 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   runGit(["-C", repo, "remote", "add", "origin", origin]);
   runGit(["-C", repo, "push", "-u", "origin", "main"]);
 
-  return { bin, gitLog, goLog, origin, realGit, realMake, repo };
+  return { bin, gitLog, goLog, origin, realGit, realMake, repo, version };
 }
 
 function runReleaseScript(fixture, env = {}) {
-  return spawnSync("bash", ["scripts/release.sh", "0.26.0"], {
+  return spawnSync("bash", ["scripts/release.sh", fixture.version], {
     cwd: fixture.repo,
     encoding: "utf8",
     env: isolatedEnvironment({
       FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
       FLOWERSEC_TEST_GO_LOG: fixture.goLog,
       FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
+      FLOWERSEC_TEST_REAL_GO: executablePath("go"),
       PATH: `${fixture.bin}:${process.env.PATH}`,
       ...env,
     }),
@@ -2334,7 +2444,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
   assert.match(
     makefile,
-    /^check: security-makefile-check\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) release-policy-check$/m,
+    /^check: security-makefile-check\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) go-minimum-check\n\t\$\(MAKE\) node-minimum-check\n\t\$\(MAKE\) release-policy-check$/m,
   );
   assert.match(makefile, /^check: security-makefile-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
   assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n\tnode scripts\/run-final-stage\.mjs 595 browser \$\(MAKE\) browser-smoke$/m);
@@ -2372,7 +2482,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   }
   assert.match(policyScript, /check-release-version-consistency\.mjs/);
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
-  assert.doesNotMatch(ciWorkflow, /make (?:precommit|prepush|test)|cargo (?:test|build|check|clippy)/);
+  assert.doesNotMatch(ciWorkflow, /make (?:precommit|node-minimum-check|rust-msrv-check|test)|cargo (?:test|build|check|clippy)/);
   assert.match(ciWorkflow, /actions\/dependency-review-action@[0-9a-f]{40} # v5\.0\.0/);
 });
 
@@ -2412,7 +2522,7 @@ test("release stays publication-only while main push owns local validation", () 
   assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
   assert.match(prePush, /use \.\/scripts\/push-main\.sh/);
 
-  const gate = pushScript.indexOf("make prepush");
+  const gate = pushScript.indexOf("make test");
   const push = pushScript.indexOf("git push origin");
   assert.ok(gate >= 0 && gate < push, "local validation must precede push");
   assert.doesNotMatch(pushScript, /make (?:precommit|check)/);
@@ -2579,7 +2689,7 @@ test("Rust recovery rejects non-canonical versions before invoking git", (t) => 
 });
 
 test("hosted CI rejects heavyweight testing and compilation", { concurrency: releaseMutationConcurrency }, async (t) => {
-  await Promise.all(["make precommit", "make prepush", "make test", "cargo test --locked", "cargo build --locked"].map(command =>
+  await Promise.all(["make precommit", "make node-minimum-check", "make test", "cargo test --locked", "cargo build --locked"].map(command =>
     t.test(`rejects ${command}`, () => {
       const root = createReleasePolicyFixture(t), file = path.join(root, ".github/workflows/ci.yml");
       const source = fs.readFileSync(file, "utf8");
@@ -2611,8 +2721,8 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     {
       name: "Go CodeQL reads the wrong module version",
       file: "codeql.yml",
-      from: "          go-version-file: flowersec-go/go.mod\n",
-      to: "          go-version-file: tools/releasenotes/go.mod\n",
+      from: "          go-version-file: tools/releasenotes/go.mod\n",
+      to: "          go-version-file: flowersec-go/go.mod\n",
     },
     ...["ci.yml", "codeql.yml", "release.yml", "rust-release.yml"].map((file) => ({
       name: `Node primary runtime is downgraded to the minimum in ${file}`,
@@ -2647,7 +2757,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       fs.writeFileSync(file, source.replace(mutation.from, mutation.to));
       const result = runReleasePolicy(root);
       assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-      assert.match(result.stderr, mutation.expectedError ?? /environment|reviewed value|step sequence/);
+      assert.match(result.stderr, /environment|reviewed value|step sequence/);
     });
   }
 
@@ -3467,6 +3577,83 @@ test("release publishes main and all ecosystem tags atomically", (t) => {
   assert.ok(commands.some((command) => command.startsWith("push --atomic origin ")), commands.join("\n"));
 });
 
+test("release publishes and verifies the SQLite module tag when the commit contains it", (t) => {
+  const fixture = createReleaseScriptFixture(t, undefined, "7.0.0");
+  const adapter = "flowersec-go/adapters/sqlite";
+  const version = fixture.version;
+  const ref = `refs/tags/${adapter}/v${version}`;
+  const previous = runGit(["-C", fixture.repo, "rev-parse", "HEAD"]);
+  fs.mkdirSync(path.join(fixture.repo, adapter), { recursive: true });
+  fs.writeFileSync(path.join(fixture.repo, adapter, "go.mod"),
+    `module github.com/floegence/flowersec/${adapter}/v7\n\nrequire github.com/floegence/flowersec/flowersec-go/v7 v${version}\n`);
+  runGit(["-C", fixture.repo, "add", adapter]);
+  runGit(["-C", fixture.repo, "commit", "-m", "test: add SQLite module"]);
+  runGit(["-C", fixture.repo, "push", "origin", "main"]);
+  const head = runGit(["-C", fixture.repo, "rev-parse", "HEAD"]);
+  const tagRefs = [`refs/tags/flowersec-go/v${version}`, `refs/tags/${version}`, `refs/tags/flowersec-rust/v${version}`, ref];
+  function hook(refs, commit) {
+    return spawnSync("sh", [path.join(sourceRoot, ".githooks/pre-push")], {
+      cwd: fixture.repo, encoding: "utf8",
+      input: refs.map(r => `${r} ${commit} ${r} ${"0".repeat(40)}\n`).join(""),
+      env: isolatedEnvironment({ FLOWERSEC_RELEASE_PUSH_SHA: commit, FLOWERSEC_RELEASE_VERSION: version }),
+    });
+  }
+  assert.equal(hook(tagRefs.slice(0, 3), previous).status, 0);
+  assert.match(hook(tagRefs.slice(0, 3), head).stderr, /must be pushed together/);
+  assert.match(hook([ref], head).stderr, /must be pushed together/);
+  assert.equal(hook(tagRefs, head).status, 0);
+  const released = runReleaseScript(fixture);
+  assert.equal(released.status, 0, released.stderr);
+  assert.equal(fs.readFileSync(`${fixture.goLog}.dispatch`, "utf8").trim(),
+    `workflow run release.yml --repo github.com/floegence/flowersec --ref flowersec-go/v${version} -f version=${version} -f mode=full`);
+  for (const tag of tagRefs) assert.equal(runGit(["--git-dir", fixture.origin, "rev-parse", tag]), head);
+  assert.ok(gitCommands(fixture).some(line => line.startsWith("push --atomic origin ") && tagRefs.every(tag => line.split(" ").includes(tag))));
+  const verify = () => spawnSync("bash", [path.join(sourceRoot, "scripts/verify-release-tags.sh"), version, head], {
+    cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment(),
+  });
+  assert.equal(verify().status, 0);
+  runGit(["--git-dir", fixture.origin, "update-ref", ref, previous]);
+  assert.match(verify().stderr, /points to .* expected/);
+  runGit(["--git-dir", fixture.origin, "update-ref", "-d", ref]);
+  assert.match(verify().stderr, /required release tag is missing/);
+});
+
+test("a major 5 release cannot start from main", (t) => {
+  const fixture = createReleaseScriptFixture(t, undefined, "5.7.0");
+  const result = runReleaseScript(fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /major 5 must be published from release\/5\.x/);
+  assertReleaseDidNotStartPublication(fixture);
+});
+
+test("release rejects an incorrect SQLite module path or direct core dependency", (t) => {
+  const fixture = createReleaseScriptFixture(t, undefined, "7.0.0");
+  const adapter = "flowersec-go/adapters/sqlite";
+  const core = "github.com/floegence/flowersec/flowersec-go/v7";
+  const canonical = `github.com/floegence/flowersec/${adapter}/v7`;
+  fs.mkdirSync(path.join(fixture.repo, adapter), { recursive: true });
+  for (const [module, requirement, error] of [
+    [`${canonical}/other`, `${core} v7.0.0`, /canonical adapter module/],
+    [canonical, `${core} v7.0.1`, /must require .*v7\.0\.0/],
+    [canonical, `${core} v7.0.0 \/\/ indirect`, /must require .*v7\.0\.0/],
+    [canonical, `${core} v7.0.0`, null],
+  ]) {
+    fs.writeFileSync(path.join(fixture.repo, adapter, "go.mod"),
+      `module ${module}\n\nrequire (\n\t${requirement}\n)\n`);
+    runGit(["-C", fixture.repo, "add", adapter]);
+    runGit(["-C", fixture.repo, "commit", "-m", "test: update adapter manifest"]);
+    runGit(["-C", fixture.repo, "push", "origin", "main"]);
+    const result = runReleaseScript(fixture);
+    if (error) {
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, error);
+      assertNoReleaseTags(fixture);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+    }
+  }
+});
+
 test("pre-push accepts only the complete release tag set for the synchronized commit", async (t) => {
   const hook = path.join(sourceRoot, ".githooks/pre-push");
   const verified = "1".repeat(40);
@@ -3573,7 +3760,7 @@ test("main push gates the exact SHA locally before opening the remote transport"
   const script = path.join(sourceRoot, "scripts/push-main.sh");
   assert.equal(fs.existsSync(script), true, "scripts/push-main.sh is missing");
   const source = fs.readFileSync(script, "utf8");
-  const gate = source.indexOf("make prepush");
+  const gate = source.indexOf("make test");
   const push = source.indexOf("git push origin");
   assert.notEqual(gate, -1, "main push must run local validation");
   assert.notEqual(push, -1, "main push must use normal git push");
@@ -3613,7 +3800,7 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   );
   fs.writeFileSync(
     path.join(bin, "make"),
-    "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\nexit \"${FLOWERSEC_TEST_MAKE_EXIT:-0}\"\n",
+    "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\nif [ \"$*\" = \"$FLOWERSEC_TEST_FAIL_TARGET\" ]; then exit 42; fi\n",
     { mode: 0o755 },
   );
   const result = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
@@ -3627,18 +3814,22 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const commands = fs.readFileSync(log, "utf8").trim().split("\n");
-  const gate = commands.indexOf("make prepush");
+  const gate = commands.indexOf("make test");
   const push = commands.findIndex((command) => command.startsWith("git push origin "));
   assert.ok(gate >= 0 && push > gate, commands.join("\n"));
-  assert.equal(commands.filter((command) => command === "make prepush").length, 1, commands.join("\n"));
-  fs.writeFileSync(log, "");
-  const failed = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
-    cwd: sourceRoot, encoding: "utf8",
-    env: isolatedEnvironment({ ...process.env, FLOWERSEC_TEST_COMMAND_LOG: log,
-      FLOWERSEC_TEST_MAKE_EXIT: "42", PATH: `${bin}${path.delimiter}${process.env.PATH}` }),
-  });
-  assert.equal(failed.status, 42, `${failed.stdout}${failed.stderr}`);
-  assert.doesNotMatch(fs.readFileSync(log, "utf8"), /git push/);
+  assert.deepEqual(commands.filter((command) => command.startsWith("make ")), ["make main-compatibility-check", "make test"], commands.join("\n"));
+  for (const target of ["main-compatibility-check", "test"]) {
+    fs.writeFileSync(log, "");
+    const failed = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
+      cwd: sourceRoot, encoding: "utf8",
+      env: isolatedEnvironment({ ...process.env, FLOWERSEC_TEST_COMMAND_LOG: log,
+        FLOWERSEC_TEST_FAIL_TARGET: target, PATH: `${bin}${path.delimiter}${process.env.PATH}` }),
+    });
+    assert.equal(failed.status, 42, `${failed.stdout}${failed.stderr}`);
+    const history = fs.readFileSync(log, "utf8");
+    assert.doesNotMatch(history, /git push/);
+    if (target === "main-compatibility-check") assert.doesNotMatch(history, /^make test$/m);
+  }
 });
 
 test("browser compatibility remains explicit and separate from Chromium smoke", () => {
@@ -3648,12 +3839,65 @@ test("browser compatibility remains explicit and separate from Chromium smoke", 
   assert.doesNotMatch(registry, /"diagnostic\/browser"/);
   const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
   assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);
-  const scripts = JSON.parse(packageManifest).scripts;
-  for (const [browser, ensure, project] of [
-    ["chromium", "ensure:browser", "chromium"],
-    ["firefox", "ensure:browser:firefox", "firefox-compat"],
-    ["webkit", "ensure:browser:webkit", "webkit-smoke"],
-  ]) {
-    assert.equal(scripts[`test:browser:${browser}`], `npm run ${ensure} && npm run build && node ../scripts/server-parity-native-addon.mjs --playwright test --project=${project}`);
+  assert.match(packageManifest, /"test:browser:chromium": "npm run ensure:browser && npm run build && playwright test --project=chromium"/);
+  assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox && npm run build && playwright test --project=firefox-compat"/);
+  assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
+});
+
+test("maintenance release authority requires the reviewed ancestry and exact remote tip", async (t) => {
+  const base = "6f646fe4a20f9fdee55232a445e7c16fc133442c";
+  const baseline = "74e6ae7d5d2a992f4a33bf05259d1b786c386f81";
+  const sha = "a".repeat(40);
+  const main = "b".repeat(40);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-maintenance-ref-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"));
+  fs.copyFileSync(path.join(sourceRoot, "scripts/verify-release-main.sh"), path.join(root, "scripts/verify-release-main.sh"));
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  writeExecutable(path.join(bin, "git"), `#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+ fetch|checkout) exit 0 ;;
+ ls-remote) if [[ "$*" == *release/5.x* ]]; then printf '%s refs/heads/release/5.x\\n' "$TEST_REMOTE_MAINTENANCE"; exit 0; fi; printf '%s refs/heads/main\\n' "$TEST_MAIN" ;;
+ merge-base) [[ ( "$3" == "${base}" || "$3" == "74e6ae7d5d2a992f4a33bf05259d1b786c386f81" ) && "$4" == "$TEST_SHA" && "$TEST_ANCESTRY" == yes ]] ;;
+ rev-parse)
+   case "\${*: -1}" in
+     'refs/tags/5.6.0^{commit}') printf '%s\\n' "$TEST_MAINTENANCE_BASE" ;;
+     refs/remotes/origin/release/5.x) printf '%s\\n' "$TEST_MAINTENANCE" ;;
+     HEAD) printf '%s\\n' "$TEST_SHA" ;;
+     refs/remotes/origin/main) printf '%s\\n' "$TEST_MAIN" ;;
+     'refs/tags/flowersec-go/v5.6.0^{commit}') printf '%s\\n' "$TEST_TAG" ;;
+     'refs/tags/flowersec-go/v5.5.0^{commit}') printf '%s\\n' "$TEST_BASE" ;;
+     *) exit 1 ;;
+   esac ;;
+ *) exit 1 ;;
+esac
+`);
+  for (const [workflow, job] of [["release.yml", "release"], ["rust-release.yml", "publish"]]) {
+    const run = extractWorkflowStepRun(path.join(sourceRoot, ".github/workflows", workflow), job, "Verify release source authority");
+    for (const scenario of [
+      { name: "published baseline", version: "5.6.0", head: baseline, success: true },
+      { name: "changed baseline's Go tag", version: "5.6.0", head: baseline, tag: sha, success: false },
+      { name: "changed previous Go tag", version: "5.6.0", head: baseline, base: sha, success: false },
+      { name: "current maintenance tip", maintenance: sha, success: true },
+      { name: "stale maintenance tip", maintenance: main, main: sha, success: false },
+      { name: "maintenance advanced during fetch", maintenance: sha, remoteMaintenance: main, success: false },
+      { name: "wrong maintenance baseline", maintenance: sha, maintenanceBase: main, success: false },
+      { name: "unrelated maintenance source", maintenance: sha, ancestry: "no", success: false },
+      { name: "ordinary main", version: "7.0.0", main: sha, success: true },
+    ]) {
+      await t.test(`${workflow}: ${scenario.name}`, () => {
+        const result = spawnSync("bash", ["-c", run], { cwd: root, encoding: "utf8", env: {
+          ...isolatedEnvironment(), PATH: `${bin}:${process.env.PATH}`, RELEASE_SHA: scenario.head ?? sha,
+          RELEASE_VERSION: scenario.version ?? "5.7.0", GITHUB_SHA: scenario.main ?? main,
+          TEST_MAINTENANCE: scenario.maintenance ?? main, TEST_MAINTENANCE_BASE: scenario.maintenanceBase ?? baseline,
+          TEST_REMOTE_MAINTENANCE: scenario.remoteMaintenance ?? scenario.maintenance ?? main,
+          TEST_SHA: scenario.head ?? sha, TEST_MAIN: scenario.main ?? main, TEST_TAG: scenario.tag ?? baseline,
+          TEST_BASE: scenario.base ?? base, TEST_ANCESTRY: scenario.ancestry ?? "yes",
+        } });
+        assert.equal(result.status === 0, scenario.success, `${result.stdout}${result.stderr}`);
+      });
+    }
   }
 });

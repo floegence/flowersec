@@ -69,15 +69,18 @@ function assertEqual(actual, expected, label) {
 }
 
 export function verifyGoToolchainPolicy(repoRoot) {
-  const goSecurityBaseline = readToolchains(repoRoot).go.version;
+  const { version: goSecurityBaseline, minimum } = readToolchains(repoRoot).go;
   const goToolchain = `go${goSecurityBaseline}`;
   const moduleFiles = discoverGoModuleDirectories(repoRoot).map((directory) => (
     path.relative(repoRoot, path.join(directory, "go.mod"))
   ));
   if (moduleFiles.length === 0) throw new Error("repository must contain Go modules");
+  const consumerModules = new Set(["flowersec-go/go.mod", "flowersec-go/adapters/sqlite/go.mod", "examples/go/parity/go.mod"]);
   for (const relative of moduleFiles) {
-    assertEqual(parseGoModPolicy(read(repoRoot, relative), relative), goSecurityBaseline, relative);
+    assertEqual(parseGoModPolicy(read(repoRoot, relative), relative), consumerModules.has(relative) ? minimum : goSecurityBaseline, relative);
   }
+  const workspace = "flowersec-go/internal/v4build/go.work";
+  assertEqual(parseGoModPolicy(read(repoRoot, workspace), workspace), goSecurityBaseline, workspace);
 
   const dockerfile = read(repoRoot, "docker/flowersec-runtime/Dockerfile");
   const instructions = parseDockerfile(dockerfile);
@@ -91,9 +94,10 @@ export function verifyGoToolchainPolicy(repoRoot) {
   verifyContainerReleasePolicy(repoRoot);
 
   const workflowContracts = new Map([
-    [".github/workflows/ci.yml", 0],
+    [".github/workflows/ci.yml", 1],
     [".github/workflows/codeql.yml", 1],
-    [".github/workflows/release.yml", 2],
+    [".github/workflows/release.yml", 1],
+    [".github/workflows/rust-release.yml", 1],
   ]);
   for (const [relative, expectedCount] of workflowContracts) {
     const steps = parseSetupGoSteps(read(repoRoot, relative), relative);
@@ -101,7 +105,7 @@ export function verifyGoToolchainPolicy(repoRoot) {
       throw new Error(`${relative} must contain ${expectedCount} setup-go step(s); found ${steps.length}`);
     }
     for (const step of steps) {
-      assertEqual(step.versionFile, "flowersec-go/go.mod", `${relative} setup-go version file`);
+      assertEqual(step.versionFile, "tools/releasenotes/go.mod", `${relative} setup-go version file`);
     }
   }
 

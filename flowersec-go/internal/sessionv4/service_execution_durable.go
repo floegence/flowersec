@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 func (d *ServiceDispatch) signalDurable() {
@@ -99,7 +99,7 @@ func (d *ServiceDispatch) stepDurableProvider(i *serviceInvocation, x *serviceEx
 				}
 				var err error
 				if i.header.Fields().AdmissionMode == 1 {
-					x.permit, err = i.plan.executor.tryAcquireInGroup(i.plan.applicationGroup, i.method.WorkClass, task, backing)
+					x.permit, err = i.plan.executor.TryAcquire(i.method.WorkClass, task, backing)
 				} else {
 					i.queued, err = i.plan.executor.prepareApplication(i.plan.applicationGroup, i.method.WorkClass, task, backing)
 				}
@@ -200,11 +200,7 @@ func (i *serviceInvocation) runDurableExecution() {
 			failure = nil
 		}
 		i.mu.Lock()
-		// Preserve the same final outcome for diagnostic cleanup: a committed
-		// result wins over a later callback or application cleanup failure.
-		i.failure = failure
 		i.returned = true
-		i.publication.endHandler()
 		if failure != nil && !i.execution.outputFinished {
 			reason := serviceRefusal(failure)
 			if errors.Is(failure, ErrCompletionCallbackExit) {
@@ -228,7 +224,7 @@ func (i *serviceInvocation) runDurableExecution() {
 		return
 	}
 	i.plan.lease.mu.Lock()
-	request := UnaryRequest{publication: i.publication, Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: input, OutputInterest: i.observation.View()}
+	request := UnaryRequest{Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: input, OutputInterest: i.observation.View()}
 	i.plan.lease.mu.Unlock()
 	callCtx, exit, err := enterApplicationContext(ctx, i.plan.executor, ordinaryApplicationLane, i.method.WorkClass, i.reservation, nil)
 	if err != nil {
@@ -236,12 +232,7 @@ func (i *serviceInvocation) runDurableExecution() {
 		return
 	}
 	defer exit()
-	if err := attachInvocationServices(callCtx, i.method.services); err != nil {
-		failure, returned = err, true
-		return
-	}
 	code, err := i.method.Handler(callCtx, request, &i.response)
-	i.publication.endHandler()
 	returned, failure = true, err
 	if failure == nil && !work.ResultCommitted() {
 		failure = work.FinishWritten(context.Background(), code)

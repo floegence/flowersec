@@ -1,0 +1,124 @@
+{
+  "stream_kinds": [
+    {
+      "id": "empty",
+      "unit": "",
+      "repeat": 0,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "one-byte",
+      "unit": "a",
+      "repeat": 1,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "128-ascii-bytes",
+      "unit": "a",
+      "repeat": 128,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "129-ascii-bytes",
+      "unit": "a",
+      "repeat": 129,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "128-multibyte-utf8-bytes",
+      "unit": "é",
+      "repeat": 64,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "129-multibyte-utf8-bytes",
+      "unit": "é",
+      "repeat": 64,
+      "suffix": "a",
+      "valid": false
+    },
+    {
+      "id": "decomposed-nfc",
+      "unit": "é",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "leading-whitespace",
+      "unit": " files",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "trailing-whitespace",
+      "unit": "files ",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "control-character",
+      "unit": "files\u0001",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "unassigned-scalar",
+      "unit": "͸",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "reserved-previous-rpc-kind",
+      "unit": "flowersec.rpc.v2",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "reserved-rpc-kind",
+      "unit": "flowersec.rpc.v5",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "application-kind",
+      "unit": "files/read",
+      "repeat": 1,
+      "suffix": "",
+      "valid": true
+    }
+  ],
+  "duplicate_kind": "files/read",
+  "rpc_type_ids": [
+    {
+      "id": "zero",
+      "value": 0,
+      "valid": false
+    },
+    {
+      "id": "minimum",
+      "value": 1,
+      "valid": true
+    },
+    {
+      "id": "maximum",
+      "value": 4294967295,
+      "valid": true
+    }
+  ],
+  "duplicate_type_id": 1,
+  "transport_contract_version": 5,
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

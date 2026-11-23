@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 type environmentMaterial struct {
@@ -133,10 +133,6 @@ func (e *Environment) CreateMaterial(ctx context.Context, factory func(context.C
 		returned = true
 		return nil, err
 	}
-	if err = e.checkMaterialVerification(result); err != nil {
-		returned = true
-		return nil, err
-	}
 	if err = result.check(); err != nil {
 		returned = true
 		return nil, err
@@ -217,22 +213,7 @@ func (e *Environment) watchMaterials() {
 	}()
 	for {
 		serviceActive := e.advanceServiceDispatches()
-		if e.advanceRequiredContractBatch() {
-			serviceActive = true
-		}
-		if e.advanceRequiredDependencyPaths() {
-			serviceActive = true
-		}
-		if e.advanceContractRenewalBatch() {
-			serviceActive = true
-		}
-		if e.advanceManagedContractRenewal() {
-			serviceActive = true
-		}
 		if e.advanceResults() {
-			serviceActive = true
-		}
-		if e.advanceServiceClients() {
 			serviceActive = true
 		}
 		e.mu.Lock()
@@ -245,23 +226,6 @@ func (e *Environment) watchMaterials() {
 		var wakeAfter uint64
 		if serviceActive {
 			wakeAfter = 25
-		}
-		for i, p := range e.pools {
-			if p == nil {
-				continue
-			}
-			p.mu.Lock()
-			source := p.source
-			p.mu.Unlock()
-			if source != nil {
-				source.advance()
-			}
-			if p.advance() {
-				e.pools[i] = nil
-				e.poolActive--
-			} else if wakeAfter == 0 || wakeAfter > 100 {
-				wakeAfter = 100
-			}
 		}
 		for i := range e.materials {
 			p := &e.materials[i]
@@ -317,11 +281,7 @@ func (e *Environment) watchMaterials() {
 		if e.watchContractQueriesLocked() && (wakeAfter == 0 || wakeAfter > 100) {
 			wakeAfter = 100
 		}
-		e.collectContractQueryProtectionLocked()
-		if e.queryProtection != nil && (wakeAfter == 0 || wakeAfter > 100) {
-			wakeAfter = 100
-		}
-		if e.closed && e.materialActive == 0 && e.poolActive == 0 && e.queryActive == 0 && e.queryProtection == nil && e.resultActive == 0 && e.serviceClientActive == 0 && (!e.services || e.active == 0) {
+		if e.closed && e.materialActive == 0 && e.queryActive == 0 && e.resultActive == 0 && (!e.services || e.active == 0) {
 			e.mu.Unlock()
 			return
 		}

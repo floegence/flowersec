@@ -108,16 +108,25 @@
   with it; see `docs/TOOLCHAINS.md`. Minimum-supported and compatibility
   toolchains are explicit separate roles. Do not bypass version guards, use
   floating compiler selectors, or raise SDK minimums merely to align build tools.
-- Feature commits run the local `make precommit` gate. `scripts/push-main.sh` runs `make prepush`: Node minimum compatibility, Rust MSRV and complete SDK/native tests, followed by the bounded `make test` acceptance suite once. It does not repeat precommit.
-- GitHub push/PR CI runs only lightweight repository, workflow, toolchain-declaration and dependency checks. Compilers, native builds and SDK test suites belong to local gates. Run Rust native tests on the target operating system when changing platform-specific code.
+- Feature commits run `make precommit`. `scripts/push-main.sh` runs bounded local `make test` acceptance once. `make check` includes Node minimum compatibility and Rust MSRV. Hosted CI runs repository and dependency checks.
 - `make check`, nightly, diagnostic, and performance targets are explicit engineering workflows outside the main push path. Release runs no tests.
 - Swift CodeQL runs on the daily/manual path only and never gates push or release.
 
 ## 5. Release / tag policy
 
 - A version release uses matching Go `flowersec-go/v<version>`, SwiftPM
-  `<version>`, and Rust `flowersec-rust/v<version>` tags.
-- Run `scripts/release.sh <version>` only from a clean `main` synchronized with `origin/main`.
+  `<version>`, and Rust `flowersec-rust/v<version>` tags. A tagged tree containing the SQLite module also requires `flowersec-go/adapters/sqlite/v<version>` in the same atomic push and an explicit full release dispatch.
+- Run `scripts/release.sh <version>` only from a clean release branch synchronized
+  with its remote tip (`main`, or `release/5.x` for major 5 maintenance).
+- Major 5 maintenance uses `release/5.x`, rooted at the published `5.6.0`
+  commit `74e6ae7d5d2a992f4a33bf05259d1b786c386f81`. Feature worktrees
+  branch from and integrate back into that line, never next-major `main`.
+- `scripts/push-main.sh` also gates the complete `release/5.x` tip with the
+  normal acceptance suite. Run `scripts/release.sh <5.x version>` from its
+  clean, synchronized worktree. Publish the Go, SwiftPM and Rust tags together;
+  workflows verify the pinned baseline and current remote maintenance tip.
+- Retain the maintenance branch and published tags after removing task-owned
+  feature branches and worktrees. Do not change next-major `main` for a v5 release.
 - Release runs no tests and consumes no test artifacts, evidence, signatures, closures, attestations, or receipts.
 - Release performs only version and ref validation, packaging, release-artifact signing, publication, and registry readback.
 - GitHub Release notes must contain a human-readable summary.

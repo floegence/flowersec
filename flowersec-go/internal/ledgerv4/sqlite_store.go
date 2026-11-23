@@ -7,17 +7,18 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"modernc.org/sqlite"
 )
 
-const sqliteStorageRevision = 7
+const sqliteStorageRevision = 2
 
 // SQLiteIdentity is independently configured stable authority identity. It is
 // not learned from the database or a peer. Generation changes require the
@@ -49,11 +50,6 @@ type sqliteStore struct {
 	conn                              driver.Conn
 	business                          *SQLiteExecutions
 	references                        *SQLiteReferences
-	topUps                            *SQLiteTopUpJournal
-	topUpServer                       *SQLiteTopUpServer
-	namespace                         *SQLiteNamespaceHistory
-	archive                           *SQLiteAuditArchive
-	publication                       *SQLitePublicationStore
 	workPins                          uint32
 	execer                            driver.ExecerContext
 	querier                           driver.QueryerContext
@@ -70,11 +66,7 @@ func SQLiteStoreCharge(l SQLiteLimits) (resourcev4.Vector, error) {
 	if !l.valid() {
 		return resourcev4.Vector{}, ErrConfiguration
 	}
-	decoder, err := protocolv4.StorageFactsDecoderBackingBytes()
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128 + 4*sqliteManifestPrefixBytes + decoder
+	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128
 	provider := uint64(l.MaxPages)*sqlitePageBytes*2 + uint64(l.MaxRecordBytes)*2
 	if l.RuntimeBytes > math.MaxUint64-sdk || l.ProviderRuntimeBytes > math.MaxUint64-provider {
 		return resourcev4.Vector{}, ErrConfiguration
@@ -108,21 +100,11 @@ func OpenSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIden
 }
 
 func openSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool) (result *SQLiteStore, err error) {
-	return openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, nil, nil, nil, nil, nil)
+	return openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, nil)
 }
 
-func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool, business *SQLiteExecutionConfig, references *SQLiteReferenceConfig, topUps *SQLiteTopUpConfig, topUpServer *SQLiteTopUpServerConfig, namespace *SQLiteNamespaceConfig, archive *SQLiteAuditArchiveConfig, publications ...*SQLitePublicationConfig) (result *SQLiteStore, err error) {
-	var publication *SQLitePublicationConfig
-	if len(publications) > 1 {
-		return nil, ErrConfiguration
-	}
-	if len(publications) == 1 {
-		publication = publications[0]
-	}
-	if publication != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil || namespace != nil || archive != nil) {
-		return nil, ErrConfiguration
-	}
-	if archive != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil || namespace != nil) || business != nil && references != nil || topUps != nil && (business != nil || references != nil) || topUpServer != nil && (business != nil || references != nil || topUps != nil) || namespace != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil) {
+func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool, business *SQLiteExecutionConfig, references *SQLiteReferenceConfig) (result *SQLiteStore, err error) {
+	if business != nil && references != nil {
 		return nil, ErrConfiguration
 	}
 	if ctx == nil || backing == nil || backing.sqliteBacking == nil || continuity == nil || !validSQLiteIdentity(identity) {
@@ -137,21 +119,6 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	}
 	if references != nil {
 		charge, err = SQLiteReferencesCharge(backing.limits, *references)
-	}
-	if topUps != nil {
-		charge, err = SQLiteTopUpJournalCharge(backing.limits, *topUps)
-	}
-	if topUpServer != nil {
-		charge, err = SQLiteTopUpServerCharge(backing.limits, *topUpServer)
-	}
-	if namespace != nil {
-		charge, err = SQLiteNamespaceHistoryCharge(backing.limits, *namespace)
-	}
-	if archive != nil {
-		charge, err = SQLiteAuditArchiveCharge(backing.limits, *archive)
-	}
-	if publication != nil {
-		charge, _, _, err = SQLitePublicationStoreCharges(backing.limits, *publication)
 	}
 	if err != nil {
 		return nil, err
@@ -219,39 +186,17 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	if err = backing.checkFiles(); err != nil {
 		return nil, err
 	}
-	// Pin the original regular file before opening its provider. Inspection
-	// and admission retain the same connection and transaction-group namespace.
-	originalFile, err := os.Lstat(backing.path)
+	d := &sqlite.Driver{}
+	u := url.URL{Scheme: "file", Path: backing.path, RawQuery: "mode=rw"}
+	connection, err := d.Open(u.String())
 	if err != nil {
 		return nil, err
 	}
-	if !originalFile.Mode().IsRegular() {
-		return nil, ErrStorageUnavailable
-	}
-	checkOriginalFile := func() error {
-		current, statErr := os.Lstat(backing.path)
-		if statErr != nil {
-			return statErr
-		}
-		if !current.Mode().IsRegular() || !os.SameFile(originalFile, current) {
-			return ErrStorageUnavailable
-		}
-		return backing.checkFiles()
-	}
-	connection, err := openSQLiteConnection(backing.path, backing.limits, !create)
-	if err != nil {
-		if connection != nil {
-			failed := &sqliteStore{backing: backing, identity: identity, continuity: continuity,
-				conn: connection, reservation: owned, environment: shared, disk: disk,
-				closed: true, closeErr: err, done: make(chan struct{})}
-			close(failed.done)
-			return &SQLiteStore{failed}, err
-		}
-		return nil, err
-	}
-	s := &sqliteStore{backing: backing, identity: identity, continuity: continuity, conn: connection, execer: connection, querier: connection, reservation: owned, environment: shared, disk: disk, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	execer, execOK := connection.(driver.ExecerContext)
+	querier, queryOK := connection.(driver.QueryerContext)
+	s := &sqliteStore{backing: backing, identity: identity, continuity: continuity, conn: connection, execer: execer, querier: querier, reservation: owned, environment: shared, disk: disk, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	defer func() {
-		if err != nil && connection != nil {
+		if err != nil {
 			if closeErr := connection.Close(); closeErr != nil {
 				// A provider that cannot prove cleanup remains charged. Return
 				// its incomplete owner even though construction failed.
@@ -262,15 +207,9 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 				err = errors.Join(err, closeErr)
 			}
 		}
-		if err != nil && result == nil && s.publication != nil {
-			// Publication admission takes its bounded workspaces before the
-			// first snapshot. Return them only after the provider has closed;
-			// an incomplete close retains the complete failed store owner.
-			s.publication.clear()
-		}
 	}()
-	if err = checkOriginalFile(); err != nil {
-		return nil, err
+	if !execOK || !queryOK {
+		return nil, ErrConfiguration
 	}
 	s.identity.Authority = strings.Clone(identity.Authority)
 	if business != nil {
@@ -285,70 +224,16 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 			return nil, err
 		}
 	}
-	if topUps != nil {
-		s.topUps = newSQLiteTopUpJournal(s, *topUps)
-	}
-	if topUpServer != nil {
-		s.topUpServer, err = newSQLiteTopUpServer(s, *topUpServer)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if namespace != nil {
-		s.namespace, err = newSQLiteNamespaceHistory(s, *namespace)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if archive != nil {
-		s.archive, err = newSQLiteAuditArchive(s, *archive)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if publication != nil {
-		s.publication, err = newSQLitePublicationStore(s, *publication)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err = connection.boundCache(backing.limits); err != nil {
-		return nil, s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
-	}
-	if !create {
-		if err = s.inspectCurrentStorage(); err != nil {
-			return nil, err
-		}
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		// Keep the original exclusive connection and WAL snapshot through
-		// admission. Refusal never opens a second writable provider or lets
-		// close checkpoint an unaccepted transaction group.
-		if err = checkOriginalFile(); err != nil {
-			return nil, err
-		}
-		if err = s.exec("PRAGMA query_only=OFF"); err != nil {
-			return nil, err
-		}
-	}
-	if err = checkOriginalFile(); err != nil {
+	if err = s.configure(create); err != nil {
 		return nil, err
 	}
-	if err = s.configure(create); err != nil {
-		return nil, s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
-	}
-	var observed StorageRevision
 	if create {
 		err = s.createSchema()
 	} else {
-		if observed, err = s.inspectStorageHeader(); err != nil {
-			return nil, err
-		}
-		err = s.openSchema(false)
+		err = s.openSchema()
 	}
 	if err != nil {
-		return nil, s.projectStorageFormat(err, observed, StorageFormatState)
+		return nil, err
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
@@ -370,9 +255,6 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	if s.business != nil {
 		s.business.refreshCapacity()
 	}
-	if err = connection.admit(); err != nil {
-		return nil, err
-	}
 	go s.cleanupWorker()
 	return &SQLiteStore{s}, nil
 }
@@ -386,8 +268,9 @@ func syncSQLiteDirectory(path string) error {
 	return errors.Join(err, dir.Close())
 }
 
-// Engine calls are synchronous and create no per-statement interrupt task.
-// The original invocation stays charged through its actual return. Busy
+// Driver calls intentionally have no cancellable context: this pinned driver
+// otherwise creates unjoined per-statement interrupt tasks. The original
+// invocation remains synchronous and charged through its actual return. Busy
 // waiting is disabled; bounded fixed statements do not retry on contention.
 func (s *sqliteStore) exec(query string, args ...driver.NamedValue) error {
 	_, err := s.execer.ExecContext(context.Background(), query, args)
@@ -557,32 +440,6 @@ func (s *SQLiteStore) Retire() error {
 		return ErrOwner
 	}
 	if !s.retired {
-		if s.references != nil {
-			s.references.codec = nil
-			clear(s.references.wire[:])
-			clear(s.references.existing[:])
-			clear(s.references.gc[:])
-			s.references.config = SQLiteReferenceConfig{}
-		}
-		if s.topUps != nil {
-			clear(s.topUps.record)
-			s.topUps.record = nil
-			clear(s.topUps.pending[:])
-			clear(s.topUps.applied[:])
-			s.topUps.config = SQLiteTopUpConfig{}
-		}
-		if s.topUpServer != nil {
-			s.topUpServer.clear()
-		}
-		if s.namespace != nil {
-			s.namespace.clear()
-		}
-		if s.archive != nil {
-			s.archive.clear()
-		}
-		if s.publication != nil {
-			s.publication.clear()
-		}
 		s.retired = true
 		s.backing.releaseConnection(s.disk)
 		s.disk = resourcev4.Reference{}

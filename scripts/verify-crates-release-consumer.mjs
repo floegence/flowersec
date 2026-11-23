@@ -5,9 +5,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execCargoCheckBounded } from "./release-readback.mjs";
-// A clean Cargo consumer compiles the complete SDK dependency graph. Keep the
-// per-attempt bound above the observed cold-build time on the release runner;
-// registry retries still handle eventual-consistency failures separately.
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 12;
 const [crateName, version] = process.argv.slice(2);

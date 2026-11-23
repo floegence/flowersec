@@ -26,12 +26,7 @@ impl Incoming {
     /// Attempt to accept this incoming connection (an error may still occur)
     pub(crate) fn accept(mut self) -> Result<Connecting, ConnectionError> {
         let state = self.0.take().unwrap();
-        state.endpoint.accept(state.inner, None, false)
-    }
-
-    pub(crate) fn accept_and_stop_current(mut self) -> Result<Connecting, ConnectionError> {
-        let state = self.0.take().unwrap();
-        state.endpoint.accept(state.inner, None, true)
+        state.endpoint.accept(state.inner, None)
     }
 
     /// Accept this incoming connection using a custom configuration
@@ -42,9 +37,7 @@ impl Incoming {
         server_config: Arc<ServerConfig>,
     ) -> Result<Connecting, ConnectionError> {
         let state = self.0.take().unwrap();
-        state
-            .endpoint
-            .accept(state.inner, Some(server_config), false)
+        state.endpoint.accept(state.inner, Some(server_config))
     }
 
     /// Reject this incoming connection attempt

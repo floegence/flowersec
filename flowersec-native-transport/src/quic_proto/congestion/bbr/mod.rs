@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use rand::{RngExt, SeedableRng};
+use rand_pcg::Pcg32;
 
 use crate::quic_proto::congestion::ControllerMetrics;
 use crate::quic_proto::congestion::bbr::bw_estimation::BandwidthEstimation;
@@ -56,8 +57,7 @@ pub(crate) struct Bbr {
     bw_at_last_round: u64,
     round_wo_bw_gain: u64,
     ack_aggregation: AckAggregationState,
-    // Pacing jitter is nonsecret and must be cloned with congestion state.
-    random_number_generator: rand::rngs::SmallRng,
+    random_number_generator: Pcg32,
 }
 
 impl Bbr {
@@ -98,8 +98,7 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState::default(),
-            random_number_generator: rand::rngs::SmallRng::try_from_rng(&mut rand::rngs::SysRng)
-                .expect("system entropy unavailable"),
+            random_number_generator: Pcg32::from_rng(&mut rand::rng()),
         }
     }
 

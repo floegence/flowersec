@@ -1,21 +1,22 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createProxyRuntime } from "../proxy/runtime.js";
-import { ProxyServer } from "./index.js";
-import { createCurrentNodeSession } from "../v4/testSupport/currentNodeSession.js";
+import { testCertificatePEM, testPrivateKeyPEM } from "../testSupport/tlsFixture.js";
+import { createAcceptor, createArtifactLease, connect, parseArtifact, ProxyServer, SessionHandlers } from "./index.js";
 
+const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-describe("Node ProxyServer real Session integration", () => {
-  test("forwards HTTP over a real WebSocket Session with bounded policy and cleanup", async (context) => {
-    let stage = "upstream setup";
-    context.onTestFailed(() => { console.error(`proxy integration failed during ${stage}`); });
+describe("HTTP forwarding over a real WebSocket Session with bounded policy and cleanup", () => {
+  test("Node ProxyServer real Session integration", async () => {
     const observed: Array<Readonly<{ body: string; authorization?: string; host?: string }>> = [];
     let slowStartedResolve: (() => void) | undefined;
     const slowStarted = new Promise<void>((resolve) => { slowStartedResolve = resolve; });
@@ -44,26 +45,47 @@ describe("Node ProxyServer real Session integration", () => {
     if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
     const upstreamOrigin = `http://127.0.0.1:${address.port}`;
 
+    const artifact = directWebSocketArtifact();
     const proxy = new ProxyServer({
       upstream: upstreamOrigin,
       upstreamOrigin,
       allowedOrigins: ["https://app.example"],
       maxBodyBytes: 8,
       maxChunkBytes: 8,
-      maxConcurrentStreams: 2,
-      maxConcurrentHTTPStreams: 1,
-      maxConcurrentEventStreams: 1,
     });
     cleanups.push(async () => await proxy.close());
-    stage = "original Session setup";
-    const fixture = await createCurrentNodeSession(environment => proxy.register(environment, { authorize: () => true, applicationBytes: 1024n }));
-    cleanups.push(() => fixture.close());
-    const client = fixture.session;
-    const serving = fixture.accepted.serve();
+    const handlers = new SessionHandlers({ maxConcurrentStreams: 2 });
+    proxy.register(handlers);
+    const acceptor = await createAcceptor({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        allowedOrigins: ["https://app.example"],
+        tls: { certificate: testCertificatePEM, privateKey: testPrivateKeyPEM },
+      }],
+      maxInboundStreams: artifact.session.max_inbound_streams,
+      authorize: async () => ({ accepted: true, artifact: parseArtifact(JSON.stringify(artifact)) }),
+      resolveHandlers: () => handlers,
+    });
+    cleanups.push(async () => await acceptor.close());
+    const acceptAddress = acceptor.addresses()[0];
+    if (acceptAddress === undefined) throw new Error("WebSocket listener did not bind");
+    artifact.path.candidates[0]!.url = `wss://${acceptAddress.host}:${acceptAddress.port}/flowersec/v5/direct`;
+
+    const acceptedPromise = acceptor.accept();
+    const client = await connect(
+      createArtifactLease(parseArtifact(JSON.stringify(artifact)), async () => undefined),
+      { origin: "https://app.example", roots: testCertificatePEM },
+    );
+    cleanups.push(async () => await client.close().catch(() => undefined));
+    const accepted = await acceptedPromise;
+    cleanups.push(async () => await accepted.close().catch(() => undefined));
+    const serving = accepted.serve().catch((error: unknown) => error);
 
     const runtime = createProxyRuntime({ session: client, externalOrigin: "https://app.example", maxBodyBytes: 32 });
     cleanups.push(() => runtime.dispose());
-    stage = "authorized request";
     const success = await dispatch(runtime, {
       id: "success",
       method: "POST",
@@ -84,7 +106,6 @@ describe("Node ProxyServer real Session integration", () => {
     expect(new TextDecoder().decode(new Uint8Array(success[1]!.data as ArrayBuffer))).toBe("proxied");
     expect(observed).toEqual([{ body: "request", host: `127.0.0.1:${address.port}` }]);
 
-    stage = "origin and body rejection";
     const wrongOrigin = createProxyRuntime({ session: client, externalOrigin: "https://other.example" });
     cleanups.push(() => wrongOrigin.dispose());
     await expect(dispatch(wrongOrigin, { id: "origin", method: "GET", path: "/", headers: [] }))
@@ -98,25 +119,21 @@ describe("Node ProxyServer real Session integration", () => {
     })).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));
     expect(observed).toHaveLength(1);
 
-    stage = "pending upstream request";
     const slowDispatch = dispatch(runtime, { id: "slow", method: "GET", path: "/slow", headers: [] });
     await slowStarted;
     expect(proxy.activeCount).toBe(1);
-    stage = "proxy Close";
     const closing = proxy.close();
     expect(proxy.activeCount).toBe(1);
     await closing;
     expect(proxy.activeCount).toBe(0);
-    stage = "canceled and closed responses";
     await expect(slowDispatch).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
     await expect(dispatch(runtime, { id: "closed", method: "GET", path: "/", headers: [] }))
       .resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
 
     runtime.dispose();
     await proxy.close();
-    stage = "Session cleanup";
     await client.close();
-    await expect(serving).resolves.toBeUndefined();
+    await expect(serving).resolves.toMatchObject({ code: "closed" });
   });
 });
 
@@ -141,4 +158,19 @@ async function dispatch(runtime: ProxyRuntime, request: ProxyRequest): Promise<R
   });
   runtime.dispatchFetch(request, channel.port1);
   return await result;
+}
+
+function directWebSocketArtifact(): {
+  session: { max_inbound_streams: number };
+  path: { candidates: Array<{ id: string; carrier: string; url: string; tls: { mode: string } }> };
+} {
+  const vectors = JSON.parse(readFileSync(`${repositoryRoot}/testdata/transport_v5/artifact_vectors.json`, "utf8")) as {
+    positive: Array<{ id: string; artifact_json: string }>;
+  };
+  const source = vectors.positive.find((entry) => entry.id === "direct-mixed-security");
+  if (source === undefined) throw new Error("missing direct artifact fixture");
+  const artifact = JSON.parse(source.artifact_json) as ReturnType<typeof directWebSocketArtifact>;
+  artifact.path.candidates = artifact.path.candidates.filter((candidate) =>
+    candidate.carrier === "websocket" && candidate.tls.mode === "ca");
+  return artifact;
 }

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // RevocationWorkspace owns one complete State, its decoder and two bounded
@@ -18,28 +18,16 @@ type RevocationWorkspace struct {
 	mu          sync.Mutex
 	rules       *NamespaceRules
 	decoder     *Decoder
-	segments    [2][]cohortSegment
+	segments    [2][]Value
 	current     *NamespaceState
 	owner       *LiveNamespace
 	reservation resourcev4.Reference
 }
 
-// cohortSegment keeps the original encoded evidence and its immutable lookup
-// fields in the same preadmitted State index. It carries no cached authority.
-type cohortSegment struct {
-	value               Value
-	first, last, impact uint64
-}
-
-func newCohortSegment(value Value, impact uint64) cohortSegment {
-	return cohortSegment{value: value, first: valueUint(value, "CohortPolicySegment", "first_cohort"), last: valueUint(value, "CohortPolicySegment", "last_cohort"), impact: impact}
-}
-
 type NamespaceState struct {
-	revokedIssuers, revokedCertificates, revokedLeases Value
-	workspace                                          *RevocationWorkspace
-	document                                           *Document
-	head                                               *NamespaceHead
+	workspace *RevocationWorkspace
+	document  *Document
+	head      *NamespaceHead
 }
 
 func (r *NamespaceRules) StateBackingBytes() (uint64, error) {
@@ -53,12 +41,12 @@ func (r *NamespaceRules) StateBackingBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	indexes := r.limits["max_cohort_policy_segments"] * 2 * uint64(unsafe.Sizeof(cohortSegment{}))
+	indexes := r.limits["max_cohort_policy_segments"] * 2 * uint64(unsafe.Sizeof(Value{}))
 	headBytes, err := SchemaByteLimit("FreshnessHead")
 	if err != nil {
 		return 0, err
 	}
-	headDecoder, err := schemaDecoderBackingBytes("FreshnessHead", headBytes, headBytes)
+	headDecoder, err := DecoderBackingBytes(headBytes, headBytes)
 	if err != nil {
 		return 0, err
 	}
@@ -82,20 +70,14 @@ func NewRevocationWorkspace(rules *NamespaceRules, reservation resourcev4.Refere
 	if err != nil {
 		return nil, err
 	}
-	// Complete State input/nodes are already reserved. Private backing follows
-	// the original input at decode time and retires with that document; original
-	// byte/node limits and the complete text workspace remain unchanged.
-	d, err := newDecoder(int(rules.stateBytes), 1, min(128, int(rules.stateBytes)))
+	d, err := newDecoder(int(rules.stateBytes), int(rules.stateBytes), min(128, int(rules.stateBytes)))
 	if err != nil {
 		owned.Release()
 		return nil, err
 	}
-	d.input, d.nodes = nil, nil
-	d.byteLimit = int(rules.stateBytes)
-	d.nodeLimit = int(rules.stateBytes)
 	w := &RevocationWorkspace{rules: rules, decoder: d, reservation: owned}
 	for class := range w.segments {
-		w.segments[class] = make([]cohortSegment, 0, int(rules.limits["max_cohort_policy_segments"]))
+		w.segments[class] = make([]Value, 0, int(rules.limits["max_cohort_policy_segments"]))
 	}
 	return w, nil
 }
@@ -116,11 +98,10 @@ func (w *RevocationWorkspace) destroyLocked() {
 	if w.current != nil {
 		w.current.document.Release()
 		w.current.document, w.current.head = nil, nil
-		w.current.revokedIssuers, w.current.revokedCertificates, w.current.revokedLeases = Value{}, Value{}, Value{}
 		w.current = nil
 	}
 	w.clear()
-	w.segments = [2][]cohortSegment{}
+	w.segments = [2][]Value{}
 	w.decoder = nil
 	w.reservation.Release()
 }
@@ -203,15 +184,15 @@ func (w *RevocationWorkspace) bind(owner *LiveNamespace, head *NamespaceHead, in
 			if len(w.segments[class]) == cap(w.segments[class]) {
 				return nil, CBORFailure("configuration_capacity")
 			}
-			w.segments[class] = append(w.segments[class], newCohortSegment(segment, impact))
+			w.segments[class] = append(w.segments[class], segment)
 		}
 	}
 	for _, selected := range w.segments {
 		sort.Slice(selected, func(i, j int) bool {
-			return selected[i].first < selected[j].first
+			return valueUint(selected[i], "CohortPolicySegment", "first_cohort") < valueUint(selected[j], "CohortPolicySegment", "first_cohort")
 		})
 		for i := 1; i < len(selected); i++ {
-			if selected[i-1].last >= selected[i].first {
+			if valueUint(selected[i-1], "CohortPolicySegment", "last_cohort") >= valueUint(selected[i], "CohortPolicySegment", "first_cohort") {
 				return nil, CBORFailure("revocation_segment_overlap")
 			}
 		}
@@ -232,7 +213,7 @@ func (w *RevocationWorkspace) bind(owner *LiveNamespace, head *NamespaceHead, in
 			}
 		}
 	}
-	s := &NamespaceState{workspace: w, document: doc, head: head, revokedIssuers: root.Named("RevocationState", "revoked_issuers"), revokedCertificates: root.Named("RevocationState", "revoked_certificates"), revokedLeases: root.Named("RevocationState", "revoked_leases")}
+	s := &NamespaceState{workspace: w, document: doc, head: head}
 	w.current = s
 	return s, nil
 }
@@ -249,7 +230,6 @@ func (s *NamespaceState) release(owner *LiveNamespace) {
 		w.clear()
 		s.document.Release()
 		s.document, s.head = nil, nil
-		s.revokedIssuers, s.revokedCertificates, s.revokedLeases = Value{}, Value{}, Value{}
 		w.current = nil
 	}
 }
@@ -282,15 +262,19 @@ func (s *NamespaceState) cohort(class int, cohort uint64) (cohortWindow, error) 
 	}
 	w := s.workspace
 	segments := w.segments[class]
-	i := sort.Search(len(segments), func(i int) bool { return segments[i].last >= cohort })
-	if i == len(segments) || segments[i].first > cohort {
+	i := sort.Search(len(segments), func(i int) bool { return valueUint(segments[i], "CohortPolicySegment", "last_cohort") >= cohort })
+	if i == len(segments) || valueUint(segments[i], "CohortPolicySegment", "first_cohort") > cohort {
 		return cohortWindow{}, CBORFailure("revocation_segment_missing")
 	}
 	end, err := w.rules.cohortEnd(cohort)
 	if err != nil {
 		return cohortWindow{}, err
 	}
-	impact, err := namespaceAdd(end, segments[i].impact)
+	field := "certificate_impact_ms"
+	if class == 1 {
+		field = "connection_impact_ms"
+	}
+	impact, err := namespaceAdd(end, valueUint(segments[i], "CohortPolicySegment", field))
 	return cohortWindow{start: end - w.rules.duration, end: end, impact: impact}, err
 }
 
@@ -325,13 +309,6 @@ func (s *NamespaceState) CheckCredential(credential *SignedMap, permission Issue
 }
 
 func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permission IssuerPermission, now timev4.Interval) (facts CredentialStateFacts, err error) {
-	return s.checkDetachedCredential(credential, permission, now, true)
-}
-
-// A preparation may inspect known denials under a stale Head. Passing false
-// cannot authorize a credential; the caller must independently prove freshness
-// before any acquisition, spend or publication.
-func (s *NamespaceState) checkDetachedCredential(credential *Credential, permission IssuerPermission, now timev4.Interval, headTime bool) (facts CredentialStateFacts, err error) {
 	if err := credential.checkPermission(permission); err != nil {
 		return facts, err
 	}
@@ -344,13 +321,10 @@ func (s *NamespaceState) checkDetachedCredential(credential *Credential, permiss
 	if err := w.reservation.Check(); err != nil {
 		return facts, err
 	}
-	return s.checkCredentialContentsLocked(credential, now, headTime)
-}
-
-// The original workspace gate and live backing check belong to the caller.
-func (s *NamespaceState) checkCredentialContentsLocked(credential *Credential, now timev4.Interval, headTime bool) (facts CredentialStateFacts, err error) {
-	w := s.workspace
-	scope := &credential.scope
+	if err := s.head.CheckTime(now); err != nil {
+		return facts, err
+	}
+	scope := credential.scope
 	if scope.Tenant != w.rules.tenant || scope.Authority != w.rules.authority || scope.CapacityDigest != w.rules.capacityDigest || scope.Generation != s.head.generation {
 		return facts, CBORFailure("revocation_namespace_binding")
 	}
@@ -363,27 +337,23 @@ func (s *NamespaceState) checkCredentialContentsLocked(credential *Credential, n
 	if issued < cohort.start || issued >= cohort.end || facts.HardDeadlineMS <= issued || facts.HardDeadlineMS > cohort.impact {
 		return facts, CBORFailure("revocation_credential_impact")
 	}
-	if searchRevocation(s.revokedIssuers, "RevokedIssuerEntry", []string{"issuer_key_id"}, scope.Issuer[:]).valid() {
-		return facts, CBORFailure("revocation_issuer_rejected")
-	}
-	if facts.class == 0 && searchRevocation(s.revokedCertificates, "RevokedCertificateEntry", []string{"certificate_digest"}, facts.Digest[:]).valid() {
-		return facts, CBORFailure("revocation_certificate_rejected")
-	}
-	if scope.Schema == "Artifact" {
-		if searchRevocation(s.revokedLeases, "RevokedLeaseEntry", []string{"issuer_key_id", "lease_id"}, scope.Issuer[:], credential.lease[:]).valid() {
-			return facts, CBORFailure("revocation_lease_rejected")
-		}
-	}
-	if headTime {
-		if err := s.head.CheckTime(now); err != nil {
-			return facts, err
-		}
-	}
 	if !now.ValidBefore(facts.HardDeadlineMS) {
 		return facts, timev4.ErrExpired
 	}
 	if err := now.LowerBound(issued, true); err != nil {
 		return facts, err
+	}
+	state := s.document.Root()
+	if searchRevocation(state.Named("RevocationState", "revoked_issuers"), "RevokedIssuerEntry", []string{"issuer_key_id"}, scope.Issuer[:]).valid() {
+		return facts, CBORFailure("revocation_issuer_rejected")
+	}
+	if facts.class == 0 && searchRevocation(state.Named("RevocationState", "revoked_certificates"), "RevokedCertificateEntry", []string{"certificate_digest"}, facts.Digest[:]).valid() {
+		return facts, CBORFailure("revocation_certificate_rejected")
+	}
+	if scope.Schema == "Artifact" {
+		if searchRevocation(state.Named("RevocationState", "revoked_leases"), "RevokedLeaseEntry", []string{"issuer_key_id", "lease_id"}, scope.Issuer[:], credential.lease[:]).valid() {
+			return facts, CBORFailure("revocation_lease_rejected")
+		}
 	}
 	return facts, nil
 }
@@ -393,14 +363,6 @@ func (s *NamespaceState) checkCredentialContentsLocked(credential *Credential, n
 // a Head signer cannot supply it. This checks content, not atomic installation.
 // Callers must release all real old references before reclaiming old backing.
 func (s *NamespaceState) CheckSuccessor(next *NamespaceState, retired [][16]byte) error {
-	return s.checkSuccessor(next, retired, false)
-}
-
-func (s *NamespaceState) checkReplacementSuccessor(next *NamespaceState, retired [][16]byte) error {
-	return s.checkSuccessor(next, retired, true)
-}
-
-func (s *NamespaceState) checkSuccessor(next *NamespaceState, retired [][16]byte, replacement bool) error {
 	if next == nil || next == s || next.workspace == s.workspace {
 		return CBORFailure("revocation_state_owner")
 	}
@@ -415,32 +377,11 @@ func (s *NamespaceState) checkSuccessor(next *NamespaceState, retired [][16]byte
 		return CBORFailure("decoder_busy")
 	}
 	defer nw.mu.Unlock()
-	var bindingErr error
-	if replacement {
-		// Closed original history remains a charged immutable comparison input.
-		// This check confers no right to install/use the old State again.
-		bindingErr = w.reservation.CheckRetainedSameEnvironment(nw.reservation)
-		if bindingErr == nil {
-			bindingErr = nw.reservation.Check()
-		}
-	} else {
-		bindingErr = w.reservation.CheckSameEnvironment(nw.reservation)
+	if err := w.reservation.CheckSameEnvironment(nw.reservation); err != nil {
+		return err
 	}
-	if bindingErr != nil {
-		return bindingErr
-	}
-	sameMapping := w.rules == nw.rules
-	if replacement {
-		sameMapping = nw.rules.Matches(w.rules.capacity, w.rules.publication)
-	}
-	if w.current != s || nw.current != next || !sameMapping || s.head.schema != next.head.schema || s.head.generation != next.head.generation || next.head.sequence < s.head.sequence || !replacement && next.head.sequence == s.head.sequence || len(retired) > int(w.rules.limits["max_revoked_issuers"]) {
+	if w.current != s || nw.current != next || w.rules != nw.rules || s.head.schema != next.head.schema || s.head.generation != next.head.generation || next.head.sequence <= s.head.sequence || len(retired) > int(w.rules.limits["max_revoked_issuers"]) {
 		return CBORFailure("revocation_state_owner")
-	}
-	if next.head.sequence == s.head.sequence {
-		if !bytes.Equal(s.head.bytes, next.head.bytes) || !bytes.Equal(s.document.Bytes(), next.document.Bytes()) {
-			return CBORFailure("revocation_head_equivocation")
-		}
-		return nil
 	}
 	for i := 1; i < len(retired); i++ {
 		if bytes.Compare(retired[i-1][:], retired[i][:]) >= 0 {

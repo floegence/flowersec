@@ -80,7 +80,7 @@ private struct V4RekeyCreditReference {
   }
 }
 
-final class TransportRekeyCreditTests: XCTestCase {
+final class TransportV4RekeyCreditTests: XCTestCase {
   func testSharedCorpus() throws {
     let reference = try V4RekeyCreditReference()
     let corpus = try JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/rekey_credit.json")))

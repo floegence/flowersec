@@ -5,10 +5,10 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 type resumePreparationPlan struct {
@@ -30,10 +30,6 @@ func resumePreparationCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 // and result decoder as all prepared operations. It captures a qualification
 // before generating the recovery id and performs no I/O or stream creation.
 func (r *RPCServices) PrepareResume(ctx context.Context, core *SessionCore, target *StreamOwnership, binding ResumeStreamBinding, route rpcv4.ContractRoute, checkpoint protocolv4.ResumeToken, options rpcv4.UnaryPreparation, decode UnaryResultDecoder) (*StreamOperation, error) {
-	return r.prepareResume(ctx, core, target, binding, route, checkpoint, options, decode, false)
-}
-
-func (r *RPCServices) prepareResume(ctx context.Context, core *SessionCore, target *StreamOwnership, binding ResumeStreamBinding, route rpcv4.ContractRoute, checkpoint protocolv4.ResumeToken, options rpcv4.UnaryPreparation, decode UnaryResultDecoder, canonicalResult bool) (*StreamOperation, error) {
 	if r == nil || core == nil || core.plan == nil || decode == nil || target == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -54,7 +50,6 @@ func (r *RPCServices) prepareResume(ctx context.Context, core *SessionCore, targ
 	if err != nil {
 		return nil, err
 	}
-	plan.resumeResult = canonicalResult
 	x := &resumePreparationPlan{target: target, binding: binding, token: checkpoint}
 	o, err := r.prepareUnaryEncoding(ctx, route, nil, options, ApplicationShort, false, nil, plan, nil, &streamPreparationPlan{core: core, kind: binding.Kind, resume: x})
 	if err != nil {

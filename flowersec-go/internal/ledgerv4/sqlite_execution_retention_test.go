@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 func TestSQLiteExecutionFullPromisedOutputAtExactPageBound(t *testing.T) {

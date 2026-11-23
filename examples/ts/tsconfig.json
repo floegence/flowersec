@@ -9,7 +9,7 @@
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "paths": {
-      "@floegence/flowersec-core/node": ["../../flowersec-ts/dist/node/index.d.ts"]
+      "@floegence/flowersec-core/node": ["../../flowersec-ts/src/node/index.ts"]
     },
     "skipLibCheck": true,
     "strict": true,
@@ -17,5 +17,5 @@
     "types": ["node"],
     "typeRoots": ["../../flowersec-ts/node_modules/@types"]
   },
-  "include": ["node-client.mjs", "../../flowersec-ts/src/**/*.d.ts"]
+  "include": ["*.mjs", "../../flowersec-ts/src/**/*.d.ts"]
 }

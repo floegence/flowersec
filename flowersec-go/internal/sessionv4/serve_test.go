@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 func TestServeSourcesToReadyDuplexAndDrain(t *testing.T) {

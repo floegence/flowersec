@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -42,20 +43,41 @@ func run(args []string) error {
 	if *configPath == "" {
 		return &ConfigError{Field: "config", Err: errors.New("-config is required")}
 	}
-	config, err := loadDeploymentConfig(*configPath)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return serveConfig(ctx, *configPath)
+}
+
+func serveConfig(ctx context.Context, path string) error {
+	raw, err := readConfig(path)
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if config.Role == "direct-server" || config.Role == "direct-client" {
-		runtime, err := newDirectRuntime(ctx, config)
+	var header struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return &ConfigError{Field: "config", Err: errors.New("invalid JSON")}
+	}
+	if header.Role == "direct-client" {
+		client, err := listenDirectClient(raw)
 		if err != nil {
 			return err
 		}
-		return runtime.Serve(ctx)
+		for _, ingress := range client.ingress {
+			log.Printf("direct-client listening on %s", ingress.listener.Addr())
+		}
+		return client.serve(ctx)
 	}
-	runtime, err := newDeploymentRuntime(ctx, config)
+	config, err := decodeConfig(raw)
+	if err != nil {
+		return err
+	}
+	authorizer, err := newHTTPAuthorizationProvider(config.Authorization)
+	if err != nil {
+		return err
+	}
+	runtime, err := newRuntimeServer(config, authorizer, log.Default())
 	if err != nil {
 		return err
 	}

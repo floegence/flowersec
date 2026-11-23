@@ -62,22 +62,16 @@ func (p *initialParentContext) stop() bool {
 	return true
 }
 
-// observe runs on an original exchange task with its cleanup tail retained.
-// Opaque parent methods and the cancellation callback run outside both gates.
+// observe runs only in the original watchdog or under InitialExchange.mu.
+// Those tasks and gates already participate in the actual cleanup boundary.
 func (p *initialParentContext) observe() {
 	p.mu.Lock()
 	if p.err != nil {
 		p.mu.Unlock()
 		return
 	}
-	parent := p.parent
-	p.mu.Unlock()
-	err := parent.Err()
+	err := p.parent.Err()
 	if err == nil {
-		return
-	}
-	p.mu.Lock()
-	if p.err != nil {
 		p.mu.Unlock()
 		return
 	}

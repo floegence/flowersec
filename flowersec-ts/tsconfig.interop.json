@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": { "paths": { "@floegence/flowersec-core/node": ["./src/node/index.ts"] } },
+  "include": ["src/interop/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

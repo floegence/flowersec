@@ -82,7 +82,14 @@ func run(args []string) error {
 func verifySource(repoRoot string, m *manifest) error {
 	checks := []func() error{
 		func() error { return verifyManifest(m) },
-		func() error { _, err := loadTransportV4Registry(repoRoot); return err },
+		func() error {
+			registry, err := loadTransportV5Registry(repoRoot)
+			if err != nil {
+				return err
+			}
+			return verifyTransportV5Consumers(repoRoot, registry)
+		},
+		func() error { _, err := loadTransportV3Registry(repoRoot); return err },
 		func() error { return verifyDefaults(repoRoot) },
 		func() error { return verifyParity(repoRoot) },
 		func() error { return verifyPublicAPIDesign(repoRoot) },
@@ -106,7 +113,7 @@ func verifyManifest(m *manifest) error {
 }
 
 func report(repoRoot string, m *manifest) error {
-	transportV4, err := loadTransportV4Registry(repoRoot)
+	transportV5, err := loadTransportV5Registry(repoRoot)
 	if err != nil {
 		return err
 	}
@@ -121,7 +128,7 @@ func report(repoRoot string, m *manifest) error {
 	if capabilities, err := loadCapabilityManifest(repoRoot); err == nil {
 		fmt.Printf("portable_capabilities=%d\n", len(capabilities.PortableCapabilities))
 	}
-	fmt.Printf("transport_v4_files=%d\n", len(transportV4.Files))
+	fmt.Printf("transport_v5_fixtures=%d\n", len(transportV5.WireFixtures))
 	return nil
 }
 
@@ -134,12 +141,12 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	required := append([]string{}, m.Docs.CLITokens...)
 	required = append(required, "`docs/API_CHANGE_POLICY.md`", "`stability/api_contract_manifest.json`")
 	for _, target := range m.Go.CompileTargets {
-		if target.StabilityGroup == "transport_v4" {
+		if target.StabilityGroup == "transport_v3" {
 			continue
 		}
 		required = append(required, target.DocPackageToken)
 		for _, entry := range target.Entries {
-			if entry.StabilityGroup == "transport_v4" {
+			if entry.StabilityGroup == "transport_v3" {
 				continue
 			}
 			required = append(required, entry.DocToken)
@@ -155,18 +162,18 @@ func verifyDocs(repoRoot string, m *manifest) error {
 			return fmt.Errorf("%s missing token %s", m.Docs.APIContract, token)
 		}
 	}
-	v4Data, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.TransportV4Binding))
+	wireData, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.WireContract))
 	if err != nil {
 		return err
 	}
-	for _, token := range m.Docs.TransportV4Tokens {
-		if !strings.Contains(string(v4Data), token) {
-			return fmt.Errorf("%s missing token %s", m.Docs.TransportV4Binding, token)
+	for _, token := range m.Docs.WireTokens {
+		if !strings.Contains(string(wireData), token) {
+			return fmt.Errorf("%s missing token %s", m.Docs.WireContract, token)
 		}
 	}
 	fmt.Printf(
-		"docs OK: %d API tokens verified in %s and %d Transport v4 binding tokens verified in %s\n",
-		len(required), m.Docs.APIContract, len(m.Docs.TransportV4Tokens), m.Docs.TransportV4Binding,
+		"docs OK: %d API tokens verified in %s and %d wire tokens verified in %s\n",
+		len(required), m.Docs.APIContract, len(m.Docs.WireTokens), m.Docs.WireContract,
 	)
 	return nil
 }
@@ -212,9 +219,9 @@ func verifyTS(repoRoot string, m *manifest) error {
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		return err
 	}
-	defer os.RemoveAll(probeDir)
 
 	var typeProbe strings.Builder
+	typeProbe.WriteString("type NoUnregisteredExports<Extra extends never> = Extra;\n")
 	typeIndex := 0
 	runtimeIndex := 0
 	for _, subpath := range m.TS.Subpaths {
@@ -237,11 +244,11 @@ func verifyTS(repoRoot string, m *manifest) error {
 		for _, exportName := range subpath.TypeExports {
 			alias := fmt.Sprintf("ManifestType%d", typeIndex)
 			fmt.Fprintf(&typeProbe, "import type { %s as %s } from %q;\n", exportName, alias, sourceImport)
-			instantiation := alias
-			if arguments := subpath.TypeArguments[exportName]; len(arguments) != 0 {
-				instantiation += "<" + strings.Join(arguments, ", ") + ">"
+			if exportName == "SessionHandlerBinding" {
+				fmt.Fprintf(&typeProbe, "type Bound%d<Handlers> = %s<Handlers>;\n", typeIndex, alias)
+			} else {
+				fmt.Fprintf(&typeProbe, "type PublicType%d = %s;\n", typeIndex, alias)
 			}
-			fmt.Fprintf(&typeProbe, "declare const manifestType%d: %s;\nvoid manifestType%d;\n", typeIndex, instantiation, typeIndex)
 			typeIndex++
 		}
 		for _, exportName := range subpath.RuntimeExports {
@@ -250,6 +257,11 @@ func verifyTS(repoRoot string, m *manifest) error {
 			fmt.Fprintf(&typeProbe, "void %s;\n", alias)
 			runtimeIndex++
 		}
+		var names []string
+		for _, name := range subpath.RuntimeExports {
+			names = append(names, fmt.Sprintf("%q", name))
+		}
+		fmt.Fprintf(&typeProbe, "type ExportCheck%d = NoUnregisteredExports<Exclude<keyof typeof import(%q), %s>>;\n", runtimeIndex, sourceImport, strings.Join(names, " | "))
 	}
 	if err := os.WriteFile(filepath.Join(probeDir, "probe.ts"), []byte(typeProbe.String()), 0o644); err != nil {
 		return err
@@ -305,20 +317,38 @@ func verifyNativeABI(repoRoot string, m *manifest) error {
 		return err
 	}
 	source := string(declaration)
-	declaredExports := make([]string, 0)
-	for _, match := range regexp.MustCompile(`(?m)^export function ([A-Za-z_$][A-Za-z0-9_$]*)\(`).FindAllStringSubmatch(source, -1) {
-		declaredExports = append(declaredExports, match[1])
+	var declared []string
+	for _, match := range regexp.MustCompile(`(?m)^export\s+(?:declare\s+)?function\s+(\w+)\s*\(`).FindAllStringSubmatch(source, -1) {
+		declared = append(declared, match[1])
 	}
-	registeredExports := slices.Clone(m.NativeABI.RuntimeExports)
-	slices.Sort(declaredExports)
-	slices.Sort(registeredExports)
-	if !slices.Equal(declaredExports, registeredExports) {
-		return fmt.Errorf("native ABI runtime exports differ: declared %v, registered %v", declaredExports, registeredExports)
+	if err := checkNativeExports("declaration", declared, m.NativeABI.RuntimeExports); err != nil {
+		return err
 	}
-	for _, exportName := range m.NativeABI.RuntimeExports {
-		if !strings.Contains(source, "export function "+exportName+"(") {
-			return fmt.Errorf("native ABI declaration missing export %s", exportName)
+	var implemented []string
+	function := regexp.MustCompile(`(?m)^#\[(?:napi_derive::)?napi(?:\(([^\]]*)\))?\]\s*pub\s+(?:async\s+)?fn\s+(\w+)\s*\(`)
+	jsName := regexp.MustCompile(`\bjs_name\s*=\s*"(\w+)"`)
+	err = filepath.WalkDir(filepath.Join(repoRoot, "flowersec-node-native", "src"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".rs" {
+			return err
 		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, match := range function.FindAllStringSubmatch(string(source), -1) {
+			name := jsName.FindStringSubmatch(match[1])
+			if name == nil {
+				return fmt.Errorf("native ABI function %s requires an explicit js_name", match[2])
+			}
+			implemented = append(implemented, name[1])
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := checkNativeExports("implementation", implemented, m.NativeABI.RuntimeExports); err != nil {
+		return err
 	}
 	if strings.Contains(source, "RawQuicV2") || strings.Contains(source, "RawQuicV3") {
 		return errors.New("native ABI declaration must expose only unversioned names")
@@ -326,15 +356,31 @@ func verifyNativeABI(repoRoot string, m *manifest) error {
 	if !strings.Contains(source, fmt.Sprintf("readonly wireVersion: %d;", m.NativeABI.WireVersion)) {
 		return fmt.Errorf("native ABI declaration must freeze wireVersion %d", m.NativeABI.WireVersion)
 	}
-	implementation, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-node-native", "src", "lib.rs"))
-	if err != nil {
-		return err
-	}
-	versionFunction := regexp.MustCompile(fmt.Sprintf(`(?s)pub fn contract_version\(\)\s*->\s*u32\s*\{\s*%d\s*\}`, m.NativeABI.ContractVersion))
-	if !versionFunction.Match(implementation) {
-		return fmt.Errorf("native ABI implementation must expose contract version %d", m.NativeABI.ContractVersion)
+	for _, getter := range []struct {
+		file, signature string
+		value           int
+	}{
+		{"lib.rs", "pub fn contract_version() -> u32", m.NativeABI.ContractVersion},
+		{"raw_quic.rs", "pub fn wire_version(&self) -> u32", m.NativeABI.WireVersion},
+		{"webtransport.rs", "pub fn wire_version(&self) -> u32", m.NativeABI.WireVersion},
+	} {
+		implementation, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-node-native", "src", getter.file))
+		if err != nil {
+			return err
+		}
+		body := regexp.MustCompile(regexp.QuoteMeta(getter.signature) + fmt.Sprintf(`\s*\{\s*%d\s*\}`, getter.value))
+		if !body.Match(implementation) {
+			return fmt.Errorf("native ABI getter %s must return %d", getter.signature, getter.value)
+		}
 	}
 	fmt.Printf("native ABI OK: contract=%d wire=%d exports=%d\n", m.NativeABI.ContractVersion, m.NativeABI.WireVersion, len(m.NativeABI.RuntimeExports))
+	return nil
+}
+
+func checkNativeExports(source string, exports, expected []string) error {
+	if !slices.Equal(slices.Sorted(slices.Values(exports)), slices.Sorted(slices.Values(expected))) {
+		return fmt.Errorf("native ABI %s exports %v do not match manifest %v", source, exports, expected)
+	}
 	return nil
 }
 
@@ -466,7 +512,10 @@ func verifySwift(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
-	actual := swiftManifestSymbols(symbols)
+	actual := make([]swiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		actual = append(actual, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
+	}
 	if diff := diffSwiftSymbols(m.Swift.Symbols, actual); diff != "" {
 		return errors.New(diff)
 	}
@@ -479,14 +528,14 @@ func verifySwift(repoRoot string, m *manifest) error {
 }
 
 func updateSwiftManifest(repoRoot string, m *manifest) error {
-	if err := prepareCurrentManifest(m); err != nil {
-		return err
-	}
 	symbols, err := dumpSwiftPublicSymbols(repoRoot, m.Swift.Module)
 	if err != nil {
 		return err
 	}
-	m.Swift.Symbols = swiftManifestSymbols(symbols)
+	m.Swift.Symbols = make([]swiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		m.Swift.Symbols = append(m.Swift.Symbols, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
+	}
 	m.Swift.SignatureSHA256 = swiftSignatureSHA256(symbols)
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
@@ -500,64 +549,6 @@ func updateSwiftManifest(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("updated Swift manifest: %d symbols, signature %s\n", len(symbols), m.Swift.SignatureSHA256)
 	return nil
-}
-
-func prepareCurrentManifest(m *manifest) error {
-	for index := range m.TS.Subpaths {
-		subpath := &m.TS.Subpaths[index]
-		for _, value := range append(slices.Clone(subpath.RuntimeExports), subpath.TypeExports...) {
-			if versionedPublicSymbol(value) {
-				return fmt.Errorf("TypeScript manifest contains retired versioned symbol %q", value)
-			}
-		}
-		if subpath.Specifier == "@floegence/flowersec-core/node" {
-			subpath.DocTokens = appendUnique(subpath.DocTokens, "`ProxyServer`")
-			subpath.RuntimeExports = appendUnique(
-				subpath.RuntimeExports,
-				"ProxyServer",
-				"ProxyServerError",
-			)
-			subpath.TypeExports = appendUnique(
-				subpath.TypeExports,
-				"ProxyServer",
-				"ProxyServerError",
-				"ProxyServerOptions",
-			)
-		}
-		slices.Sort(subpath.RuntimeExports)
-		slices.Sort(subpath.TypeExports)
-	}
-	m.TS.Bins = []tsBin{{
-		Name:            "flowersec-ts-cli",
-		Path:            "./dist/cli.js",
-		Source:          "flowersec-ts/src/cli.ts",
-		RequiresShebang: true,
-	}}
-	for _, value := range append(slices.Clone(m.Rust.DocTokens), m.Rust.CompileEntries...) {
-		if strings.Contains(value, "flowersec::v2") || strings.Contains(value, "flowersec::v3") {
-			return fmt.Errorf("Rust manifest contains retired versioned entry %q", value)
-		}
-	}
-	m.NativeABI = nativeABIManifest{
-		Package:         "@floegence/flowersec-node-native",
-		ContractVersion: 4,
-		WireVersion:     4,
-		RuntimeExports:  []string{"bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "createPreparationBudget", "sqliteExtensionPath"},
-	}
-	return nil
-}
-
-func versionedPublicSymbol(value string) bool {
-	return value == "v2" || strings.Contains(value, "V2") || strings.Contains(value, "V3")
-}
-
-func appendUnique(values []string, additions ...string) []string {
-	for _, value := range additions {
-		if !slices.Contains(values, value) {
-			values = append(values, value)
-		}
-	}
-	return values
 }
 
 type dumpedSwiftSymbol struct {
@@ -650,50 +641,10 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 			Declaration: normalizeSwiftDeclaration(item.DeclarationFragments),
 		})
 	}
-	return normalizeSwiftSymbols(symbols)
-}
-
-func normalizeSwiftSymbols(symbols []dumpedSwiftSymbol) ([]dumpedSwiftSymbol, error) {
-	// Symbol-graph pathComponents identify the source path, not a complete
-	// overload signature. Keep distinct declarations that share a path (for
-	// example DuplexBridge.init(_:_:options:) for its four endpoint pairs),
-	// while coalescing duplicate protocol-requirement/default pairs. The
-	// manifest stores each path once; the signature digest below covers every
-	// retained declaration.
-	seen := make(map[string]struct{}, len(symbols))
-	unique := make([]dumpedSwiftSymbol, 0, len(symbols))
-	for _, symbol := range symbols {
-		key := symbol.Kind + "\x00" + symbol.Name + "\x00" + symbol.Declaration
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, symbol)
-	}
-	slices.SortFunc(unique, func(a, b dumpedSwiftSymbol) int {
-		if order := strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name); order != 0 {
-			return order
-		}
-		return strings.Compare(a.Declaration, b.Declaration)
-	})
-	return unique, nil
-}
-
-func swiftManifestSymbols(symbols []dumpedSwiftSymbol) []swiftSymbol {
-	seen := make(map[string]struct{}, len(symbols))
-	unique := make([]swiftSymbol, 0, len(symbols))
-	for _, symbol := range symbols {
-		key := symbol.Kind + "\x00" + symbol.Name
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
-	}
-	slices.SortFunc(unique, func(a, b swiftSymbol) int {
+	slices.SortFunc(symbols, func(a, b dumpedSwiftSymbol) int {
 		return strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name)
 	})
-	return unique
+	return symbols, nil
 }
 
 func normalizeSwiftDeclaration(fragments []struct {
@@ -1206,6 +1157,16 @@ func writeLocalGoModuleProxy(proxyRoot, sourceRoot, modulePath, version string) 
 			if relative == "vendor" || relative == ".git" {
 				return filepath.SkipDir
 			}
+			if relative != "." {
+				// A nested module is distributed separately from its parent.
+				mod, err := os.Lstat(filepath.Join(path, "go.mod"))
+				if err == nil && mod.Mode().IsRegular() {
+					return filepath.SkipDir
+				}
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+			}
 			return nil
 		}
 		info, err := entry.Info()
@@ -1248,9 +1209,6 @@ func renderGoVerifier(m *manifest, goVersion string) (string, string, error) {
 	interfaceGroupIndexes := make(map[string]int)
 	if goVerifierUsesQualifier(m, "context") {
 		fmt.Fprintln(&imports, "\t\"context\"")
-	}
-	if goVerifierUsesQualifier(m, "io") {
-		fmt.Fprintln(&imports, "\t\"io\"")
 	}
 	if goVerifierUsesQualifier(m, "time") {
 		fmt.Fprintln(&imports, "\t\"time\"")

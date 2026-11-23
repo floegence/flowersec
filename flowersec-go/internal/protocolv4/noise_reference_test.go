@@ -15,7 +15,7 @@ import (
 	"os"
 	"testing"
 
-	noise "github.com/floegence/flowersec/flowersec-go/v6/internal/noisehandshake"
+	noise "github.com/floegence/flowersec/flowersec-go/v7/internal/noisehandshake"
 )
 
 var errNoiseReference = errors.New("noise_reference_failed")

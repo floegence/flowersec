@@ -4,7 +4,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
 )
 
 func (s *applicationContextState) currentSerialLocked(serial uint64) bool {

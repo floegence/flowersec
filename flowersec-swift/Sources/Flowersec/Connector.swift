@@ -1,116 +1,234 @@
 import Foundation
 
-/// Stable current connection failure codes.
+/// Local limits on the encoded JSON envelope, excluding its four-byte length prefix.
+/// Configure both peers explicitly for larger messages; these limits are not negotiated.
+public struct RPCFrameLimits: Equatable, Sendable {
+  public let send: Int
+  public let receive: Int
+  public static let standard = RPCFrameLimits()
+
+  private init() {
+    send = FlowersecWire.jsonFrameMaxBytes
+    receive = FlowersecWire.jsonFrameMaxBytes
+  }
+
+  public init(send: Int, receive: Int) throws {
+    guard send > 0, receive > 0, UInt32(exactly: send) != nil, UInt32(exactly: receive) != nil
+    else { throw ConnectError.invalidOptions }
+    self.send = send
+    self.receive = receive
+  }
+}
+
+/// An application-owned snapshot installed before either peer may make its first call.
+public struct RPCHandlers: Sendable {
+  struct Method: Sendable {
+    let acceptsNotifications: Bool
+    let invoke: @Sendable ((any Sendable)?, Data) async throws -> Data
+  }
+  var methods: [UInt32: Method] = [:]
+  var notifications: [UInt32: @Sendable (Data) async throws -> Void] = [:]
+  var context: (any Sendable)?
+  public init() {}
+
+  /// Bind per-session application state while sharing the immutable method table.
+  public func bound(to context: any Sendable) -> Self {
+    var snapshot = self; snapshot.context = context; return snapshot
+  }
+
+  public mutating func register<Context: Sendable, Request: Decodable & Sendable, Response: Encodable & Sendable>(
+    _ typeID: UInt32, context: Context.Type, acceptsNotifications: Bool = true,
+    handler: @escaping @Sendable (Context, Request) async throws -> Response
+  ) throws {
+    try install(typeID, acceptsNotifications: acceptsNotifications) { value, request in
+      guard let state = value as? Context else { throw RPCError(code: 503, message: "handler unavailable") }
+      return try await handler(state, request)
+    }
+  }
+
+  public mutating func register<Request: Decodable & Sendable, Response: Encodable & Sendable>(
+    _ typeID: UInt32, acceptsNotifications: Bool = true, handler: @escaping @Sendable (Request) async throws -> Response
+  ) throws {
+    try install(typeID, acceptsNotifications: acceptsNotifications) { _, request in try await handler(request) }
+  }
+
+  public mutating func registerNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32, handler: @escaping @Sendable (Payload) async throws -> Void
+  ) throws {
+    guard canRegister(typeID) else { throw ConnectError.invalidOptions }
+    notifications[typeID] = { data in
+      try await handler(JSONDecoder.flowersecRPC.decode(Payload.self, from: data))
+    }
+  }
+
+  func canRegister(_ typeID: UInt32) -> Bool {
+    typeID != 0 && methods[typeID] == nil && notifications[typeID] == nil
+  }
+
+  private mutating func install<Request: Decodable & Sendable, Response: Encodable & Sendable>(
+    _ typeID: UInt32, acceptsNotifications: Bool,
+    handler: @escaping @Sendable ((any Sendable)?, Request) async throws -> Response
+  ) throws {
+    guard canRegister(typeID) else { throw ConnectError.invalidOptions }
+    methods[typeID] = Method(acceptsNotifications: acceptsNotifications) { context, data in
+      let request = try JSONDecoder.flowersecRPC.decode(Request.self, from: data)
+      do { return try JSONEncoder.flowersecRPC.encode(try await handler(context, request)) }
+      catch let error as RPCError { throw FlowersecRPCError(code: error.code, message: error.message) }
+    }
+  }
+}
+
+public struct ConnectorOptions: Sendable {
+  public var origin: String
+  public var connectTimeout: Duration
+  public var trustRootsPEM: [Data]
+  public var rpcFrameLimits: RPCFrameLimits
+  public var rpcHandlers: RPCHandlers
+  /// Local tunnel entry, matched using the issuer's v5 URL rules. Required for multiple entries.
+  public var tunnelIngress: String?
+  public var maxConcurrentRPCRequests: Int
+
+  public init(
+    origin: String,
+    connectTimeout: Duration = .seconds(10),
+    trustRootsPEM: [Data] = [], rpcFrameLimits: RPCFrameLimits = .standard,
+    rpcHandlers: RPCHandlers = RPCHandlers(), tunnelIngress: String? = nil,
+    maxConcurrentRPCRequests: Int = 32
+  ) {
+    self.origin = origin
+    self.connectTimeout = connectTimeout
+    self.trustRootsPEM = trustRootsPEM
+    self.rpcFrameLimits = rpcFrameLimits
+    self.rpcHandlers = rpcHandlers
+    self.tunnelIngress = tunnelIngress
+    self.maxConcurrentRPCRequests = maxConcurrentRPCRequests
+  }
+
+  func ingressCandidates(_ artifact: Artifact) throws -> [CanonicalCandidateV3] {
+    let candidates = artifact.canonicalCandidates
+    guard artifact.value.path.kind == "tunnel" else {
+      guard tunnelIngress == nil else { throw ConnectError.invalidOptions }
+      return candidates
+    }
+    guard let tunnelIngress else {
+      guard Set(candidates.map(\.normalizedURL)).count == 1 else { throw ConnectError.invalidOptions }
+      return candidates
+    }
+    let selected = candidates.filter { candidate in
+      (try? ArtifactCodecV3.normalizeURL(tunnelIngress, carrier: candidate.carrier, kind: "tunnel"))
+        == candidate.normalizedURL
+    }
+    guard !selected.isEmpty else { throw ConnectError.invalidOptions }
+    return selected
+  }
+}
+
+/// The complete public Transport v5 connection error code set.
 public enum ConnectErrorCode: String, CaseIterable, Equatable, Sendable {
-  case invalidMaterial = "invalid_material"
-  case expired = "expired"
-  case unsupported = "unsupported"
-  case securityFailed = "security_failed"
+  case artifactInvalid = "artifact_invalid"
+  case expiredArtifact = "expired_artifact"
+  case transportSecurityUnsupported = "transport_security_unsupported"
+  case transportSecurityFailed = "transport_security_failed"
   case connectionFailed = "connection_failed"
 }
 
-/// A stable, redacted connection failure and its local retry disposition.
+/// A stable, redacted Transport v5 connection failure.
 public struct ConnectError: Error, Equatable, Sendable {
   public let code: ConnectErrorCode
   public let retryDisposition: RetryDisposition
-  public let connection: ConnectionAttemptFacts
-  public let cleanup: CleanupStatus
-  public var localReport: LocalReport { LocalReport(code: code.rawValue, connection: connection, cleanup: cleanup) }
+  public let leaseReleaseFailed: Bool
 
-  public static let invalidMaterial = ConnectError(.invalidMaterial, .terminal)
-  public static let expired = ConnectError(.expired, .retryable)
-  public static let unsupported = ConnectError(
-    .unsupported, .terminal)
-  public static let securityFailed = ConnectError(.securityFailed, .terminal)
+  public static let artifactInvalid = ConnectError(.artifactInvalid, .terminal)
+  public static let expiredArtifact = ConnectError(.expiredArtifact, .retryable)
+  public static let transportSecurityUnsupported = ConnectError(
+    .transportSecurityUnsupported, .terminal)
+  public static let transportSecurityFailed = ConnectError(.transportSecurityFailed, .terminal)
   public static let connectionFailed = ConnectError(.connectionFailed, .retryable)
 
-  func terminalized() -> ConnectError { ConnectError(code, .terminal, connection: connection, cleanup: cleanup) }
+  func terminalized() -> ConnectError { ConnectError(code, .terminal, leaseReleaseFailed: leaseReleaseFailed) }
 
+  internal static let invalidOptions = artifactInvalid
+  internal static let runtimeUnsupported = transportSecurityUnsupported
   internal static let canceled = ConnectError(.connectionFailed, .terminal)
+  internal static let timeout = connectionFailed
+  internal static let terminalConnectionFailed = ConnectError(.connectionFailed, .terminal)
+  internal static let releaseFailure = ConnectError(.connectionFailed, .terminal, leaseReleaseFailed: true)
 
-  init(_ code: ConnectErrorCode, _ retryDisposition: RetryDisposition,
-    connection: ConnectionAttemptFacts = ConnectionAttemptFacts(spendState: .unspent, admissionState: .notStarted,
-      networkReady: .notStarted, applicationPublish: .notStarted, sourceProfile: nil, queryAvailability: .unavailable),
-    cleanup: CleanupStatus = CleanupStatus(complete: true)) {
-    self.code = code; self.connection = connection; self.cleanup = cleanup
-    self.retryDisposition = connection.permitsAutomaticRetry ? retryDisposition : .terminal
-  }
-  func withFacts(_ facts: ConnectionAttemptFacts, cleanup: CleanupStatus) -> ConnectError {
-    ConnectError(code, retryDisposition, connection: facts, cleanup: cleanup)
-  }
-  static func capture(_ error: any Error, connection: ConnectionAttemptFacts, cleanup: CleanupStatus) -> ConnectError {
-    if let value = error as? ConnectError {
-      // Nested failure boundaries observe overlapping original cleanup owners.
-      // A later complete observation cannot erase an unfinished earlier tail.
-      return value.withFacts(connection, cleanup: value.cleanup.preserving(cleanup))
-    }
-    if error is CancellationError { return canceled.withFacts(connection, cleanup: cleanup) }
-    if let value = error as? SessionError {
-      switch value {
-      case .canceled, .closed: return canceled.withFacts(connection, cleanup: cleanup)
-      default: break
-      }
-    }
-    #if os(macOS) || os(iOS)
-    if let value = error as? TransportControlError {
-      switch value {
-      case .canceled, .closed: return canceled.withFacts(connection, cleanup: cleanup)
-      default: break
-      }
-    }
-    if let value = error as? TransportConnectError {
-      let failure: ConnectError
-      switch value {
-      case .invalidMaterial: failure = .invalidMaterial
-      case .unsupported: failure = .unsupported
-      case .securityFailed, .futureTimestamp: failure = .securityFailed
-      case .expired: failure = .expired
-      case .canceled, .closed: failure = .canceled
-      case .connectionFailed, .admissionRejected, .timePending, .timeNotProven,
-        .bootstrapDeadline, .timeUnavailable: failure = .connectionFailed
-      }
-      return failure.withFacts(connection, cleanup: cleanup)
-    }
-    if error is V4TimeFailure { return expired.withFacts(connection, cleanup: cleanup) }
-    if error is V4NamespaceFailure || error is V4CryptoFailure { return securityFailed.withFacts(connection, cleanup: cleanup) }
-    #endif
-    return connectionFailed.withFacts(connection, cleanup: cleanup)
+  private init(_ code: ConnectErrorCode, _ retryDisposition: RetryDisposition, leaseReleaseFailed: Bool = false) {
+    self.code = code
+    self.retryDisposition = retryDisposition
+    self.leaseReleaseFailed = leaseReleaseFailed
   }
 }
 
-/// Establishes a current Session through the configured TransportEnvironment and its
-/// original independently spendable connection material source.
-public func connect(environment: TransportEnvironment, source: ConnectionMaterialSource,
-  requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> any Session {
-  try await environment.connect(source: source, requirements: requirements)
-}
-public func connect(environment: TransportEnvironment, material: ConnectionMaterial,
-  requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> any Session {
-  try await environment.connectMaterial(material, requirements: requirements)
-}
-
-#if os(macOS) || os(iOS)
-// This projection lives only inside the original charged connect operation.
-// Delivery refreshes its actual owners after that operation's tail exits and
-// returns a detached ConnectError, without retaining the Environment aggregate.
-struct V4ConnectFailureProjection: Error, Sendable {
-  let failure: ConnectError
-  let observeCleanup: @Sendable () async -> CleanupStatus
-
-  func delivered() async -> ConnectError {
-    failure.withFacts(failure.connection, cleanup: await observeCleanup())
-  }
+/// Establishes a carrier-neutral Transport v5 session from a strict v5 lease.
+///
+/// Candidate capability filtering and TLS verification happen before the
+/// single-use lease is spent. No downgrade path is available.
+public func connect(
+  lease: ArtifactLease,
+  options: ConnectorOptions
+) async throws -> any Session {
+  try await connectOneShotV3(lease: lease, options: options)
 }
 
-func v4FailureProjection(
-  _ error: any Error,
-  connection: ConnectionAttemptFacts,
-  cleanup: @escaping @Sendable () -> CleanupStatus
-) -> V4ConnectFailureProjection {
-  let initial = cleanup()
-  let failure = ConnectError.capture(error, connection: connection, cleanup: initial)
-  return V4ConnectFailureProjection(failure: failure, observeCleanup: {
-    initial.preserving(cleanup())
-  })
+private func connectOneShotV3(
+  lease: ArtifactLease,
+  options: ConnectorOptions
+) async throws -> any Session {
+  _ = try options.ingressCandidates(lease.artifact)
+  #if os(macOS) || os(iOS)
+    return try await SessionConnectorV3(
+      lease: lease,
+      options: options,
+      runtime: AppleWebSocketRuntimeAdapterV3()
+    ).connect()
+  #else
+    _ = options
+    let claimed: ClaimedArtifactLeaseV3
+    do {
+      claimed = try await lease.claim()
+    } catch is ArtifactLeaseError {
+      throw ConnectError.artifactInvalid
+    }
+    try? await claimed.retire()
+    throw ConnectError.transportSecurityUnsupported
+  #endif
 }
-#endif
+
+/// Establishes TLS inside application-owned streams without direct-network fallback.
+/// Artifact TLS policy, admission, and single-use lease semantics remain unchanged.
+public func connect(
+  lease: ArtifactLease, options: ConnectorOptions, channelProvider: TLSChannelProvider
+) async throws -> any Session {
+  _ = try options.ingressCandidates(lease.artifact)
+  #if os(macOS) || os(iOS)
+    return try await SessionConnectorV3(
+      lease: lease, options: options,
+      runtime: AppleWebSocketRuntimeAdapterV3(tlsChannelProvider: channelProvider)
+    ).connect()
+  #else
+    let claimed: ClaimedArtifactLeaseV3
+    do { claimed = try await lease.claim() } catch { throw ConnectError.artifactInvalid }
+    try? await claimed.retire()
+    throw ConnectError.transportSecurityUnsupported
+  #endif
+}
+
+func connectV3ForController(
+  lease: ArtifactLease,
+  options: ConnectorOptions
+) async throws -> any Session {
+  #if os(macOS) || os(iOS)
+    return try await SessionConnectorV3(
+      lease: lease,
+      options: options,
+      runtime: AppleWebSocketRuntimeAdapterV3()
+    ).connectForController()
+  #else
+    _ = options
+    throw ControllerConnectFailureV3.connection(
+      .transportSecurityUnsupported, .terminal, policyTriggerIDs: [],
+      opaquePolicyTriggerIDs: [], failedIDs: [])
+  #endif
+}

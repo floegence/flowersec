@@ -9,8 +9,9 @@ mod bbr;
 mod cubic;
 mod new_reno;
 
-pub(crate) use bbr::BbrConfig;
-pub(crate) use cubic::CubicConfig;
+pub(crate) use bbr::{Bbr, BbrConfig};
+pub(crate) use cubic::{Cubic, CubicConfig};
+pub(crate) use new_reno::{NewReno, NewRenoConfig};
 
 /// Common interface for different congestion controllers
 pub(crate) trait Controller: Send + Sync {

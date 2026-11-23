@@ -1,6 +1,6 @@
 [package]
 name = "flowersec-node-native"
-version = "6.1.0"
+version = "7.0.0"
 edition = "2024"
 rust-version = "1.88"
 publish = false
@@ -10,10 +10,9 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-flowersec-native-transport = { path = "../flowersec-native-transport", version = "=6.1.0" }
+flowersec-native-transport = { path = "../flowersec-native-transport", version = "=7.0.0" }
 napi = { version = "=3.12.2", features = ["napi8", "tokio_rt"] }
-napi-derive = "=3.6.11"
-libsqlite3-sys = { version = "=0.38.2", features = ["loadable_extension"] }
+napi-derive = "=3.6.3"
 
 [build-dependencies]
-napi-build = "=2.6.0"
+napi-build = "=2.4.1"

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // SQLitePoolAuthority is the immutable trusted mapping from parent issuer and
@@ -44,7 +44,6 @@ type sqlitePoolSpend struct {
 	projection                        []byte
 	fence                             uint64
 	started, running, closed, cleaned bool
-	observation                       *PoolSpendObservation
 }
 
 func SQLitePoolSpendCharge(maxRecordBytes uint32) (resourcev4.Vector, error) {
@@ -57,8 +56,8 @@ func SQLitePoolSpendCharge(maxRecordBytes uint32) (resourcev4.Vector, error) {
 	}, nil
 }
 
-func NewSQLitePoolSpend(ctx context.Context, store *SQLiteStore, authority SQLitePoolAuthority, facts protocolv4.PoolSpendFacts, proof []byte, owner PoolSpendOwner, clock *timev4.Clock, deadline *timev4.Deadline, guard func() error, reservation, environment resourcev4.Reference, observations ...*PoolSpendObservation) (_ *SQLitePoolSpend, err error) {
-	if len(observations) > 1 || ctx == nil || authority == nil || !owner.valid() || guard == nil || !deadline.BelongsTo(clock) {
+func NewSQLitePoolSpend(ctx context.Context, store *SQLiteStore, authority SQLitePoolAuthority, facts protocolv4.PoolSpendFacts, proof []byte, owner PoolSpendOwner, clock *timev4.Clock, deadline *timev4.Deadline, guard func() error, reservation, environment resourcev4.Reference) (_ *SQLitePoolSpend, err error) {
+	if ctx == nil || authority == nil || !owner.valid() || guard == nil || !deadline.BelongsTo(clock) {
 		return nil, ErrConfiguration
 	}
 	f, err := facts.Fields()
@@ -144,13 +143,6 @@ func NewSQLitePoolSpend(ctx context.Context, store *SQLiteStore, authority SQLit
 		return nil, w.err
 	}
 	p.projectionSize = w.n
-	if len(observations) == 1 && observations[0] != nil {
-		if err = observations[0].bind(p); err != nil {
-			clear(p.projection)
-			return nil, err
-		}
-		p.observation = observations[0]
-	}
 	adopted = true
 	return &SQLitePoolSpend{p}, nil
 }
@@ -191,9 +183,6 @@ func (p *SQLitePoolSpend) Consume(action func() error) (err error) {
 	}
 	p.started, p.running = true, true
 	p.mu.Unlock()
-	if p.observation != nil {
-		p.observation.startedOriginal(p.sqlitePoolSpend)
-	}
 	defer func() {
 		p.mu.Lock()
 		p.running = false
@@ -221,7 +210,7 @@ func (p *SQLitePoolSpend) Consume(action func() error) (err error) {
 		if present != int64(0) {
 			return ErrConflict
 		}
-		value, err := s.scalar("SELECT admission_rows+spend_rows+winner_rows+issuance_rows+relay_rows FROM manifest WHERE id=1")
+		value, err := s.scalar("SELECT admission_rows+spend_rows FROM manifest WHERE id=1")
 		if err != nil {
 			return err
 		}
@@ -239,9 +228,6 @@ func (p *SQLitePoolSpend) Consume(action func() error) (err error) {
 	})
 	if err != nil {
 		return err
-	}
-	if p.observation != nil {
-		p.observation.committedOriginal(p.sqlitePoolSpend)
 	}
 	if err = p.check(); err != nil {
 		return err
@@ -280,9 +266,5 @@ func (p *SQLitePoolSpend) Cleanup() error {
 	p.storeReference.Release()
 	p.reservation.Release()
 	p.cleaned = true
-	if p.observation != nil {
-		p.observation.retiredOriginal(p.sqlitePoolSpend)
-		p.observation = nil
-	}
 	return nil
 }

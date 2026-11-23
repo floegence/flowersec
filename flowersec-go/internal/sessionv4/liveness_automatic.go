@@ -6,9 +6,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // AutomaticLivenessPolicy is an explicit immutable deployment choice. There
@@ -91,20 +91,6 @@ func (p *Liveness) BeginLocalStall(kind LocalStallKind) (*LivenessStall, error) 
 	return o, nil
 }
 
-func (p *Liveness) invalidateAutomaticSample() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.closed || p.automatic == nil {
-		return
-	}
-	if sample := p.slots[len(p.slots)-1].owner; sample != nil {
-		sample.finish(ErrProbeLocalStall, timev4.Mark{})
-	}
-}
-
 func (o *LivenessStall) End() {
 	p := o.pool
 	p.mu.Lock()
@@ -129,9 +115,7 @@ func (o *Probe) published() {
 	p := o.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !o.terminal {
-		o.result.Complete = true
-	}
+	o.result.Complete = true
 	if !o.automatic || o.terminal || p.closed || p.intent != nil || p.exchange != nil || p.stalled() {
 		return
 	}

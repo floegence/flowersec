@@ -5,9 +5,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // MaterialGeneration is local source fencing metadata, never a wire field,
@@ -24,7 +24,6 @@ type ConnectionMaterial struct {
 	identity                                  identityUse
 	generation                                MaterialGeneration
 	reservation                               resourcev4.Reference
-	establishmentRef                          resourcev4.Reference
 	used, building, attached, closed, cleaned bool
 	done                                      chan struct{}
 	environment                               *Environment
@@ -68,42 +67,18 @@ func NewConnectionMaterial(lease *ArtifactLease, identity *ApplicationIdentity, 
 // The original asynchronous source moves its already captured identity use;
 // it must not reacquire the source's current identity after issuance returns.
 func newConnectionMaterialCaptured(lease *ArtifactLease, i identityUse, generation MaterialGeneration, charge resourcev4.Vector, reservation resourcev4.Reference) (_ *ConnectionMaterial, err error) {
-	ref, err := reservation.Borrow()
-	if err != nil {
-		i.release()
-		return nil, err
-	}
-	return newConnectionMaterialPrepared(lease, i, generation, charge, reservation, ref)
-}
-
-// Both the identity and establishment pin are already owned by this source.
-// The material retains the latter until its original establishment consumes it.
-func newConnectionMaterialPrepared(lease *ArtifactLease, i identityUse, generation MaterialGeneration, charge resourcev4.Vector, reservation, establishment resourcev4.Reference) (_ *ConnectionMaterial, err error) {
-	if err = establishment.CheckBorrowedFrom(reservation); err != nil {
-		establishment.Release()
-		i.release()
-		return nil, err
-	}
-	ref, err := establishment.TakeBorrow()
-	if err != nil {
-		establishment.Release()
-		i.release()
-		return nil, err
-	}
 	l, err := lease.capture(reservation)
 	if err != nil {
-		ref.Release()
 		i.release()
 		return nil, err
 	}
 	owned, err := reservation.Take(charge)
 	if err != nil {
-		ref.Release()
 		i.release()
 		l.release()
 		return nil, err
 	}
-	m := &ConnectionMaterial{lease: l, identity: i, generation: generation, reservation: owned, establishmentRef: ref, building: true, done: make(chan struct{})}
+	m := &ConnectionMaterial{lease: l, identity: i, generation: generation, reservation: owned, building: true, done: make(chan struct{})}
 	adopted := false
 	defer func() {
 		m.mu.Lock()
@@ -134,9 +109,6 @@ func (m *ConnectionMaterial) check() error {
 	if err := l.checkForUse(i.role == protocolv4.ClientToServer); err != nil {
 		return err
 	}
-	if err := l.checkTunnelRole(i.role); err != nil {
-		return err
-	}
 	local := l.credentials[int(i.role)+1]
 	if local.Facts().Digest != i.credential.Facts().Digest || local.Scope() != i.credential.Scope() {
 		return cryptov4.ErrConfiguration
@@ -152,8 +124,8 @@ func (m *ConnectionMaterial) Establishment(hello InitialHello, limits Establishm
 	return m.establishment(hello, limits, generation, reservation, subscriptions, false)
 }
 
-func (m *ConnectionMaterial) establishment(hello InitialHello, limits EstablishmentLimits, generation MaterialGeneration, reservation, subscriptions resourcev4.Reference, prepared bool, admitted ...*protocolv4.CredentialSubscriptions) (p *SessionEstablishment, credentials *protocolv4.CredentialSubscriptions, err error) {
-	if m == nil || len(admitted) > 1 || len(admitted) == 1 && admitted[0] == nil {
+func (m *ConnectionMaterial) establishment(hello InitialHello, limits EstablishmentLimits, generation MaterialGeneration, reservation, subscriptions resourcev4.Reference, prepared bool) (p *SessionEstablishment, credentials *protocolv4.CredentialSubscriptions, err error) {
+	if m == nil {
 		return nil, nil, cryptov4.ErrConfiguration
 	}
 	m.mu.Lock()
@@ -162,11 +134,7 @@ func (m *ConnectionMaterial) establishment(hello InitialHello, limits Establishm
 		return nil, nil, cryptov4.ErrTransition
 	}
 	if err = m.reservation.CheckSameEnvironment(reservation); err == nil {
-		if len(admitted) == 1 {
-			err = admitted[0].CheckSourcePreparation(subscriptions)
-		} else {
-			err = m.reservation.CheckSameEnvironment(subscriptions)
-		}
+		err = m.reservation.CheckSameEnvironment(subscriptions)
 	}
 	if err != nil {
 		m.mu.Unlock()
@@ -212,27 +180,15 @@ func (m *ConnectionMaterial) establishment(hello InitialHello, limits Establishm
 			return nil, nil, err
 		}
 	}
-	grant, relay, tunnel, err := l.endpointCredentialMaps(hello.Index, i.role)
+	closure, err := protocolv4.BindEndpointCredentials(i.role, l.maps[0], hello.Index, l.maps[2], l.maps[3], nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	material.Grant, material.RelayCertificate = grant, relay
-	if entry := l.tunnelMaterial(hello.Index, i.role); entry != nil && entry.pendingGrant {
-		material.LiveGrant = entry.liveGrant
-	}
-	closure, err := l.endpointClosure(hello.Index, i.role)
+	credentials, err = closure.Subscribe(l.validation[:], l.session.SessionNotAfterMS, subscriptions)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(admitted) == 1 {
-		credentials, err = closure.SubscribePrepared(l.credentialBindings(hello.Index, i.role, tunnel), l.session.SessionNotAfterMS, subscriptions, admitted[0])
-	} else {
-		credentials, err = closure.Subscribe(l.credentialBindings(hello.Index, i.role, tunnel), l.session.SessionNotAfterMS, subscriptions)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	p, err = newSessionEstablishment(material, limits, reservation, m.reservation, m.reservation, &m.establishmentRef)
+	p, err = NewSessionEstablishment(material, limits, reservation, m.reservation, m.reservation)
 	if err != nil {
 		return nil, credentials, err
 	}
@@ -274,8 +230,6 @@ func (m *ConnectionMaterial) cleanupLocked() {
 	}
 	m.identity.release()
 	m.lease.release()
-	m.establishmentRef.Release()
-	m.establishmentRef = resourcev4.Reference{}
 	m.reservation.Release()
 	m.reservation = resourcev4.Reference{}
 	m.cleaned = true

@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest/tunnelworkload"
 )
 
 const browserWorkerArg = "--browser-capacity-worker"
@@ -62,7 +62,5 @@ func capacityContractForDefinition(definition capacityCaseDefinition) capacityCo
 }
 
 func capacityCaseTimeout(definition capacityCaseDefinition) time.Duration {
-	// Deployment provisioning precedes the measured ramp. Keep its finite
-	// preparation allowance separate from the unchanged production watchdog.
 	return capacityContractForDefinition(definition).Watchdog + 30*time.Second
 }

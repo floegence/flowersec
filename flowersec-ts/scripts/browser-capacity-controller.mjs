@@ -17,13 +17,11 @@ import {
   normalizeBrowserCapacityPlan,
 } from "./browser-capacity-runner-core.mjs";
 import {
+  browserWorkloadConnectOptions,
   disableBrowserWebSocket,
   preloadBrowserSDK,
   startBrowserModuleSite,
 } from "./browser-test-runner.mjs";
-
-import { currentMaterialJSON } from "./browser-test-runner-core.mjs";
-import { createBrowserRunnerHost } from "./browser-runner-installation.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = path.join(packageRoot, "scripts", "chromium-netns-launcher.sh");
@@ -55,7 +53,6 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
   let livenessTimer;
   let sequence = 0;
   let site;
-  let host;
   const browsers = [];
   let browserVersion = "";
   const contexts = [];
@@ -111,13 +108,10 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
 
   try {
     await ensureEmptyOutputDirectory(plan.output_directory);
-    host = await createBrowserRunnerHost(plan.installation_manifest_path, plan.history_directory);
     site = await startBrowserModuleSite(plan.module_bind_address, plan.module_advertise_host, {
       secure: true,
       outputDirectory: plan.output_directory,
-      host,
     });
-    host.setOrigin(site.origin);
     const shardsPerBrowser = plan.renderer_shards / plan.browser_processes;
     if (!Number.isInteger(shardsPerBrowser)) throw new Error("browser capacity renderer shard plan is invalid");
     for (let browserIndex = 0; browserIndex < plan.browser_processes; browserIndex++) {
@@ -147,9 +141,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
         page.on("console", (message) => {
           if (message.type() === "error") recordBrowserDiagnostic(`console error: ${message.text()}`);
         });
-        await page.exposeBinding("__flowersecInstallArtifact", async (_source, raw) => await host.install(raw));
-        await page.exposeBinding("__flowersecCapacitySpend", async (_source, token, count) => {
-          if (count !== 1) throw new Error("original durable store did not commit exactly one spend");
+        await page.exposeBinding("__flowersecCapacitySpend", async (_source, token) => {
           const response = await fetchImpl(plan.event_sink_url, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -172,8 +164,6 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
       }
     }
 
-    await host.publishRuntime({ engine: "chromium", version: browserVersion, userAgent: await rendererShards[0].page.evaluate(() => navigator.userAgent) });
-
     const closeSession = createBrowserCapacityCloseBatcher(async (batch) => {
       const shardBatches = rendererShards.map(() => []);
       for (const entry of batch) {
@@ -190,7 +180,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
             const entry = sessions?.get(id);
             if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
             await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
-            await entry.owner.close();
+            await entry.session.close();
             await entry.session.waitTermination();
             sessions.delete(id);
           }));
@@ -206,8 +196,8 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           const body = await readJSONBody(request);
           const sessionID = sessionIDValue(body.session_id);
           const token = stringValue(body.token, "session token");
-          const artifactJSON = currentMaterialJSON(body.artifact_json);
-          JSON.parse(artifactJSON);
+          const artifactJSON = stringValue(body.artifact_json, "artifact_json");
+          const connectOptions = browserWorkloadConnectOptions(plan.topology, artifactJSON);
           if (records.has(sessionID)) return respondJSON(response, 409, { error: "duplicate session_id" });
           if (records.size >= plan.sessions) return respondJSON(response, 409, { error: "capacity exceeded" });
           const record = { token, status: "connecting", activeStreams: 0, shard: records.size % rendererShards.length };
@@ -215,18 +205,18 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           recordEvent("connect_started", sessionID);
           try {
             const page = rendererShards[record.shard].page;
-            await withTimeout(page.evaluate(async ({ id, spendToken, rawArtifact }) => {
+            await withTimeout(page.evaluate(async ({ id, spendToken, rawArtifact, connectOptions }) => {
               const sdk = await import("/dist/browser/index.js");
               globalThis.__flowersecCapacitySessions ??= new Map();
               if (globalThis.__flowersecCapacitySessions.has(id)) throw new Error("duplicate browser capacity session ID");
-              const current = await import("/dist/interop/browserRunner.js");
-              let owner;
+              const lease = sdk.createArtifactLease(
+                sdk.parseArtifact(rawArtifact),
+                async () => await globalThis.__flowersecCapacitySpend(spendToken),
+              );
               let session;
               try {
-                owner = await current.installBrowserRunner(await globalThis.__flowersecInstallArtifact(rawArtifact), rawArtifact);
-                session = await owner.connect();
-                await globalThis.__flowersecCapacitySpend(spendToken, await owner.spendCount());
-                globalThis.__flowersecCapacitySessions.set(id, { session, owner, token: spendToken });
+                session = await sdk.connect(lease, connectOptions);
+                globalThis.__flowersecCapacitySessions.set(id, { session, token: spendToken });
                 void session.waitTermination().then(async () => {
                   await globalThis.__flowersecCapacityTerminated({ session_id: id, token: spendToken });
                 });
@@ -238,15 +228,30 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
                     name: error instanceof Error ? error.name : "Error",
                     message: error instanceof Error ? error.message : String(error),
                   }));
-                  await globalThis.__flowersecCapacityRecordDiagnostic(JSON.stringify({ type: "connect", public_code: typeof error?.code === "string" ? error.code : "unclassified" }));
+                  const internal = await import("/dist/utils/errors.js");
+                  if (error instanceof internal.ConnectError) {
+                    const details = internal.connectErrorDetailsInternal(error);
+                    await globalThis.__flowersecCapacityRecordDiagnostic(JSON.stringify({
+                      type: "connect",
+                      public_code: error.code,
+                      internal_code: details.code,
+                      stage: details.stage,
+                      candidates: details.diagnostics.slice(0, 4).map((diagnostic) => ({
+                        carrier: diagnostic.carrier,
+                        stage: diagnostic.stage,
+                        code: diagnostic.code,
+                        message: diagnostic.message.slice(0, 256),
+                      })),
+                    }));
+                  }
                 } catch {
                   // Internal diagnostics must never replace the public connection failure.
                 }
                 globalThis.__flowersecCapacitySessions.delete(id);
-                await owner?.close().catch(() => undefined);
+                if (session !== undefined) await session.close().catch(() => undefined);
                 throw error;
               }
-            }, { id: sessionID, spendToken: token, rawArtifact: artifactJSON }), plan.operation_deadline_ms, "browser session connect");
+            }, { id: sessionID, spendToken: token, rawArtifact: artifactJSON, connectOptions }), plan.operation_deadline_ms, "browser session connect");
           } catch (error) {
             records.delete(sessionID);
             recordBrowserDiagnostic(JSON.stringify({
@@ -297,14 +302,12 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
                       globalThis.__flowersecCapacityStreamProgress.opened_streams++;
                       const payload = new Uint8Array([sessionIndex & 255, streamIndex & 255]);
                       const written = await stream.write(payload);
-                      if (written.accepted_bytes !== BigInt(payload.byteLength) || written.terminal_reason !== "complete") throw new Error("browser stream capacity short write");
+                      if (written !== payload.byteLength) throw new Error("browser stream capacity short write");
                       globalThis.__flowersecCapacityStreamProgress.writes_completed++;
                       streams[streamIndex] = stream;
                       const completion = (async () => {
                         await stream.closeWrite();
-                        const read = await stream.read(2n);
-                        if (read.wait_status !== "ready" || !["open", "eof"].includes(read.stream_status)) throw new Error("browser capacity ACK read failed");
-                        const ack = read.data;
+                        const ack = await stream.read();
                         if (!(ack instanceof Uint8Array) || ack.byteLength !== 2 || ack[0] !== (payload[0] ^ 255) || ack[1] !== (payload[1] ^ 255)) {
                           throw new Error("browser stream capacity acknowledgement mismatch");
                         }
@@ -385,7 +388,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
             await Promise.all(rendererShards.map(async ({ page }) => {
               await page.evaluate(async () => {
                 const entries = [...(globalThis.__flowersecCapacitySessions?.values() ?? [])];
-                await Promise.allSettled(entries.map(async (entry) => await entry.owner.close()));
+                await Promise.allSettled(entries.map(async (entry) => await entry.session.close()));
                 globalThis.__flowersecCapacitySessions?.clear();
               });
             }));
@@ -447,10 +450,10 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
 
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("browser capacity controller did not bind TCP");
-  const controlHost = plan.control_bind_address.includes(":") ? `[${plan.control_bind_address}]` : plan.control_bind_address;
+  const host = plan.control_bind_address.includes(":") ? `[${plan.control_bind_address}]` : plan.control_bind_address;
   const controllerClosed = new Promise((resolve) => server.once("close", resolve));
   return {
-    url: `http://${controlHost}:${address.port}`,
+    url: `http://${host}:${address.port}`,
     chromiumVersion: browserVersion,
     closed: controllerClosed,
     async close() { await finalize(); },
@@ -515,7 +518,6 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     browsers.length = 0;
     rendererShards.length = 0;
     await site.close();
-    await host?.close();
     site = undefined;
     quiesced = true;
     recordEvent("controller_quiesced");
@@ -527,7 +529,6 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     await Promise.allSettled(contexts.map(async (context) => await context.close()));
     await Promise.allSettled(browsers.map(async (browser) => await browser.close()));
     if (site !== undefined) await site.close().catch(() => undefined);
-    await host?.close();
     if (server !== undefined) await closeServer(server).catch(() => undefined);
   }
 }

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 func corePlanUnitConfig(t *testing.T, native bool) SessionCoreConfig {
@@ -53,11 +53,11 @@ func corePlanUnitRoot(t *testing.T, c SessionCoreConfig, shortage int, missingOw
 	if shortage >= 0 {
 		limit[shortage]--
 	}
-	references, err := SessionCoreReferenceSlots(c)
-	if err != nil {
-		t.Fatal(err)
+	borrowed := uint32(2)
+	if c.MessageCarrier {
+		borrowed++
 	}
-	config := resourcev4.Config{ProfileRevision: [32]byte{1}, Limit: limit, AccountSlots: 4, ReservationSlots: owners + 1, ReferenceSlots: references + 1}
+	config := resourcev4.Config{ProfileRevision: [32]byte{1}, Limit: limit, AccountSlots: 4, ReservationSlots: owners + 1, ReferenceSlots: owners + borrowed + 1}
 	if missingOwner {
 		config.ReservationSlots--
 	}
@@ -431,27 +431,17 @@ func TestSessionCorePlanRetainsManualRekeyOwnerUntilRelease(t *testing.T) {
 	}
 }
 
-func TestSessionCorePlanAllowsDisabledAutomaticLiveness(t *testing.T) {
-	config := corePlanUnitConfig(t, false)
-	enabled, _, err := SessionCoreRequirements(config)
+func corePlanTestScope(t *testing.T, root *resourcev4.Root, limit resourcev4.Vector, sessionID byte) SessionResourceScope {
+	t.Helper()
+	tenant, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.TenantAccount, ID: [16]byte{1}}, limit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Automatic = AutomaticLivenessPolicy{}
-	disabled, _, err := SessionCoreRequirements(config)
-	if err != nil {
-		t.Fatal("default-disabled liveness rejected", err)
-	}
-	if disabled[resourcev4.Tasks] >= enabled[resourcev4.Tasks] {
-		t.Fatal("disabled automatic workers still reserved")
-	}
-	root, environment, owner, scope := corePlanUnitRoot(t, config, -1, false)
-	plan, err := NewSessionCorePlan(config, root, owner, environment, scope)
+	sessionLimit := limit
+	sessionLimit[resourcev4.Sessions] = 1
+	session, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.SessionAccount, ID: [16]byte{sessionID}}, sessionLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = plan.Abort(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	environment.Release()
+	return SessionResourceScope{Tenant: tenant, Session: session}
 }

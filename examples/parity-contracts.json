@@ -1,0 +1,10 @@
+{
+  "namespace": "flowersec.parity",
+  "query_type_id": 7004,
+  "contracts": {
+    "7001": "rgBwZmxvd2Vyc2VjLnBhcml0eQEZG1kCAAMABmExB2ExCAEJAAoZEAALGXUwDBl1MBX0FxkQABgbgA==",
+    "7002": "rQBwZmxvd2Vyc2VjLnBhcml0eQEZG1oCAgUABmExB2ExCAAJAAoACxl1MBX0FxkQABgbgA==",
+    "7003": "rgBwZmxvd2Vyc2VjLnBhcml0eQEZG1sCAAMABmExB2ExCAEJAAoZEAALGXUwDBl1MBX0FxkQABgbgA==",
+    "7005": "rgBwZmxvd2Vyc2VjLnBhcml0eQEZG10CAAMABmExB2ExCAEJAAoZEAALGXUwDBl1MBX0FxkQABgbgA=="
+  }
+}

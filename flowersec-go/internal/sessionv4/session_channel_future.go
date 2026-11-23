@@ -1,26 +1,23 @@
 package sessionv4
 
 import (
-	"math"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 const (
 	internalChannelStreamOwners = 4
 	internalChannelRPCOwners    = 4
-	internalChannelNativeOwner  = internalChannelStreamOwners + internalChannelRPCOwners
-	internalChannelOwners       = internalChannelNativeOwner + 1
+	internalChannelOwners       = internalChannelStreamOwners + internalChannelRPCOwners
 	maxFutureChannels           = 10 // The fixed bootstrap already owns position zero.
-	rpcServicesOwnerCapacity    = rpcServicesOwners + 1 + maxFutureChannels*internalChannelOwners + 5 + 4*maxSessionExecutionServices
+	rpcServicesOwnerCapacity    = rpcServicesOwners + maxFutureChannels*internalChannelOwners + 5 + 4*maxSessionExecutionServices
 )
 
-var firstChannelOwners = [internalChannelNativeOwner]int{
+var firstChannelOwners = [internalChannelOwners]int{
 	rpcServicesStreamMetadata, rpcServicesStreamSend, rpcServicesStreamQueue, rpcServicesStreamOwnership,
 	rpcServicesChannel, rpcServicesBatchWriter, rpcServicesPublisher, rpcServicesReceiver,
 }
@@ -46,12 +43,6 @@ type internalChannelAllocation struct {
 // futureChannelCharges keeps each independently transferred backing distinct.
 // Its order is stable for the original admission batch and later checkouts.
 func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChannelOwners]resourcev4.Vector, count int, err error) {
-	defer func() {
-		if err == nil && (c.Native || c.MixedCarrier) {
-			v[internalChannelNativeOwner], err = NativeDataAssemblyCharge(math.MaxInt64, protocolv4.ServerToClient, c.CryptoProfile, c.Session.Limits().MaxFrame)
-			count = internalChannelOwners
-		}
-	}()
 	stream, err := sessionStreamCharges(c.Bootstrap, c.CryptoProfile, uint64(c.Session.Limits().MaxFrame), c.MaxDataPayloadBytes, 256)
 	if err != nil {
 		return v, 0, err
@@ -76,14 +67,10 @@ func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChan
 			return
 		}
 		v[7], err = ManagementParserCharge(c.RuntimeBytes)
-		count = internalChannelNativeOwner
+		count = internalChannelOwners
 		return
 	}
 	if position >= 8 {
-		v[0], err = v[0].Add(resourcev4.Vector{resourcev4.SDKBytes: 128})
-		if err != nil {
-			return
-		}
 		v[4], err = NotifyChannelCharge(c.RuntimeBytes)
 		if err != nil {
 			return
@@ -97,7 +84,7 @@ func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChan
 			return
 		}
 		v[7], err = rpcv4.NotifyReceiverCharge(c.notifyInputConfig())
-		count = internalChannelNativeOwner
+		count = internalChannelOwners
 		return
 	}
 	v[4], err = RPCChannelCharge(c.RuntimeBytes)
@@ -113,7 +100,7 @@ func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChan
 		return
 	}
 	v[7], err = rpcv4.ReceiverCharge(c.RuntimeBytes)
-	count = internalChannelNativeOwner
+	count = internalChannelOwners
 	return
 }
 
@@ -133,17 +120,6 @@ func appendFutureChannelCharges(c RPCServicesConfig, charges *[rpcServicesOwnerC
 		return 0, err
 	}
 	count := rpcServicesOwners
-	if c.Native || c.MixedCarrier {
-		first, _, err := futureChannelCharges(c, 0)
-		if err != nil {
-			return 0, err
-		}
-		charges[count], err = resourcev4.ProtectedCharge(first[internalChannelNativeOwner])
-		if err != nil {
-			return 0, err
-		}
-		count++
-	}
 	for channel := uint32(1); channel < g.RPC+g.Notify+g.Management; channel++ {
 		v, n, err := futureChannelCharges(c, channel)
 		if err != nil {
@@ -166,7 +142,6 @@ func (r *RPCServices) adoptFutureChannels(c RPCServicesConfig) error {
 		return err
 	}
 	r.firstFuture.config, r.firstFuture.count = c.Bootstrap, n
-	r.nativeConfigured = c.Native
 	for i, position := range firstChannelOwners {
 		r.firstFuture.owners[i], err = resourcev4.NewProtectedReservation(r.refs[position], first[i])
 		if err != nil {
@@ -178,13 +153,6 @@ func (r *RPCServices) adoptFutureChannels(c RPCServicesConfig) error {
 		return err
 	}
 	position := rpcServicesOwners
-	if c.Native || c.MixedCarrier {
-		r.firstFuture.owners[internalChannelNativeOwner], err = resourcev4.NewProtectedReservation(r.refs[position], first[internalChannelNativeOwner])
-		if err != nil {
-			return err
-		}
-		position++
-	}
 	for channel := uint32(1); channel < g.RPC+g.Notify+g.Management; channel++ {
 		v, n, err := futureChannelCharges(c, channel)
 		if err != nil {
@@ -234,7 +202,6 @@ func (r *RPCServices) checkoutChannelAllocationLocked(f *internalChannelFuture, 
 	}
 	a := &internalChannelAllocation{}
 	copy(a.stream.refs[:internalChannelStreamOwners], refs[:internalChannelStreamOwners])
-	a.stream.refs[streamFactoryNativeReceive] = refs[internalChannelNativeOwner]
 	if position == 10 {
 		copy(a.management[:], refs[internalChannelStreamOwners:])
 	} else if position >= 8 && position < 10 {
@@ -245,7 +212,7 @@ func (r *RPCServices) checkoutChannelAllocationLocked(f *internalChannelFuture, 
 	c := f.config
 	a.stream.queue = SendQueueReservation{Capacity: c.QueueBytes, Waiters: c.WriteWaiters, Chunk: c.Chunk, Reservation: a.stream.refs[streamFactoryQueue]}
 	a.stream.reservation = StreamReservation{Pool: r.receivePool, ReceiveProtection: r.receiveProtection[position], ReceiveCapacity: c.ReceiveBytes, InitialReceiveLimit: c.InitialReceiveLimit,
-		SendCapacity: c.SendBytes, SendReservation: a.stream.refs[streamFactorySend], SendQueue: &a.stream.queue, MaxPlaintext: c.MaxPlaintext, OpenStorage: make([]byte, 256), NativeReceive: refs[internalChannelNativeOwner]}
+		SendCapacity: c.SendBytes, SendReservation: a.stream.refs[streamFactorySend], SendQueue: &a.stream.queue, MaxPlaintext: c.MaxPlaintext, OpenStorage: make([]byte, 256)}
 	return a, nil
 }
 

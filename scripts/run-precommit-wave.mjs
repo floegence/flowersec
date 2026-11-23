@@ -44,6 +44,10 @@ const lanes = targets.map((target) => ({ target, startedMs: Date.now() }));
 const laneByTarget = new Map(lanes.map((lane) => [lane.target, lane]));
 const settledChildren = new WeakSet();
 let remaining = targets.length;
+let nextTarget = 0;
+// Hosted macOS runners cannot compile five language stacks alongside timed
+// protocol tests without starving their schedulers. Keep every lane mandatory.
+const concurrency = phase === "languages" && process.env.GITHUB_ACTIONS === "true" ? 1 : targets.length;
 let firstFailure;
 let forwardedSignal;
 let killTimer;
@@ -113,6 +117,18 @@ function finishLane(child, target, code, signal) {
     armKillFallback();
   }
 
+  if (firstFailure || forwardedSignal) {
+    while (nextTarget < targets.length) {
+      const skipped = laneByTarget.get(targets[nextTarget++]);
+      skipped.status = 143;
+      skipped.signal = "SIGTERM";
+      skipped.durationMs = 0;
+      remaining -= 1;
+    }
+  } else if (nextTarget < targets.length) {
+    startLane(targets[nextTarget++]);
+  }
+
   if (remaining !== 0) return;
   if (killTimer) clearTimeout(killTimer);
   writeStatus();
@@ -122,7 +138,8 @@ function finishLane(child, target, code, signal) {
 }
 
 process.stdout.write(`[precommit:${phase}] starting ${targets.length} lane(s)\n`);
-for (const target of targets) {
+function startLane(target) {
+  laneByTarget.get(target).startedMs = Date.now();
   const stdoutPath = path.join(logRoot, `${target}.stdout.log`);
   const stderrPath = path.join(logRoot, `${target}.stderr.log`);
   fs.writeFileSync(stdoutPath, "");
@@ -149,6 +166,8 @@ for (const target of targets) {
   });
   child.once("close", (code, signal) => finishLane(child, target, code, signal));
 }
+
+for (let index = 0; index < concurrency; index += 1) startLane(targets[nextTarget++]);
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => {

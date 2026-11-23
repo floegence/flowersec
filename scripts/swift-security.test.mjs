@@ -385,7 +385,7 @@ test("Swift Git commands ignore hostile inherited repository variables", async (
 
 test("Swift cache lock reuses the cache and releases it on success and failure", async (t) => {
   const { swiftSecurityCachePath, withSwiftSecurityCache } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-cache-test-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-cache-test-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
   const attempts = [];
@@ -419,7 +419,7 @@ test("Swift cache lock reuses the cache and releases it on success and failure",
 
 test("Swift cache lock recovers dead owners but refuses live owners", async (t) => {
   const { swiftSecurityCachePath, withSwiftSecurityCache } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-lock-test-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-lock-test-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
   const lockPath = `${cachePath}.lock`;
@@ -613,7 +613,7 @@ test("Swift cache lock recovers dead owners but refuses live owners", async (t) 
   assert.equal(JSON.parse(fs.readFileSync(path.join(lockPath, "owner.json"), "utf8")).token, "waiting-handoff");
   fs.rmSync(lockPath, { recursive: true, force: true });
 
-  const physicalRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-root-target-"));
+  const physicalRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-root-target-"));
   const symlinkRoot = `${physicalRoot}-link`;
   fs.symlinkSync(physicalRoot, symlinkRoot);
   t.after(() => fs.rmSync(symlinkRoot, { force: true }));
@@ -623,7 +623,7 @@ test("Swift cache lock recovers dead owners but refuses live owners", async (t) 
     /refusing symlinked repository root/,
   );
 
-  const outside = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-outside-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-outside-"));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.rmSync(path.join(repoRoot, ".flowersec"), { recursive: true, force: true });
   fs.symlinkSync(outside, path.join(repoRoot, ".flowersec"));
@@ -635,7 +635,7 @@ test("Swift cache lock recovers dead owners but refuses live owners", async (t) 
 
 test("Swift cache invalidation never exposes failed cleanup contents", async (t) => {
   const { swiftSecurityCachePath, withSwiftSecurityCache } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-invalidation-test-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-invalidation-test-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
   const lockPath = `${cachePath}.lock`;
@@ -732,7 +732,7 @@ test("Swift cache invalidation never exposes failed cleanup contents", async (t)
 
 test("Swift cache invalidation tolerates a lost rename race", async (t) => {
   const { swiftSecurityCachePath, withSwiftSecurityCache } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-rename-race-test-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-rename-race-test-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
   const originalRenameSync = fs.renameSync;
@@ -768,8 +768,8 @@ test("Swift cache invalidation tolerates a lost rename race", async (t) => {
 
 test("Swift cache invalidation quarantines a symlink swap without following it", async (t) => {
   const { swiftSecurityCachePath, withSwiftSecurityCache } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-symlink-race-test-"));
-  const outside = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-symlink-target-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-symlink-race-test-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-symlink-target-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
@@ -801,7 +801,7 @@ test("Swift cache invalidation quarantines a symlink swap without following it",
 
 test("Swift cache serializes concurrent stale-owner recovery", async (t) => {
   const { swiftSecurityCachePath } = await loadChecker();
-  const repoRoot = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-concurrency-test-"));
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-concurrency-test-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
   const cachePath = swiftSecurityCachePath(repoRoot);
   const lockPath = `${cachePath}.lock`;

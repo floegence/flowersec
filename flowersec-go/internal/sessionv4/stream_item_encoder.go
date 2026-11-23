@@ -5,8 +5,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // SynchronousStreamCodec is a trusted direct-return encoder. Its only output
@@ -96,26 +96,12 @@ func (m *StreamMessages) EncodeItem(ctx context.Context, executor *ApplicationEx
 	}
 	defer owned.Release()
 	var permit *ApplicationPermit
-	m.mu.Lock()
-	owner := m.owner
-	m.mu.Unlock()
-	if owner == nil {
-		return cryptov4.ErrClosed
-	}
-	owner.mu.Lock()
-	group := owner.allocationGroup
-	owner.mu.Unlock()
 	if origin == nil {
-		permit, err = executor.tryAcquireInGroup(group, class, task, owned)
+		permit, err = executor.TryAcquire(class, task, owned)
 		if err != nil {
 			return err
 		}
 		defer permit.Close()
-	} else {
-		if err := executor.retainSynchronousWork(group); err != nil {
-			return err
-		}
-		defer executor.releaseSynchronousWork(group)
 	}
 	m.mu.Lock()
 	if err = m.checkLocked(ctx); err == nil && (!m.server || !m.inputEOF) {

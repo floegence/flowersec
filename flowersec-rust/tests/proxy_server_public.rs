@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use flowersec::{
-    HandlerPlanOptions, ProxyServer, ProxyServerOptions, StreamDispatch, TransportEnvironment,
+    ProxyServer, ProxyServerError, ProxyServerOptions, SessionHandlerOptions, SessionHandlers,
+    StreamHandlerOptions, StreamHandlers,
 };
 
 #[tokio::test]
-async fn proxy_server_exposes_only_current_raw_stream_registrations() {
+async fn proxy_server_public_api_is_application_session_only() {
     let options = ProxyServerOptions {
         upstream: "http://127.0.0.1:8080".parse().expect("valid upstream"),
         upstream_origin: "http://127.0.0.1:8080"
@@ -13,13 +14,9 @@ async fn proxy_server_exposes_only_current_raw_stream_registrations() {
             .expect("valid upstream origin"),
         upstream_trust_roots_der: Vec::new(),
         allowed_upstream_hosts: vec!["127.0.0.1".into()],
-        allowed_upstream_addresses: Vec::new(),
         allowed_origins: vec!["https://app.example".parse().expect("valid origin")],
         max_concurrent_streams: 4,
-        max_concurrent_http_streams: 0,
-        max_concurrent_event_streams: 0,
-        event_stream_idle_timeout: Duration::ZERO,
-        max_metadata_bytes: 1024,
+        max_json_frame_bytes: 1024,
         max_chunk_bytes: 1024,
         max_body_bytes: 4096,
         max_websocket_frame_bytes: 1024,
@@ -31,37 +28,27 @@ async fn proxy_server_exposes_only_current_raw_stream_registrations() {
         extra_websocket_headers: vec!["x-request-id".into()],
         forbidden_cookie_names: vec!["session".into()],
         forbidden_cookie_name_prefixes: vec!["private_".into()],
-        credentials: None,
         on_error: Some(Arc::new(|_error| {})),
     };
     let server = ProxyServer::new(options).expect("create proxy server");
-    let registrations = server
-        .stream_registrations()
-        .expect("current registrations");
-    assert_eq!(registrations.len(), 2);
-    assert_eq!(registrations[0].kind, "flowersec-proxy/http1");
-    assert_eq!(registrations[1].kind, "flowersec-proxy/ws");
-
-    let environment = TransportEnvironment::new();
-    let plan = environment
-        .handler_plan(HandlerPlanOptions {
-            streams: StreamDispatch::Registered(registrations.clone()),
-            application_bytes: 65536,
-        })
-        .expect("freeze current proxy handlers");
-    plan.close();
-
-    let mut duplicates = registrations;
-    duplicates.push(duplicates[0].clone());
-    assert!(
-        environment
-            .handler_plan(HandlerPlanOptions {
-                streams: StreamDispatch::Registered(duplicates),
-                application_bytes: 65536,
-            })
-            .is_err()
+    let mut handlers =
+        SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
+    server
+        .register_stream_handlers(&mut handlers)
+        .expect("register proxy handlers");
+    assert_eq!(
+        server.register_stream_handlers(&mut handlers),
+        Err(ProxyServerError::AlreadyRegistered)
     );
-
+    let mut streams =
+        StreamHandlers::new(StreamHandlerOptions::default()).expect("create stream handlers");
+    server
+        .register_stream_handlers(&mut streams)
+        .expect("register proxy handlers into role-neutral registrar");
+    assert_eq!(
+        server.register_stream_handlers(&mut streams),
+        Err(ProxyServerError::AlreadyRegistered)
+    );
     server.close().await;
     server.close().await;
 }

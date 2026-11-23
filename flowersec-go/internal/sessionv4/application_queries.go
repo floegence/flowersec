@@ -6,8 +6,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // sdkQueryWork is sealed to this package. Only original fixed SDK query owners
@@ -29,7 +29,6 @@ type sdkQueryGroup struct {
 
 type sdkQuerySlot struct {
 	registration                    *sdkQueryRegistration
-	protection                      *sdkQueryProtection
 	group                           *sdkQueryGroup
 	work                            sdkQueryWork
 	backing                         resourcev4.Reference
@@ -75,9 +74,6 @@ func sdkQueryLaneCharge(c ApplicationExecutorConfig) (resourcev4.Vector, error) 
 	if err != nil || charge[resourcev4.SDKBytes] > 256*1024 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	if c.Profile != ApplicationProfileCustom {
-		charge[resourcev4.SDKBytes] = 256 * 1024
-	}
 	return charge, nil
 }
 
@@ -105,7 +101,7 @@ func (e *ApplicationExecutor) registerSDKQuery(group *sdkQueryGroup, direction u
 		return nil, err
 	}
 	index := 0
-	for q.slots[index].registration != nil || q.slots[index].protection != nil {
+	for q.slots[index].registration != nil {
 		index++
 	}
 	r := &sdkQueryRegistration{index: index, done: make(chan struct{})}
@@ -179,17 +175,6 @@ func (e *ApplicationExecutor) fillSDKQueryReadyLocked() {
 // cannot purchase more scheduling turns. Already queued entries keep their
 // order; a newly eligible owner sees at most four previously selected entries.
 func (q *sdkQueryLane) choose() int {
-	eligible := false
-	for i := range q.slots {
-		s := &q.slots[i]
-		if s.registration != nil && s.group != nil && !s.ready && !s.active && (s.pending || s.closing) {
-			eligible = true
-			break
-		}
-	}
-	if !eligible {
-		return -1
-	}
 	for step := 1; step <= len(q.slots); step++ {
 		anchor := (q.lastGroup + step) % len(q.slots)
 		group := q.slots[anchor].group
@@ -211,7 +196,7 @@ func (q *sdkQueryLane) choose() int {
 			for offset := 1; offset <= len(q.slots); offset++ {
 				index := (group.cursor[direction] + offset) % len(q.slots)
 				s := &q.slots[index]
-				if s.registration != nil && s.group == group && s.direction == direction && !s.ready && !s.active && (s.pending || s.closing) {
+				if s.group == group && s.direction == direction && !s.ready && !s.active && (s.pending || s.closing) {
 					group.direction, group.cursor[direction] = direction, index
 					q.lastGroup = anchor
 					return index
@@ -340,18 +325,9 @@ func (e *ApplicationExecutor) releaseSDKQueryLocked(index int) {
 	r.mu.Lock()
 	r.err = s.err
 	r.executor.Store(nil)
-	if p := s.protection; p != nil && !p.closed && !e.closed && !q.failed {
-		*s = sdkQuerySlot{group: s.group, direction: s.direction, backing: s.backing, protection: p}
-	} else {
-		if p != nil {
-			p.closed = true
-			p.backing.Release()
-			p.backing = resourcev4.Reference{}
-		}
-		s.backing.Release()
-		*s = sdkQuerySlot{}
-		q.count--
-	}
+	s.backing.Release()
+	*s = sdkQuerySlot{}
+	q.count--
 	close(r.done)
 	r.mu.Unlock()
 }
@@ -376,7 +352,6 @@ func (e *ApplicationExecutor) exitSDKQueryWorker() {
 	for i := range q.slots {
 		s := &q.slots[i]
 		if s.registration == nil {
-			e.releaseIdleSDKQueryProtectionLocked(i)
 			continue
 		}
 		s.ready = false

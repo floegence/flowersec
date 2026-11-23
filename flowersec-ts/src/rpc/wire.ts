@@ -1,0 +1,17 @@
+export interface RpcEnvelope {
+  type_id: number;
+  request_id: number;
+  response_to: number;
+  payload: unknown;
+  error?: RpcError;
+}
+
+export interface RpcError {
+  code: number;
+  message?: string;
+}
+
+export interface StreamHello {
+  kind: string;
+  v: number;
+}

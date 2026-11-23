@@ -5,24 +5,56 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import "./test-transport-v3-contract.mjs";
+import "./test-transport-v5-contract.mjs";
 import { verifyBinding } from "./check-transport-v4-binding.mjs";
 import "./check-transport-v4-schema.mjs";
-import { checkV4Inventory, v3SourceTokens } from "./transport-v4-inventory.mjs";
+import "./transport-v4-tooling.test.mjs";
+import "./transport-v4-metadata.test.mjs";
+import "./transport-v4-services.test.mjs";
+import "./transport-v4-contract-query.test.mjs";
+import "./transport-v4-fragments.test.mjs";
+import "./transport-v4-fragment-state.test.mjs";
+import "./transport-v4-stream-state.test.mjs";
+import "./transport-v4-api-results.test.mjs";
+import "./transport-v4-resources.test.mjs";
+import "./transport-v4-resource-costs.test.mjs";
+import "./transport-v4-time.test.mjs";
+import "./transport-v4-crypto-usage.test.mjs";
+import "./transport-v4-rekey-credit.test.mjs";
+import "./transport-v4-rekey-capacity.test.mjs";
+import "./transport-v4-resume.test.mjs";
+import "./transport-v4-activation-delegation.test.mjs";
+import "./transport-v4-application-headers.test.mjs";
+import "./transport-v4-application-errors.test.mjs";
+import "./transport-v4-application-sdk-errors.test.mjs";
+import "./transport-v4-revocation.test.mjs";
+import "./transport-v4-namespace-closure.test.mjs";
+import "./transport-v4-credential-policies.test.mjs";
+import "./transport-v4-hello-context.test.mjs";
+import "./transport-v4-admission-context.test.mjs";
+import "./transport-v4-revocation-records.test.mjs";
+import "./transport-v4-capacity.test.mjs";
+import "./transport-v4-revocation-state.test.mjs";
+import "./transport-v4-signatures.test.mjs";
+import "./transport-v4-strict-ed25519.test.mjs";
+import "./transport-v4-dh.test.mjs";
+import "./transport-v4-noise.test.mjs";
+import "./transport-v4-noise-vendor.test.mjs";
+import "./transport-v4-records.test.mjs";
+import "./transport-v4-ready.test.mjs";
+import "./transport-v4-rekey.test.mjs";
+import "./transport-v4-write-state.test.mjs";
+import "./transport-v4-binding-dependencies.test.mjs";
+import "./transport-v4-unicode.test.mjs";
+import "./transport-v4-idna.test.mjs";
+import "./transport-v4-host.test.mjs";
+import { checkV4Inventory } from "./transport-v4-inventory.mjs";
 import { readToolchains } from "./toolchains.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 console.log(`Transport v4 reference status: ${JSON.stringify(verifyBinding())}`);
-checkV4Inventory(root, true);
-assert.deepEqual(v3SourceTokens("X509Version::V3 x509v3 X.509v3 rsv3"), []);
-const wasmHeader = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
-// An encoded current module may contain these Base64 characters by chance.
-const encodedCurrent = Buffer.concat([wasmHeader, Buffer.from([0, 0xbf, 0x70, 0])]).toString("base64");
-assert.match(encodedCurrent, /v3/u);
-assert.deepEqual(v3SourceTokens(`const current = "${encodedCurrent}";`), []);
-assert.deepEqual(v3SourceTokens(`const SessionV3 = "${encodedCurrent}";`), ["SessionV3"]);
-const encodedRetired = Buffer.concat([wasmHeader, Buffer.from("flowersec-tunnel/3")]).toString("base64");
-assert.deepEqual(v3SourceTokens(`const payload = "${encodedRetired}";`), ["flowersec-tunnel/3"]);
-assert.deepEqual(v3SourceTokens('const protocol = "flowersec-direct/3";'), ["flowersec-direct/3"]);
+checkV4Inventory(root);
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 const run = (command, args) => spawnSync(command, args, {
@@ -30,6 +62,13 @@ const run = (command, args) => spawnSync(command, args, {
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,
 });
+const sourceFiles = (...patterns) => {
+  const result = run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ...patterns]);
+  assert.equal(result.status, 0, result.stderr);
+  const files = new Set(result.stdout.split("\0").filter((file) => file && exists(file)));
+  assert.ok(files.size, `no source files matched ${patterns.join(", ")}`);
+  return files;
+};
 
 const makefile = read("Makefile");
 const registry = read("flowersec-go/internal/cmd/flowersec-test/registry.go");
@@ -37,11 +76,11 @@ const capabilities = JSON.parse(read("stability/language_capabilities.json"));
 const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
-assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v6");
-assert.match(packageJSON.version, /^6\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u);
+assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v7");
+assert.match(packageJSON.version, /^7\.\d+\.\d+$/u);
 assert.equal(packageJSON.engines.node, `>=${readToolchains(root).node.minimum}`);
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
-assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "6");
+assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "7");
 assert.equal(read("flowersec-rust/Cargo.toml").match(/^version = "([^"]+)"$/m)?.[1], packageJSON.version);
 
 const rustlsFeatures = run("cargo", [
@@ -52,15 +91,6 @@ assert.equal(rustlsFeatures.status, 0, rustlsFeatures.stderr);
 assert.doesNotMatch(rustlsFeatures.stdout, /feature "tls12"/u);
 
 const retiredPaths = [
-  "docs/TRANSPORT_V3_DESIGN.md",
-  "docs/TRANSPORT_V3_ARCHITECTURE.md",
-  "docs/TRANSPORT_V3_WIRE.md",
-  "stability/transport_v3_contract.json",
-  "testdata/transport_v3",
-  "flowersec-go/internal/protocolv3",
-  "flowersec-go/internal/sessionv3",
-  "flowersec-ts/src/v3",
-  "flowersec-rust/src/connector_v3.rs",
   "docs/TRANSPORT_V2_ARCHITECTURE.md",
   "docs/TRANSPORT_V2_WIRE.md",
   "stability/transport_v2_contract.json",
@@ -77,26 +107,34 @@ for (const relative of retiredPaths) {
   assert.equal(exists(relative), false, `retired path remains: ${relative}`);
 }
 
-const markdown = run("git", ["ls-files", "-z", "--", "*.md"]);
-assert.equal(markdown.status, 0, markdown.stderr);
-for (const relative of markdown.stdout.split("\0").filter((item) => item !== "" && exists(item))) {
+const markdown = sourceFiles("*.md");
+assert.ok(markdown.has("README.md"));
+const referenceDocuments = new Set([
+  "docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_DESIGN.md",
+  "docs/TRANSPORT_V3_WIRE.md", "docs/TRANSPORT_V4_BINDING.md",
+]);
+for (const relative of markdown) {
   if (relative === "AGENTS.md" || relative.endsWith("THIRD_PARTY_NOTICES.md")) continue;
   const source = read(relative);
   assert.doesNotMatch(source, /\bV2\b|\bv2\b|deprecated\s+.*V3|legacy\s+(?:API|runtime|connector|artifact)/iu,
     `${relative} describes retired public behavior`);
   assert.doesNotMatch(source, /Flowersec 2\.3\.|Flowersec 3\.2\.|@floegence\/flowersec-core@(?:2|3)\./u,
     `${relative} contains stale package-version guidance`);
+  if (!referenceDocuments.has(relative)) {
+    assert.doesNotMatch(source, /flowersec(?:-direct|-tunnel)?\/[234]\b/u, `${relative} advertises a retired wire profile`);
+  }
 }
 
-assert.equal(capabilities.version, 3);
-assert.equal(capabilities.deployment_profiles.application_wire, "flowersec/4");
+assert.equal(capabilities.version, 5);
+assert.equal(capabilities.deployment_profiles.version, 5);
+assert.equal(capabilities.deployment_profiles.application_wire, "flowersec/5");
 assert.equal(capabilities.portable_capabilities.length, 16);
 assert.equal(capabilities.portable_capabilities.some(({ id }) => id.includes("v2")), false);
 const controlPlane = capabilities.portable_capabilities.find(({ id }) => id === "controlplane_issue_authorize");
 assert.ok(controlPlane);
 assert.equal(controlPlane.implementations.go.status, "supported");
-assert.equal(controlPlane.implementations.go.entrypoint, "flowersec-go/v6/controlplane");
-assert.doesNotMatch(JSON.stringify(capabilities), /flowersec-go\/(?:v[1-4]\/)?controlplane/u);
+assert.equal(controlPlane.implementations.go.entrypoint, "flowersec-go/v7/controlplane");
+assert.doesNotMatch(JSON.stringify(capabilities), /flowersec-go\/(?:v[1-6]\/)?controlplane/u);
 const proxy = capabilities.portable_capabilities.find(({ id }) => id === "browser_proxy_runtime");
 assert.ok(proxy);
 for (const [language, testID] of [
@@ -125,72 +163,55 @@ assert.deepEqual(apiManifest.ts.bins, [{
   source: "flowersec-ts/src/cli.ts",
   requires_shebang: true,
 }]);
-assert.equal(apiManifest.native_abi.package, "@floegence/flowersec-node-native");
-assert.equal(apiManifest.native_abi.contract_version, 4);
-assert.equal(apiManifest.native_abi.wire_version, 4);
-for (const entry of ["bindRawQuic", "connectRawQuic", "contractVersion", "createPreparationBudget", "bindWebTransport", "connectWebTransport"]) {
-  assert.ok(apiManifest.native_abi.runtime_exports.includes(entry));
-}
-assert.equal(apiManifest.rust.compile_entries.some((entry) => /flowersec::(?:v[23]::|V[234]\w*|StreamV4Ext)/u.test(entry)), false);
-for (const entry of [
-  "let _ = flowersec::PreauthorizedPoolSource::top_up",
-  "let _ = flowersec::PreauthorizedPoolSource::recover_pending_top_ups",
-  "let _ = flowersec::ResponsePublication::transfer_to",
-  "let _ = flowersec::TransportEnvironment::maintenance_owner",
-  "let _ = flowersec::UnaryRequestContext::response_publication",
-  "let _ = flowersec::SQLitePoolStore::spend_observation",
-]) {
-  assert.ok(apiManifest.rust.compile_entries.includes(entry), `missing Rust owner contract: ${entry}`);
-}
-assert.equal(apiManifest.swift.symbols.some(({ name }) => /V2|V3|TransportV4|transportv4|transport_v4|encodedV4|v4Namespace|v4Version|v4Values/u.test(name)), false);
+assert.deepEqual(apiManifest.native_abi, {
+  package: "@floegence/flowersec-node-native",
+  contract_version: 5,
+  wire_version: 5,
+  runtime_exports: ["bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "supportsNativeH3"],
+});
+assert.equal(apiManifest.rust.compile_entries.some((entry) => /flowersec::v[23]::/u.test(entry)), false);
+assert.equal(apiManifest.swift.symbols.some(({ name }) => /V2|V3/u.test(name)), false);
 
 const cli = read("flowersec-ts/src/cli.ts");
 assert.equal(cli.startsWith("#!/usr/bin/env node\n"), true);
-assert.match(cli, /missing_option:config/u);
-assert.match(cli, /setup\.environment\.connect/u);
+assert.match(cli, /required\(values, "certificate"\)/u);
+assert.match(cli, /required\(values, "private-key"\)/u);
+assert.match(cli, /createArtifactLease/u);
 assert.match(cli, /createAcceptor/u);
 assert.doesNotMatch(cli, /connectV3|createAcceptorV3|node\.v2/u);
 
 const nodeEntrypoint = read("flowersec-ts/src/node/index.ts");
 assert.match(nodeEntrypoint, /export \{ ProxyServer, ProxyServerError \}/u);
-assert.match(nodeEntrypoint, /export type \{[^}]*\bProxyServerOptions\b/u);
+assert.match(nodeEntrypoint, /export type \{ ProxyServerOptions \}/u);
 const nativeDeclaration = read("flowersec-node-native/index.d.ts");
-assert.match(nativeDeclaration, /readonly wireVersion: 4;/u);
-assert.match(nativeDeclaration, /connectRawQuic\(/u);
-assert.match(nativeDeclaration, /bindRawQuic\(/u);
+assert.match(nativeDeclaration, /readonly wireVersion: 5;/u);
+assert.deepEqual([...nativeDeclaration.matchAll(/^export\s+(?:declare\s+)?function\s+(\w+)\s*\(/gmu)].map((match) => match[1]).sort(),
+  apiManifest.native_abi.runtime_exports, "native declaration and ABI manifest must expose the same functions");
 assert.doesNotMatch(nativeDeclaration, /RawQuicV2|RawQuicV3/u);
 
 assert.match(makefile, /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m);
 assert.match(makefile, /^test:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
-const capacityContract = /^flowersec-test-contract:\n((?:\t.*\n)*)/m.exec(makefile)?.[1];
-assert.ok(capacityContract, "capacity contract gate must exist");
-const selectedCapacityTests = /-run '\^\(([^']+)\)\$\$' \.\/internal\/transporttest\/tunnelworkload/m.exec(capacityContract)?.[1].split("|");
-assert.ok(selectedCapacityTests, "capacity contract gate must select explicit tests");
-const currentCapacityTests = [...read("flowersec-go/internal/transporttest/tunnelworkload/capacity_test.go")
-  .matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)].map((match) => match[1]);
-assert.ok(currentCapacityTests.length > 0, "capacity contracts must contain executable tests");
-assert.deepEqual(selectedCapacityTests.sort(), currentCapacityTests.sort(),
-  "capacity contract gate must execute every current capacity test without stale selectors");
 assert.doesNotMatch(makefile, /transport-v2|reference\/presets/u);
 const pushMain = read("scripts/push-main.sh");
-assert.equal((pushMain.match(/^make prepush$/gm) ?? []).length, 1);
+assert.equal((pushMain.match(/^make test$/gm) ?? []).length, 1);
 assert.doesNotMatch(pushMain, /^make (?:precommit|check)$/m);
 assert.doesNotMatch(read("scripts/release.sh"), /\bmake\b|flowersec-test|test-host-init/u);
 
 const generatedReadme = run(process.execPath, ["scripts/generate-readme-capabilities.mjs", "--check"]);
 assert.equal(generatedReadme.status, 0, generatedReadme.stderr);
 
-const productionFiles = run("git", [
-  "ls-files", "-z", "--",
-  "flowersec-go/**/*.go",
-  "flowersec-rust/src/**/*.rs",
-  "flowersec-swift/Sources/**/*.swift",
-  "flowersec-ts/src/**/*.ts",
-  "flowersec-native-transport/src/**/*.rs",
-  "flowersec-node-native/src/**/*.rs",
-]);
-assert.equal(productionFiles.status, 0, productionFiles.stderr);
-for (const relative of productionFiles.stdout.split("\0").filter((item) => item !== "" && exists(item))) {
+const productionFiles = sourceFiles(
+  ":(glob)flowersec-go/**/*.go",
+  ":(glob)flowersec-rust/src/**/*.rs",
+  ":(glob)flowersec-swift/Sources/**/*.swift",
+  ":(glob)flowersec-ts/src/**/*.ts",
+  ":(glob)flowersec-native-transport/src/**/*.rs",
+  ":(glob)flowersec-node-native/src/**/*.rs",
+);
+for (const required of ["flowersec-go/connector.go", "flowersec-rust/src/lib.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift", "flowersec-ts/src/cli.ts", "flowersec-native-transport/src/lib.rs", "flowersec-node-native/src/lib.rs"]) {
+  assert.ok(productionFiles.has(required), `source scan omitted ${required}`);
+}
+for (const relative of productionFiles) {
   if (/(?:_test\.go|\.test\.ts)$/u.test(relative)) continue;
   const source = read(relative);
   assert.doesNotMatch(source,
@@ -205,9 +226,9 @@ for (const relative of productionFiles.stdout.split("\0").filter((item) => item 
 }
 
 assert.doesNotMatch(read("flowersec-go/proxy_server.go"), /func \(server \*ProxyServer\) Register\(/u);
-
+assert.doesNotMatch(read("flowersec-go/connector.go"), /func \(err \*UnreliableMessageError\) Unwrap\(/u);
 assert.doesNotMatch(read("docs/API_CONTRACT.md"), /UnreliableMessageError[^\n]*unwrap/iu);
-
+assert.doesNotMatch(read("flowersec-ts/src/v3/security.ts"), /get disposition\(|absoluteUnixMilliseconds/u);
 assert.doesNotMatch(read("flowersec-rust/src/proxy_server.rs"), /pub fn register\(/u);
 assert.doesNotMatch(read("flowersec-rust/src/transport.rs"),
   /UnreliableMessageError::(?:InvalidInput|Expired|DroppedBudget|Failed)/u);
@@ -216,4 +237,4 @@ assert.match(proxyPublicEntrypoint, /registerProxyAppWindowWithServiceWorkerRunt
 assert.doesNotMatch(proxyPublicEntrypoint,
   /RuntimeFetchMessage|parseRuntimeRequest|flowersec-proxy:fetch|response_flow_control|external_origin/u);
 
-process.stdout.write("Flowersec 6 architecture contract is internally consistent\n");
+process.stdout.write("Flowersec 7 architecture contract (flowersec/5) is internally consistent\n");

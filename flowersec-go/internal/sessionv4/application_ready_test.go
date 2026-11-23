@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 func readyExecutorFixture(t *testing.T, ready, residentReady uint32) *executorFixture {
@@ -393,90 +392,5 @@ func TestApplicationReadyPreparedPositionHasNoDispatchRightAndClosesWithGroup(t 
 	}
 	if f.executor.Snapshot().Ready != 0 {
 		t.Fatal("closed group retained private position")
-	}
-}
-
-func TestSessionApplicationAuthorizeDiagnosticAdmissionDoesNotRetainInvocation(t *testing.T) {
-	tests := []struct {
-		name      string
-		enabled   bool
-		holdBegin bool
-	}{
-		{name: "disabled sink", enabled: false},
-		{name: "enabled sink", enabled: true},
-		{name: "begin gate contention never blocks authorization", enabled: true, holdBegin: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var fixture *executorFixture
-			var sink *DiagnosticSink
-			if test.enabled {
-				var now func() time.Time
-				idle, resume := make(chan struct{}), make(chan struct{})
-				if !test.holdBegin {
-					var samples atomic.Uint32
-					now = func() time.Time {
-						// Construction and the pump's initial rotation sample first.
-						// Its third sample prepares the idle timer outside the sink
-						// gate. Hold that real pump there so this case tests admitted
-						// diagnostics rather than best-effort startup contention.
-						if samples.Add(1) == 3 {
-							close(idle)
-							<-resume
-						}
-						return time.Unix(1800, 0)
-					}
-				}
-				diagnostics := newDiagnosticFixtureWithClock(t, DiagnosticSinkConfig{}, func(context.Context, diagnosticv4.Event) {}, func(uint16) bool { return true }, now)
-				if now != nil {
-					defer close(resume)
-					select {
-					case <-idle:
-					case <-time.After(3 * time.Second):
-						t.Fatal("diagnostic pump did not reach its idle clock sample")
-					}
-				}
-				fixture, sink = diagnostics.executorFixture, diagnostics.sink
-			} else {
-				fixture = newExecutorFixture(t, 2, 1, 1, 2)
-			}
-			p := applicationTestPlan(t, fixture, SessionPlanConfig{RuntimeBytes: 4096, AuthorizeApplication: func(context.Context, AuthenticatedRequestContext) (AuthorizeApplicationResult, error) {
-				return AuthorizeApplicationResult{}, ErrApplicationAuthorization
-			}})
-			p.claimed = true
-			if sink != nil {
-				p.mu.Lock()
-				p.diagnosticSink = sink
-				p.mu.Unlock()
-			}
-			if test.holdBegin {
-				sink.mu.Lock()
-				defer sink.mu.Unlock()
-			}
-			result := make(chan error, 1)
-			go func() { result <- p.authorize(context.Background(), ApplicationBinding{}, func() error { return nil }) }()
-			select {
-			case err := <-result:
-				if !errors.Is(err, ErrApplicationAuthorization) {
-					t.Fatal("authorization refusal changed with diagnostics", err)
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("authorization did not settle while diagnostic admission was unavailable")
-			}
-			p.invocation.mu.Lock()
-			staleLease, staleContext := p.invocation.lease, p.invocation.ctx
-			p.invocation.mu.Unlock()
-			if staleLease != nil || staleContext != nil {
-				t.Fatal("authorization retained invocation state after admission cleanup")
-			}
-			if test.enabled && !test.holdBegin {
-				sink.mu.Lock()
-				allocated := sink.nextID
-				sink.mu.Unlock()
-				if allocated == 0 {
-					t.Fatal("enabled diagnostic sink did not allocate an application operation")
-				}
-			}
-		})
 	}
 }

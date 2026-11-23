@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
+func TestTransportV3PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -23,12 +23,11 @@ func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const goRoot = "github.com/floegence/flowersec/flowersec-go/v6"
+	const goRoot = "github.com/floegence/flowersec/flowersec-go/v7"
 	for _, expression := range []string{
-		"flowersec.ConnectionMaterial", "flowersec.ArtifactLease", "flowersec.NewArtifactLeaseFromBytes",
+		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
 		"flowersec.NewArtifactLease", "flowersec.ConnectorOptions", "flowersec.Connect",
-		"flowersec.Session", "flowersec.Stream", "flowersec.ServiceClient", "flowersec.ConnectError",
-		"flowersec.TransportEnvironment", "flowersec.ConnectionMaterialSource", "flowersec.StreamHandlerPlan",
+		"flowersec.Session", "flowersec.ByteStream", "flowersec.RPCPeer", "flowersec.ConnectError",
 		"flowersec.UnreliableMessageChannel", "flowersec.UnreliableSendOptions",
 	} {
 		requireGoManifestEntry(t, m, goRoot, expression)
@@ -36,8 +35,8 @@ func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
 
 	type rawManifest struct {
 		Docs struct {
-			TransportV4Binding string   `json:"transport_v4_binding"`
-			TransportV4Tokens  []string `json:"transport_v4_tokens"`
+			WireContract string   `json:"wire_contract"`
+			WireTokens   []string `json:"wire_tokens"`
 		} `json:"docs"`
 		TS struct {
 			Subpaths []struct {
@@ -54,23 +53,23 @@ func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw.Docs.TransportV4Binding == "" || !slices.Contains(raw.Docs.TransportV4Tokens, "flowersec/4") {
-		t.Fatalf("manifest docs must register the Transport v4 binding and flowersec/4 token")
+	if raw.Docs.WireContract == "" || !slices.Contains(raw.Docs.WireTokens, "flowersec/5") {
+		t.Fatalf("manifest docs must register the current wire contract and flowersec/5 token")
 	}
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "Session")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessages")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "ConnectionRequirements")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "Stream")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannel")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "SessionOptions")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStream")
 	for _, specifier := range []string{"@floegence/flowersec-core/browser", "@floegence/flowersec-core/node"} {
 		for _, exportName := range []string{
-			"JsonPrimitive", "JsonValue", "OperationOptions", "ServiceClient",
-			"ConnectionMaterialSource", "SessionError", "CleanupStatus",
+			"JsonPrimitive", "JsonValue", "OperationOptions", "RpcPeer",
+			"RpcResult", "SessionErrorCode", "SessionTermination",
 		} {
 			requireTSTypeExport(t, raw.TS.Subpaths, specifier, exportName)
 		}
 	}
 	for _, exportName := range []string{
-		"ConnectionMaterialSource", "ConnectionController", "ConnectionSnapshot",
+		"ArtifactSource", "ConnectionController", "ConnectionSnapshot",
 		"RetryDisposition",
 	} {
 		requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", exportName)
@@ -78,12 +77,12 @@ func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "Session")
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStream")
 	requireSwiftManifestSymbol(t, m, "swift.enum", "SessionError")
-	requireSwiftManifestSymbol(t, m, "swift.func", "connect(environment:source:requirements:)")
+	requireSwiftManifestSymbol(t, m, "swift.func", "connect(lease:options:)")
 
 	for _, entry := range []string{
-		"let _ = std::mem::size_of::<flowersec::Session>()",
-		"let _ = std::mem::size_of::<flowersec::ConnectionMaterial>()",
-		"let _ = std::mem::size_of::<flowersec::TransportEnvironment>()",
+		"let _: Option<&dyn flowersec::Session> = None",
+		"let _ = std::mem::size_of::<flowersec::Artifact>()",
+		"let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
 		"let _ = flowersec::connect",
 	} {
 		if !slices.Contains(m.Rust.CompileEntries, entry) {
@@ -91,14 +90,14 @@ func TestTransportV4PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		}
 	}
 	assertDocumentContains(t, repoRoot, "docs/API_CONTRACT.md", []string{
-		"`flowersec.Connect`",
+		"`flowersec.Connect(...)`",
 		"`connect(...)`",
-		"`TransportEnvironment`",
+		"`ConnectorOptions`",
 		"`Session`",
 	})
 }
 
-func TestTransportV4GoExportsAreFullyRegistered(t *testing.T) {
+func TestTransportV3GoExportsAreFullyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +108,7 @@ func TestTransportV4GoExportsAreFullyRegistered(t *testing.T) {
 	}
 
 	for _, target := range m.Go.CompileTargets {
-		if target.StabilityGroup != "transport_v4" {
+		if target.StabilityGroup != "transport_v3" {
 			continue
 		}
 		relativePackage := "."
@@ -117,7 +116,7 @@ func TestTransportV4GoExportsAreFullyRegistered(t *testing.T) {
 			relativePackage = strings.TrimPrefix(target.Package, m.Go.ModulePath+"/")
 		}
 		if relativePackage == target.Package {
-			t.Fatalf("transport v4 package %q is outside module %q", target.Package, m.Go.ModulePath)
+			t.Fatalf("transport v3 package %q is outside module %q", target.Package, m.Go.ModulePath)
 		}
 		exported, err := exportedGoExpressions(filepath.Join(repoRoot, "flowersec-go", filepath.FromSlash(relativePackage)), target.Alias)
 		if err != nil {
@@ -135,12 +134,12 @@ func TestTransportV4GoExportsAreFullyRegistered(t *testing.T) {
 		}
 		slices.Sort(missing)
 		if len(missing) != 0 {
-			t.Errorf("Go transport v4 manifest target %s is missing exported symbols: %s", target.Package, strings.Join(missing, ", "))
+			t.Errorf("Go transport v3 manifest target %s is missing exported symbols: %s", target.Package, strings.Join(missing, ", "))
 		}
 	}
 }
 
-func TestTransportV4PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
+func TestTransportV3PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -151,13 +150,15 @@ func TestTransportV4PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"github.com/floegence/flowersec/flowersec-go/v6": {
-			"flowersec.Stream.Read", "flowersec.Stream.Write", "flowersec.Stream.Close",
-			"flowersec.Stream.Finish", "flowersec.Stream.CloseResult", "flowersec.Stream.ReaderCursor",
-			"flowersec.Stream.CloseWrite", "flowersec.Stream.Reset", "flowersec.Stream.PrepareWrite",
-			"flowersec.Stream.WriteAll", "flowersec.Stream.Copy", "flowersec.Stream.AsTypedMessages",
+		"github.com/floegence/flowersec/flowersec-go/v7": {
+			"flowersec.ByteStream.Read", "flowersec.ByteStream.Write", "flowersec.ByteStream.Close",
+			"flowersec.ByteStream.Kind", "flowersec.ByteStream.TerminalError",
+			"flowersec.ByteStream.CloseWrite", "flowersec.ByteStream.Reset",
+			"flowersec.RPCPeer.Call", "flowersec.RPCPeer.Notify",
 			"flowersec.UnreliableMessageChannel.MaxMessageBytes", "flowersec.UnreliableMessageChannel.Send",
-			"flowersec.UnreliableMessageChannel.Receive",
+			"flowersec.UnreliableMessageChannel.Receive", "flowersec.Session.RPC", "flowersec.Session.UnreliableMessages",
+			"flowersec.Session.OpenStream", "flowersec.Session.AcceptStream", "flowersec.Session.Rekey",
+			"flowersec.Session.ProbeLiveness", "flowersec.Session.WaitTermination", "flowersec.Session.Close",
 		},
 	}
 

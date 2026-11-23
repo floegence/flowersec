@@ -137,6 +137,62 @@ test("Cargo protocol patches and vendored transport stacks are rejected", (t) =>
   }, /local Cargo protocol patch|vendored transport\/protocol stack/);
 });
 
+test("only reviewed embedded Quinn source can satisfy a vendored contract", (t) => {
+  const root = createFixture(t);
+  const contract = baselineContract();
+  const quinn = contract.dependencies.find((entry) => entry.package === "quinn");
+  quinn.ecosystem = "vendored-cargo";
+  write(root, "stability/dependency_contracts.json", JSON.stringify(contract));
+  write(root, "flowersec-rust/Cargo.toml", '[dependencies]\nrustls = "0.23"\n');
+  write(root, "flowersec-rust/Cargo.lock", 'version = 4\n[[package]]\nname = "rustls"\nversion = "0.23.0"\n');
+  const inventory = "sbom/source-inventory.json";
+  const component = JSON.parse(fs.readFileSync(path.join(repositoryRoot, inventory))).components.find((entry) => entry.name === "quinn");
+  const directory = component.vendored.directory;
+  fs.cpSync(path.join(repositoryRoot, directory), path.join(root, directory), { recursive: true });
+  const expectInvalid = (pattern) => {
+    const result = runChecker(root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, pattern);
+  };
+  expectInvalid(/missing vendored Cargo provenance for quinn/);
+  write(root, inventory, JSON.stringify({ components: [component] }));
+  const valid = runChecker(root);
+  assert.equal(valid.status, 0, valid.stderr);
+  write(root, inventory, JSON.stringify({ components: [component, { ...component, name: "another-quic" }] }));
+  expectInvalid(/unexpected vendored Cargo component another-quic/);
+  const forged = structuredClone(component);
+  forged.vendored.upstreamArchiveSha256 = "0".repeat(64);
+  forged.review.sourceEvidenceValue = `${JSON.stringify(forged.vendored, null, 2)}\n`;
+  write(root, inventory, JSON.stringify({ components: [forged] }));
+  expectInvalid(/invalid vendored Cargo provenance for quinn/);
+  write(root, inventory, JSON.stringify({ components: [component] }));
+  const link = path.join(root, directory, "substitute");
+  fs.symlinkSync(root, link, "dir");
+  expectInvalid(/unexpected vendored Cargo source/);
+  fs.unlinkSync(link);
+  write(root, `${directory}/mod.rs`, "pub struct Changed;\n");
+  expectInvalid(/source tree differs from reviewed quinn provenance/);
+});
+
+test("a Cargo alias requires a contract for the actual package and its owning lock", (t) => {
+  const root = createFixture(t);
+  write(root, "flowersec-native-transport/Cargo.toml", '[dependencies]\nudp = { package = "quinn-udp", version = "=0.5.15" }\n');
+  write(root, "flowersec-native-transport/Cargo.lock", "version = 4\n");
+  fs.appendFileSync(path.join(root, "flowersec-rust/Cargo.lock"), '\n[[package]]\nname = "quinn-udp"\nversion = "0.5.15"\n');
+  const result = runChecker(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /high-impact cargo dependency quinn-udp has no contract/);
+  assert.match(result.stderr, /dependency quinn-udp is missing from flowersec-native-transport\/Cargo\.lock/);
+});
+
+test("restoring swift-sodium to the resolved graph requires a contract", (t) => {
+  expectFailure(t, (root) => {
+    const lock = JSON.parse(fs.readFileSync(path.join(root, "Package.resolved")));
+    lock.pins.push({ identity: "swift-sodium", state: { version: "0.11.0", revision: "abc" } });
+    write(root, "Package.resolved", JSON.stringify(lock));
+  }, /high-impact swiftpm dependency swift-sodium has no contract/);
+});
+
 test("private Node dependency subpaths and native fields are rejected", (t) => {
   expectFailure(t, (root) => {
     write(root, "flowersec-ts/src/node/adapter.ts", `import type { QUICConnection } from "@matrixai/quic/native/types.js";\nexport const bridge = (value) => value.dgramSendVec ?? value.conn;\n`);
@@ -171,30 +227,6 @@ test("legacy WebTransport wire, parsers, and fallbacks are rejected", (t) => {
   expectFailure(t, (root) => {
     write(root, "flowersec-ts/src/node/adapter.ts", `export const protocol = ":protocol=webtransport";\nexport const legacyParserFallback = true;\n`);
   }, /legacy WebTransport wire|legacy parser or fallback/);
-});
-
-test("registered browser native tuple data does not authorize adapter fallback", (t) => {
-  const root = createFixture(t);
-  const registry = { webtransport: { tuples: [{ id: "chromium_h3_draft02", protocol: "webtransport", request_headers: { "sec-webtransport-http3-draft02": "1" } }] } };
-  write(root, "stability/transport_v4_schema.json", JSON.stringify({ carrier_provider_registry: registry }));
-  const declarations = [
-    ["flowersec-ts/src/generated/transportV4Registry.ts", `export const transportV4CarrierProviderRegistry = ${JSON.stringify(registry)} as const;`],
-    ["flowersec-rust/src/protocol_v4_registry_generated.rs", `pub(crate) const CARRIER_PROVIDER_REGISTRY_JSON: &str = ${JSON.stringify(JSON.stringify(registry))};`],
-  ];
-  for (const [file, declaration] of declarations) write(root, file, `${declaration}\n`);
-  const valid = runChecker(root);
-  assert.equal(valid.status, 0, valid.stderr);
-  for (const [file, declaration] of declarations) {
-    write(root, file, `${declaration}\n// :protocol=webtransport\n`);
-    const extra = runChecker(root);
-    assert.notEqual(extra.status, 0);
-    assert.match(extra.stderr, /legacy WebTransport wire/);
-    write(root, file, declaration.replace('chromium_h3_draft02', 'arbitrary_provider'));
-    const drift = runChecker(root);
-    assert.notEqual(drift.status, 0);
-    assert.match(drift.stderr, /generated carrier registry drift/);
-    write(root, file, `${declaration}\n`);
-  }
 });
 
 test("every high-impact dependency names a registered executable test", (t) => {

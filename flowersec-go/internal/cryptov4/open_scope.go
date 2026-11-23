@@ -1,6 +1,6 @@
 package cryptov4
 
-import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 
 // IncomingScope owns one bounded temporary receive key, then the authenticated
 // OPEN association. It consumes neither a positive active slot nor a lifetime
@@ -17,12 +17,12 @@ func (e *Engine) unusedScope(scope uint64) bool {
 		return false
 	}
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	return ordinal < e.ordinal[role] && !e.used[role].Has(ordinal)
+	return ordinal < e.ordinal[role] && e.used[role][ordinal/64]&(uint64(1)<<(ordinal%64)) == 0
 }
 
 func (e *Engine) consumeScope(scope uint64) {
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	e.used[role].Add(ordinal)
+	e.used[role][ordinal/64] |= uint64(1) << (ordinal % 64)
 }
 
 // OpenIncoming is used only for a carrier's unbound first OPEN. A hostile

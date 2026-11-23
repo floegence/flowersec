@@ -3,8 +3,8 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 // ExecutionHandler is the only application callback entry supplied by the
@@ -16,14 +16,11 @@ type ExecutionDispatch struct {
 	group          *applicationGroup
 	History        *rpcv4.VolatileExecutions
 	DurableHistory *rpcv4.DurableExecutions
-	// DependencyFloor is pre-admitted by the enclosing service/stream owner.
-	// It keeps descendant application captures on fixed alias positions.
-	DependencyFloor *resourcev4.BorrowPool
-	Routes          *rpcv4.ContractRoutes
-	Executor        *ApplicationExecutor
-	Caller          rpcv4.ExecutionPrincipal
-	Access          rpcv4.ExecutionAccess
-	Class           ApplicationWorkClass
+	Routes         *rpcv4.ContractRoutes
+	Executor       *ApplicationExecutor
+	Caller         rpcv4.ExecutionPrincipal
+	Access         rpcv4.ExecutionAccess
+	Class          ApplicationWorkClass
 }
 
 // Dispatch connects volatile history to the real root ApplicationExecutor.
@@ -69,7 +66,7 @@ func (d ExecutionDispatch) DispatchWithOutcome(ctx context.Context, input *rpcv4
 	// root executor in one finite admission. No fallback goroutine or second
 	// worker is created when this gate refuses.
 	err = work.SubmitTask(func(task, backing resourcev4.Reference) (<-chan struct{}, error) {
-		return d.Executor.trySubmitJoined(d.group, d.Class, task, backing, func() {
+		return d.Executor.trySubmitJoined(d.Class, task, backing, func() {
 			failure := error(ErrCompletionCallbackExit)
 			var code uint32
 			var payload []byte

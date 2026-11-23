@@ -4,7 +4,12 @@ import Foundation
 extension Data {
   static func secureRandom(count: Int) throws -> Data {
     guard count >= 0 else {
-      throw V4CryptoFailure.configuration
+      throw FlowersecError(
+        path: .direct,
+        stage: .validate,
+        code: .invalidInput,
+        message: "Secure random byte count must not be negative."
+      )
     }
     guard count > 0 else { return Data() }
     var bytes = Data()

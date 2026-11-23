@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/perfreport"
 )
 
 type performanceState struct {

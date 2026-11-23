@@ -8,10 +8,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // MaintenanceIngressPolicy bounds actual native assembly. Burst frames each
@@ -34,12 +34,10 @@ type MaintenanceIngress struct {
 	reservation                                       resourcev4.Reference
 	policy                                            MaintenanceIngressPolicy
 	storage                                           []byte
-	input                                             connectionInputReader
 	length                                            int
 	ready, active, closed, cleaned, watching, started bool
-	rateRefused                                       bool
 	tokens                                            uint32
-	refill                                            maintenanceRefill
+	refill                                            *timev4.Delay
 	window                                            *timev4.Window
 	cause                                             error
 	wake, stop, done                                  chan struct{}
@@ -49,7 +47,7 @@ func MaintenanceIngressCharge(maxFrame uint32) (resourcev4.Vector, error) {
 	if maxFrame == 0 || maxFrame > protocolv4.MaxPayloadLength {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	bytes := uint64(protocolv4.EnvelopePrefixSize) + uint64(maxFrame) + uint64(unsafe.Sizeof(MaintenanceIngress{})) + uint64(unsafe.Sizeof(timev4.Window{}))
+	bytes := uint64(protocolv4.EnvelopePrefixSize) + uint64(maxFrame) + uint64(unsafe.Sizeof(MaintenanceIngress{})) + uint64(unsafe.Sizeof(timev4.Window{})) + uint64(unsafe.Sizeof(timev4.Delay{}))
 	return resourcev4.Vector{resourcev4.Timers: 1, resourcev4.SDKBytes: bytes, resourcev4.Items: 3, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2}, nil
 }
 
@@ -120,15 +118,37 @@ func (p *MaintenanceIngress) checkLocked() error {
 	return nil
 }
 
+func (p *MaintenanceIngress) consumeLocked() error {
+	if p.refill != nil {
+		if err := p.refill.Check(); err == nil {
+			p.tokens = min(p.tokens+1, p.policy.Burst)
+			p.refill = nil
+		} else if !errors.Is(err, timev4.ErrPending) {
+			return err
+		}
+	}
+	if p.tokens == 0 {
+		return ErrMaintenanceRate
+	}
+	if p.refill == nil {
+		var err error
+		p.refill, err = timev4.NewDelay(p.admission.engine.Clock(), p.policy.RefillMS)
+		if err != nil {
+			return err
+		}
+	}
+	p.tokens--
+	return nil
+}
+
 type maintenanceAssemblyReader struct {
 	owner  *MaintenanceIngress
 	ctx    context.Context
-	reader *connectionInputReader
+	reader io.Reader
 }
 
 func (r maintenanceAssemblyReader) Read(dst []byte) (int, error) {
 	p := r.owner
-	r.reader.failure = nil
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -155,13 +175,11 @@ func (r maintenanceAssemblyReader) Read(dst []byte) (int, error) {
 		p.window, clockErr = timev4.NewWindow(p.admission.engine.Clock(), p.policy.FrameTimeoutMS)
 		if clockErr != nil {
 			err = clockErr
-			r.reader.failure = nil
 		}
 		p.notify()
 	}
 	if e := p.checkLocked(); e != nil {
 		err = e
-		r.reader.failure = nil
 	}
 	p.mu.Unlock()
 	return n, err
@@ -190,11 +208,7 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 	p.active = true
 	ready := p.ready
 	p.mu.Unlock()
-	p.input.reader = reader
-	input := &p.input
-	providerFailure := false
 	defer func() {
-		p.input = connectionInputReader{}
 		p.mu.Lock()
 		if err == nil {
 			err = ctx.Err()
@@ -202,11 +216,9 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 				err = p.checkLocked()
 			}
 		}
-		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) && !errors.Is(err, errMaintenanceDiscarded) {
+		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) {
 			if p.cause == nil {
 				p.cause = err
-			} else {
-				providerFailure = false
 			}
 		}
 		failed := p.cause != nil
@@ -214,10 +226,9 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 			err = p.cause
 		}
 		p.active = false
-		if err == nil || failed || errors.Is(err, errMaintenanceDiscarded) {
+		if err == nil || failed {
 			clear(p.storage)
 			p.ready, p.length, p.window = false, 0, nil
-			p.rateRefused = false
 		}
 		p.cleanupLocked()
 		p.mu.Unlock()
@@ -226,14 +237,13 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 				record.Release()
 				record = nil
 			}
-			p.admission.closeWithSource(err, providerFailure)
+			p.admission.closeWithCause(err)
 		}
 	}()
 	if !ready {
-		assembly := maintenanceAssemblyReader{p, ctx, input}
-		prefix, e := ReadRecordPrefix(assembly, p.admission.engine.MaxFrame())
+		input := maintenanceAssemblyReader{p, ctx, reader}
+		prefix, e := ReadRecordPrefix(input, p.admission.engine.MaxFrame())
 		if e != nil {
-			providerFailure = input.failed(e)
 			return nil, e
 		}
 		// Frame family is checked on the designated maintenance association
@@ -241,28 +251,15 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 		if e := protocolv4.ValidateRecordScope(protocolv4.FrameType(prefix.bytes[4]), 0); e != nil {
 			return nil, e
 		}
-		wire, e := prefix.ReadBody(assembly, p.storage)
-		if e != nil {
-			providerFailure = input.failed(e)
-			return nil, e
+		p.mu.Lock()
+		err = p.consumeLocked()
+		p.mu.Unlock()
+		if err != nil {
+			return nil, err
 		}
-		// Charge this original candidate once, preserving the result across
-		// before-attempt crypto contention. Refusal is acted on only after
-		// full authentication and validation.
-		kind := protocolv4.FrameType(prefix.bytes[4])
-		if kind == protocolv4.FramePing || kind == protocolv4.FramePong {
-			clock := p.admission.engine.Clock()
-			now, clockErr := clock.Monotonic()
-			if clockErr != nil {
-				return nil, clockErr
-			}
-			p.mu.Lock()
-			rateErr := p.refill.consume(now, clock.Profile().Rate, p.policy.RefillMS, p.policy.Burst, &p.tokens)
-			p.rateRefused = errors.Is(rateErr, ErrMaintenanceRate)
-			p.mu.Unlock()
-			if rateErr != nil && !errors.Is(rateErr, ErrMaintenanceRate) {
-				return nil, rateErr
-			}
+		wire, e := prefix.ReadBody(input, p.storage)
+		if e != nil {
+			return nil, e
 		}
 		p.mu.Lock()
 		p.length, p.ready = len(wire), true
@@ -272,36 +269,7 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 			return nil, err
 		}
 	}
-	record, err = p.receiver.receiveMaintenance(ctx, p.storage[:p.length])
-	if err != nil {
-		return nil, err
-	}
-	frame, err := record.Body()
-	if err != nil {
-		record.Release()
-		return nil, err
-	}
-	if frame.Schema == "PING" || frame.Schema == "PONG" {
-		if _, _, err := validateMaintenanceFrame(record, p.admission, frame); err != nil {
-			record.Release()
-			return nil, err
-		}
-		if p.rateRefused {
-			if acceptErr := record.acceptMaintenanceFrame(frame); acceptErr != nil {
-				record.Release()
-				return nil, acceptErr
-			}
-			if frame.Schema == "PONG" {
-				p.admission.invalidateAutomaticSample()
-			}
-			return record, errMaintenanceDiscarded
-		}
-		if err != nil {
-			record.Release()
-			return nil, err
-		}
-	}
-	return record, nil
+	return p.receiver.receiveMaintenance(ctx, p.storage[:p.length])
 }
 
 // Watch is the pre-admitted lifetime task, independent of native Read. A stuck
@@ -382,8 +350,7 @@ func (p *MaintenanceIngress) Close() {
 func (p *MaintenanceIngress) cleanupLocked() {
 	if p.closed && !p.cleaned && !p.active && !p.watching {
 		clear(p.storage)
-		p.storage, p.window = nil, nil
-		p.refill = maintenanceRefill{}
+		p.storage, p.window, p.refill = nil, nil, nil
 		p.cleaned = true
 		close(p.done)
 	}

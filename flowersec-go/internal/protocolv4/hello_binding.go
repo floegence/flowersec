@@ -110,22 +110,18 @@ func HelloBackingBytes(limits HelloLimits) (uint64, error) {
 	if limits.RouteBytes <= 0 || limits.ContextBytes <= 0 || uint64(limits.RouteBytes) > uint64(MaxPayloadLength) || uint64(limits.ContextBytes) > uint64(MaxPayloadLength) {
 		return 0, CBORFailure("configuration_capacity")
 	}
-	client, err := schemaDecoderBackingBytes("ClientHello", limits.HelloBytes, limits.HelloNodes)
+	parsed, err := DecoderBackingBytes(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
-	server, err := schemaDecoderBackingBytes("ServerHello", limits.HelloBytes, limits.HelloNodes)
+	context, err := DecoderBackingBytes(limits.ContextBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
-	context, err := schemaDecoderBackingBytes("TransportContext", limits.ContextBytes, limits.HelloNodes)
-	if err != nil {
-		return 0, err
-	}
-	if client > ^uint64(0)-server || client+server > ^uint64(0)-context {
+	if parsed > (^uint64(0)-context)/2 {
 		return 0, CBORFailure("configuration_capacity")
 	}
-	base := client + server + context
+	base := parsed*2 + context
 	// Detached tenant/audience/profile strings are bounded by the original
 	// Artifact; only that public projection, never its PSK, survives this call.
 	artifactCap, err := SchemaByteLimit("Artifact")
@@ -142,15 +138,15 @@ func NewHelloWorkspace(limits HelloLimits) (*HelloWorkspace, error) {
 	if _, err := HelloBackingBytes(limits); err != nil {
 		return nil, err
 	}
-	client, err := newSchemaDecoder("ClientHello", limits.HelloBytes, limits.HelloNodes)
+	client, err := NewDecoder(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	server, err := newSchemaDecoder("ServerHello", limits.HelloBytes, limits.HelloNodes)
+	server, err := NewDecoder(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	context, err := newSchemaDecoder("TransportContext", limits.ContextBytes, limits.HelloNodes)
+	context, err := NewDecoder(limits.ContextBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}

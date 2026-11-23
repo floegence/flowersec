@@ -1,8 +1,8 @@
 #![no_main]
 
-use flowersec::fuzzing::parse_artifact;
+use flowersec::Artifact;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    parse_artifact(data);
+    let _ = Artifact::parse(data);
 });

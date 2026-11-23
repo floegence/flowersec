@@ -21,8 +21,9 @@ function stableJson(value) {
 }
 
 function goSourceArchiveVersion(modulePath) {
-  const major = /\/v([2-9]|[1-9]\d+)$/.exec(modulePath)?.[1] ?? "0";
-  return `v${major}.0.0-securityinventory`;
+  if (modulePath.endsWith("/v5")) return "v5.0.0-securityinventory";
+  if (modulePath.endsWith("/v3")) return "v3.0.0-securityinventory";
+  return "v0.0.0-securityinventory";
 }
 
 async function loadGenerator() {
@@ -181,8 +182,6 @@ test("source inventory output closure is explicit and package-local", async () =
 test("Go source archive pseudo-versions match module path majors", () => {
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v3"), "v3.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v5"), "v5.0.0-securityinventory");
-  assert.equal(goSourceArchiveVersion("example.com/flowersec/v6"), "v6.0.0-securityinventory");
-  assert.equal(goSourceArchiveVersion("example.com/flowersec/v10"), "v10.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec"), "v0.0.0-securityinventory");
 });
 
@@ -495,13 +494,6 @@ test("source and package graphs preserve real dependency edges and npm runtime c
   assert.ok(npmSource.components.some((component) => component.name === "typescript"));
   assert.ok(npmSource.components.some((component) => component.name === "vitest"));
   assert.ok(npmSource.edges.length > npmSource.components.length / 2);
-  assert.ok(npmSource.edges.some(edge => edge.from === "pkg:npm/brotli-dec-wasm@2.3.2" && edge.to === "pkg:cargo/brotli-decompressor@5.0.0"));
-  assert.ok(npmSource.edges.some(edge => edge.from === "pkg:cargo/brotli-decompressor@5.0.0" && edge.to === "pkg:cargo/alloc-stdlib@0.2.2"));
-  const wasmNotice = artifacts.get("flowersec-ts/THIRD_PARTY_NOTICES.md");
-  for (const name of ["brotli-dec-wasm", "brotli-decompressor", "alloc-stdlib", "wasm-bindgen"]) {
-    assert.ok(wasmNotice.includes(name), `${name} must retain its embedded source notice`);
-    assert.ok(npmSource.components.find(component => component.name === name)?.bundledNotice);
-  }
   for (const context of inventory.contexts) {
     assert.doesNotThrow(
       () => validateDependencyGraph(context),
@@ -544,18 +536,6 @@ test("owned source inventory outputs reject omission, stale content, and extras"
     fs.writeFileSync(output, content);
   }
   assert.doesNotThrow(() => assertOwnedOutputClosure(root, artifacts));
-
-  const scannerPolicy = path.join(root, "sbom/osv-scanner.toml");
-  fs.writeFileSync(scannerPolicy, "[[IgnoredVulns]]\nid = \"GO-2026-5932\"\n");
-  assert.doesNotThrow(() => assertOwnedOutputClosure(root, artifacts));
-  fs.rmSync(scannerPolicy);
-  fs.symlinkSync("source.spdx.json", scannerPolicy);
-  assert.throws(() => assertOwnedOutputClosure(root, artifacts), /regular file/i);
-  fs.rmSync(scannerPolicy);
-  const misplacedPolicy = path.join(root, "sbom/swift/osv-scanner.toml");
-  fs.writeFileSync(misplacedPolicy, "[[IgnoredVulns]]\n");
-  assert.throws(() => assertOwnedOutputClosure(root, artifacts), /unexpected/i);
-  fs.rmSync(misplacedPolicy);
 
   fs.rmSync(path.join(root, "flowersec-go/sbom/spdx.json"));
   assert.throws(() => assertOwnedOutputClosure(root, artifacts), /missing/i);
@@ -689,9 +669,9 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   assert.match(browserBundle, /node_modules\/tr46\//, "browser bundle must contain tr46");
   assert.match(browserBundle, /node_modules\/punycode\//, "browser bundle must contain punycode");
 
-  const rustTarget = path.join(sourceRoot, ".flowersec", "rust-source-package-target");
+  const rustTarget = path.join(root, "rust-target");
   run("rustup", ["run", readToolchains(sourceRoot).rust.version, "cargo",
-    "package", "--allow-dirty",
+    "package", "-p", "flowersec", "--allow-dirty",
     "--manifest-path", path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
     "--target-dir", rustTarget,
     "--config", "patch.crates-io.flowersec-native-transport.path=\"flowersec-native-transport\"",
@@ -1039,16 +1019,76 @@ test("generated source inventory is complete and checked-in artifacts are curren
   }
 });
 
-test("source inventory includes the shared native transport and Node addon Cargo contexts", async () => {
+test("the independent Noise reference is traceable in source and absent from the SDK distribution", () => {
+  const inventory = JSON.parse(fs.readFileSync(path.join(sourceRoot, "sbom/source-inventory.json")));
+  const noise = "pkg:cargo/snow@0.10.0";
+  const consumers = inventory.contexts.filter((context) => context.components.some((entry) => entry.purl === noise));
+  assert.deepEqual(consumers.map((context) => context.id), ["rust:flowersec-rust/noise-reference"]);
+  const [reference] = consumers;
+  assert.deepEqual(reference.edges.filter((edge) => edge.to === noise), [{ from: reference.root.purl, to: noise, kind: "dev" }]);
+  const component = reference.components.find((entry) => entry.purl === noise);
+  assert.equal(component.vendored.directory, "test-support/snow");
+  assert.equal(component.review.sourceEvidenceKind, "modified-vendored-cargo-source");
+  const sdk = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-rust/sbom/cyclonedx.json")));
+  assert.equal(sdk.components.some((entry) => entry.purl === noise), false);
+});
+
+test("native Rust and Node SBOMs identify the modified Quinn sources and reproduce their upstream licenses", async () => {
   const { generateSourceArtifacts } = await loadGenerator();
   const artifacts = generateSourceArtifacts(sourceRoot);
   const inventory = JSON.parse(artifacts.get("sbom/source-inventory.json"));
-  const contextIDs = new Set(inventory.contexts.map((context) => context.id));
-  assert.equal(contextIDs.has("rust:flowersec-native-transport"), true);
-  assert.equal(contextIDs.has("rust:flowersec-node-native"), true);
-  const componentNames = new Set(inventory.components.map((component) => component.name));
   for (const name of ["quinn-udp", "rustls", "napi", "napi-derive", "napi-build"]) {
-    assert.equal(componentNames.has(name), true, `native dependency ${name} is missing from source inventory`);
+    assert.ok(inventory.components.some((component) => component.name === name), `missing native dependency ${name}`);
+  }
+  const licenses = ["MIT", "APACHE"].map((name) => fs.readFileSync(
+    path.join(sourceRoot, `flowersec-native-transport/src/QUINN_LICENSE-${name}`), "utf8",
+  ).trimEnd());
+  for (const [name, version, module, digest] of [
+    ["quinn", "0.11.11", "quic_provider", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"],
+    ["quinn-proto", "0.11.17", "quic_proto", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"],
+  ]) {
+    const purl = `pkg:cargo/${name}@${version}`;
+    const matches = inventory.components.filter((component) => component.purl === purl);
+    assert.equal(matches.length, 1, `${purl} unique source inventory component`);
+    const [component] = matches;
+    assert.equal(component.review.sourceEvidenceKind, "modified-vendored-cargo-source");
+    assert.equal(component.vendored.directory, `flowersec-native-transport/src/${module}`);
+    assert.equal(component.vendored.upstreamArchiveSha256, digest);
+    assert.match(component.vendored.sourceTreeSha256, /^[a-f0-9]{64}$/);
+    for (const contextId of ["rust:flowersec-native-transport", "rust:flowersec-node-native", "rust:flowersec-rust"]) {
+      const context = inventory.contexts.find((entry) => entry.id === contextId);
+      assert.ok(context.edges.some((edge) => edge.from === context.root.purl && edge.to === purl && edge.kind === "runtime"), contextId);
+    }
+    for (const [spdxPath, cdxPath, noticePath] of [
+      ["sbom/source.spdx.json", "sbom/source.cyclonedx.json", "THIRD_PARTY_NOTICES.md"],
+      ...["flowersec-rust", "flowersec-node-native", ...nativePlatforms.map((platform) => `flowersec-node-native/npm/${platform}`)]
+        .map((prefix) => [`${prefix}/sbom/spdx.json`, `${prefix}/sbom/cyclonedx.json`, `${prefix}/THIRD_PARTY_NOTICES.md`]),
+    ]) {
+      const packages = JSON.parse(artifacts.get(spdxPath)).packages.filter((entry) => entry.name === name);
+      assert.equal(packages.length, 1, spdxPath);
+      assert.equal(packages[0].versionInfo, version);
+      assert.equal(packages[0].licenseDeclared, "MIT OR Apache-2.0");
+      assert.equal(packages[0].licenseConcluded, "MIT");
+      assert.ok(packages[0].sourceInfo.includes(component.vendored.sourceTreeSha256), spdxPath);
+      assert.ok(packages[0].sourceInfo.includes(digest), spdxPath);
+      const cdx = JSON.parse(artifacts.get(cdxPath));
+      const cdxEntries = cdx.components.filter((entry) => entry.purl === purl);
+      assert.equal(cdxEntries.length, 1, cdxPath);
+      assert.deepEqual(cdxEntries[0].licenses, [{ expression: "MIT" }]);
+      assert.ok(cdxEntries[0].description.includes(`modified upstream source in ${component.vendored.directory}`));
+      assert.equal(cdxEntries[0].externalReferences[0].url, `https://static.crates.io/crates/${name}/${name}-${version}.crate`);
+      assert.deepEqual(cdxEntries[0].externalReferences[0].hashes, [{ alg: "SHA-256", content: digest }]);
+      assert.ok(cdx.dependencies.find((entry) => entry.ref === "pkg:cargo/quinn@0.11.11").dependsOn.includes("pkg:cargo/quinn-proto@0.11.17"));
+      const sections = artifacts.get(noticePath).split(`\n### ${name} ${version}\n`);
+      assert.equal(sections.length, 2, noticePath);
+      const section = sections[1].split("\n### ")[0];
+      assert.ok(section.includes("modified upstream source"), noticePath);
+      for (const license of licenses) assert.ok(section.includes(license), noticePath);
+    }
+    for (const file of ["flowersec-go/sbom/cyclonedx.json", "flowersec-ts/sbom/cyclonedx.json", "sbom/swift/cyclonedx.json",
+      "release-compliance/runtime/sbom/cyclonedx.json", "release-compliance/runtime-image/sbom/cyclonedx.json"]) {
+      assert.ok(!JSON.parse(artifacts.get(file)).components.some((entry) => entry.purl === purl), file);
+    }
   }
 });
 

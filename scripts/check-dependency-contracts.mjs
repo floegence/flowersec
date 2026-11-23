@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -15,7 +16,21 @@ const ENTRY_KEYS = [
   "scope",
   "upgradeGroup",
 ];
-const ECOSYSTEMS = new Set(["cargo", "gomod", "npm", "swiftpm"]);
+const ECOSYSTEMS = new Set(["cargo", "gomod", "npm", "swiftpm", "vendored-cargo"]);
+const QUINN_SOURCES = new Map([
+  ["quinn", ["quic_provider", "0.11.11", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"]],
+  ["quinn-proto", ["quic_proto", "0.11.17", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"]],
+]);
+const SQLITE_DRIVER = "modernc.org/sqlite";
+const VENDORED_SOURCES = new Map([
+  ...Array.from(QUINN_SOURCES, ([name, [module, version, digest]]) =>
+    [name, [`flowersec-native-transport/src/${module}`, version, digest, "mod.rs"]]),
+  ["snow", ["test-support/snow", "0.10.0", "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82", "src/lib.rs"]],
+]);
+const SQLITE_BOUNDARIES = new Map([
+  ["go-optional-credential-store-v5", "protocol/v5-credential-sqlite-go"],
+  ["go-durable-admission-ledger-v4", "protocol/v4-admission-sqlite-go"],
+]);
 const RETIRED_CAPABILITY_TEST_IDS = [
   "carrier/typescript-raw-quic-direct",
   "carrier/typescript-raw-quic-tunnel",
@@ -30,11 +45,11 @@ const HIGH_IMPACT = {
   cargo: new Set([
     "curve25519-dalek",
     "aes-gcm", "hkdf", "hmac", "idna", "idna_adapter", "idna_mapping", "p256", "quinn",
-    "napi", "napi-build", "napi-derive", "ring", "rustls", "tokio-tungstenite", "unicode-normalization",
+    "napi", "napi-build", "napi-derive", "quinn-proto", "quinn-udp", "ring", "rustls", "tokio-tungstenite", "unicode-normalization",
     "wtransport", "x25519-dalek", "yamux",
   ]),
   gomod: new Set([
-    "modernc.org/sqlite",
+    SQLITE_DRIVER,
     "filippo.io/edwards25519",
     "github.com/gorilla/websocket", "github.com/libp2p/go-yamux/v5", "github.com/quic-go/quic-go",
     "github.com/quic-go/webtransport-go", "golang.org/x/crypto", "golang.org/x/net", "golang.org/x/sys",
@@ -45,6 +60,7 @@ const HIGH_IMPACT = {
     "@floegence/flowersec-node-native", "@noble/ciphers", "@noble/curves", "@noble/hashes", "tr46", "ws",
   ]),
   swiftpm: new Set(["async-http-client", "swift-crypto", "swift-nio", "swift-nio-ssl", "swift-sodium"]),
+  "vendored-cargo": new Set(QUINN_SOURCES.keys()),
 };
 
 function fail(message) {
@@ -96,7 +112,15 @@ function validateContract(contract) {
     assertStringList(entry.requiredCapabilities, `${label}.requiredCapabilities`);
     assertStringList(entry.platforms, `${label}.platforms`);
     assertStringList(entry.conformanceTests, `${label}.conformanceTests`);
-    const identity = `${entry.ecosystem}:${entry.package}`;
+    let identity = `${entry.ecosystem}:${entry.package}`;
+    if (entry.ecosystem === "gomod" && entry.package === SQLITE_DRIVER) {
+      const testID = SQLITE_BOUNDARIES.get(entry.boundary);
+      if (!testID) fail(`${label} has unknown SQLite boundary ${entry.boundary}`);
+      if (!entry.conformanceTests.includes(testID) || [...SQLITE_BOUNDARIES.values()].some((id) => id !== testID && entry.conformanceTests.includes(id))) {
+        fail(`${entry.boundary} must use its own SQLite conformance test ${testID}`);
+      }
+      identity += `:${entry.boundary}`;
+    }
     if (identities.has(identity)) fail(`duplicate dependency contract ${identity}`);
     identities.add(identity);
   }
@@ -135,7 +159,11 @@ function parseCargoDependencies(source) {
     }
     if (!dependencySection || line.length === 0) continue;
     const match = /^([A-Za-z0-9_-]+)\s*=/.exec(line);
-    if (match !== null) dependencies.set(match[1], line.slice(line.indexOf("=") + 1).trim());
+    if (match !== null) {
+      const declaration = line.slice(line.indexOf("=") + 1).trim();
+      const name = /(?:\{|,)\s*package\s*=\s*["']([A-Za-z0-9_-]+)["']/.exec(declaration)?.[1] ?? match[1];
+      dependencies.set(name, declaration);
+    }
   }
   return dependencies;
 }
@@ -183,6 +211,50 @@ function parseCargoLockPackages(source) {
     if (match !== null) packages.add(match[1]);
   }
   return packages;
+}
+
+function vendoredCargo(root) {
+  const result = new Map();
+  const inventoryPath = "sbom/source-inventory.json";
+  const components = fs.existsSync(path.join(root, inventoryPath)) ? readJSON(root, inventoryPath).components : [];
+  for (const component of components) {
+    if (component.ecosystem !== "cargo" || !component.vendored) continue;
+    const expected = VENDORED_SOURCES.get(component.name);
+    if (!expected || result.has(component.name)) fail(`unexpected vendored Cargo component ${component.name}`);
+    const [directory, version, upstreamHash, entryPoint] = expected;
+    const evidence = component.vendored;
+    if (evidence.directory !== directory || component.version !== version || evidence.upstreamArchiveSha256 !== upstreamHash
+      || component.source !== `https://static.crates.io/crates/${component.name}/${component.name}-${version}.crate`
+      || component.review?.decision !== "approved" || component.review.sourceEvidenceKind !== "modified-vendored-cargo-source"
+      || component.review.sourceEvidenceValue !== `${JSON.stringify(evidence, null, 2)}\n`) {
+      fail(`invalid vendored Cargo provenance for ${component.name}`);
+    }
+    const tree = path.join(fs.realpathSync(root), directory);
+    if (fs.realpathSync(tree) !== tree) fail(`vendored Cargo directory cannot be a symlink: ${directory}`);
+    const pending = [""];
+    const files = [];
+    while (pending.length > 0) {
+      const relative = pending.pop();
+      for (const entry of fs.readdirSync(path.join(tree, relative), { withFileTypes: true })) {
+        const file = path.posix.join(relative, entry.name);
+        if (entry.isDirectory()) pending.push(file);
+        else if (entry.isFile()) files.push(file);
+        else fail(`unexpected vendored Cargo source: ${directory}/${file}`);
+      }
+    }
+    const hash = (contents) => createHash("sha256").update(contents).digest("hex");
+    const entries = files.sort().map((file) => [file, hash(fs.readFileSync(path.join(tree, file)))]);
+    if (!files.includes(entryPoint) || hash(`${JSON.stringify(entries, null, 2)}\n`) !== evidence.sourceTreeSha256) {
+      fail(`vendored Cargo source tree differs from reviewed ${component.name} provenance`);
+    }
+    result.set(component.name, version);
+  }
+  for (const [name, [directory]] of VENDORED_SOURCES) {
+    if (!result.has(name) && fs.existsSync(path.join(root, directory))) {
+      fail(`missing vendored Cargo provenance for ${name}`);
+    }
+  }
+  return result;
 }
 
 function parseGoSumSelections(source) {
@@ -243,7 +315,7 @@ function walkFiles(directory, predicate) {
 
 function registeredTestIDs(source) {
   const result = new Set();
-  for (const match of source.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|installedVitestEntry|browserSmokeEntry|browserCompatibilityEntry|privilegedGoTestEntry|throughputEntry|flowersecWeaknetEntry)\(\s*"([^"]+)"/g)) {
+  for (const match of source.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|privilegedGoTestEntry|throughputEntry|flowersecWeaknetEntry)\(\s*"([^"]+)"/g)) {
     result.add(match[1]);
   }
   return result;
@@ -261,8 +333,11 @@ function check(root) {
   const contract = readJSON(root, "stability/dependency_contracts.json");
   validateContract(contract);
 
-  const goSource = read(root, "flowersec-go/go.mod");
-  const cargoSource = read(root, "flowersec-rust/Cargo.toml");
+  const goCore = parseGoDependencies(read(root, "flowersec-go/go.mod"));
+  if (goCore.has(SQLITE_DRIVER)) errors.push(`${SQLITE_DRIVER} must not be required by the Go core module`);
+  const sqliteModule = "flowersec-go/adapters/sqlite";
+  const goSQLite = fs.existsSync(path.join(root, sqliteModule, "go.mod"))
+    ? parseGoDependencies(read(root, `${sqliteModule}/go.mod`)) : new Map();
   const npmManifest = readJSON(root, "flowersec-ts/package.json");
   const npmLock = readJSON(root, "flowersec-ts/package-lock.json");
   const rootSwiftPins = swiftPins(readJSON(root, "Package.resolved"));
@@ -274,21 +349,25 @@ function check(root) {
   const cargoSources = cargoContexts(root);
   const cargoDependencies = new Map();
   for (const context of cargoSources) {
-    for (const [name, version] of parseCargoDependencies(read(root, context.manifest))) {
+    const manifest = read(root, context.manifest);
+    const locked = parseCargoLockPackages(read(root, context.lockfile));
+    if (/\[patch\.crates-io\]/.test(manifest)) errors.push(`local Cargo protocol patch is forbidden in ${context.manifest}`);
+    for (const [name, version] of parseCargoDependencies(manifest)) {
       cargoDependencies.set(name, version);
+      if (!locked.has(name)) errors.push(`cargo dependency ${name} is missing from ${context.lockfile}`);
     }
   }
   const manifests = {
     cargo: cargoDependencies,
-    gomod: parseGoDependencies(goSource),
+    gomod: goCore,
     npm: npmDependencies,
     swiftpm: rootSwiftPins,
+    "vendored-cargo": vendoredCargo(root),
   };
-  const cargoLockPackages = new Set(cargoSources.flatMap((context) => (
-    [...parseCargoLockPackages(read(root, context.lockfile))]
-  )));
   const goSumSelections = parseGoSumSelections(read(root, "flowersec-go/go.sum"));
-  const contracts = new Map(contract.dependencies.map((entry) => [`${entry.ecosystem}:${entry.package}`, entry]));
+  const sqliteSumPath = `${sqliteModule}/go.sum`;
+  const sqliteSumSelections = goSQLite.has(SQLITE_DRIVER) ? parseGoSumSelections(read(root, sqliteSumPath)) : new Set();
+  const contracts = new Set(contract.dependencies.map((entry) => `${entry.ecosystem}:${entry.package}`));
   const localPackages = localNpmPackages(root);
 
   for (const entry of contract.dependencies) {
@@ -296,16 +375,16 @@ function check(root) {
       && entry.package === "@floegence/flowersec-node-native"
       && localPackages.has(entry.package)
       && !npmDependencies.has(entry.package);
-    if (!manifests[entry.ecosystem].has(entry.package) && !stagedNativeOptional) {
+    const optionalSQLite = entry.ecosystem === "gomod" && entry.package === SQLITE_DRIVER;
+    const declarations = optionalSQLite ? goSQLite : manifests[entry.ecosystem];
+    if (!declarations.has(entry.package) && !stagedNativeOptional) {
       errors.push(`${entry.ecosystem} dependency ${entry.package} is not present in its production manifest`);
     }
-    if (entry.ecosystem === "cargo" && !cargoLockPackages.has(entry.package)) {
-      errors.push(`cargo dependency ${entry.package} is missing from flowersec-rust/Cargo.lock`);
-    }
     if (entry.ecosystem === "gomod") {
-      const version = manifests.gomod.get(entry.package);
-      if (version !== undefined && !goSumSelections.has(`${entry.package}@${version}`)) {
-        errors.push(`gomod dependency ${entry.package}@${version} is missing from flowersec-go/go.sum`);
+      const version = declarations.get(entry.package);
+      const sumPath = optionalSQLite ? sqliteSumPath : "flowersec-go/go.sum";
+      if (version !== undefined && !(optionalSQLite ? sqliteSumSelections : goSumSelections).has(`${entry.package}@${version}`)) {
+        errors.push(`gomod dependency ${entry.package}@${version} is missing from ${sumPath}`);
       }
     }
     if (entry.ecosystem === "npm") {
@@ -322,6 +401,12 @@ function check(root) {
           errors.push(`npm dependency ${entry.package} lock version differs from ${local.relative}`);
         }
       }
+    }
+  }
+  if (goSQLite.has(SQLITE_DRIVER) || fs.existsSync(path.join(root, "flowersec-go/internal/v4build/go.work"))) {
+    const boundaries = new Set(contract.dependencies.filter((entry) => entry.ecosystem === "gomod" && entry.package === SQLITE_DRIVER).map((entry) => entry.boundary));
+    for (const boundary of SQLITE_BOUNDARIES.keys()) {
+      if (!boundaries.has(boundary)) errors.push(`${SQLITE_DRIVER} has no dependency contract for ${boundary}`);
     }
   }
   for (const [ecosystem, packages] of Object.entries(manifests)) {
@@ -356,7 +441,6 @@ function check(root) {
     if (members.length < 2) errors.push(`upgrade group ${group} must contain at least two dependencies`);
   }
 
-  if (/\[patch\.crates-io\]/.test(cargoSource)) errors.push("local Cargo protocol patch is forbidden");
   const vendorRoot = path.join(root, "flowersec-rust/vendor");
   if (fs.existsSync(vendorRoot)) {
     const entries = walkFiles(vendorRoot, () => true);
@@ -391,29 +475,13 @@ function check(root) {
     if (examplePin !== undefined && examplePin !== rootPin) errors.push(`Swift shared pin ${identity} differs: ${rootPin} != ${examplePin}`);
   }
 
-  // The schema owns the complete registered native browser tuple. Permit
-  // only its exact generated data declaration; adapters still cannot invent
-  // protocol strings, parsers, or fallback paths outside that registry.
-  const carrierDeclarations = new Map();
-  if (fs.existsSync(path.join(root, "stability/transport_v4_schema.json"))) {
-    const registry = readJSON(root, "stability/transport_v4_schema.json").carrier_provider_registry;
-    if (registry !== undefined) {
-      carrierDeclarations.set("flowersec-ts/src/generated/transportV4Registry.ts", `export const transportV4CarrierProviderRegistry = ${JSON.stringify(registry)} as const;`);
-      carrierDeclarations.set("flowersec-rust/src/protocol_v4_registry_generated.rs", `pub(crate) const CARRIER_PROVIDER_REGISTRY_JSON: &str = ${JSON.stringify(JSON.stringify(registry))};`);
-    }
-  }
   const legacyFiles = [
     ...walkFiles(path.join(root, "flowersec-rust"), (file) => /\.(?:rs|toml|md)$/.test(file)),
     ...walkFiles(path.join(root, "flowersec-ts/src"), (file) => /\.(?:ts|js|mjs)$/.test(file) && !file.endsWith(".test.ts")),
     ...walkFiles(path.join(root, "scripts"), (file) => /\.(?:js|mjs)$/.test(file) && !path.basename(file).startsWith("check-dependency-contracts.")),
   ];
   for (const file of legacyFiles) {
-    let source = fs.readFileSync(file, "utf8");
-    const declaration = carrierDeclarations.get(path.relative(root, file));
-    if (declaration !== undefined) {
-      if (!source.includes(declaration)) errors.push(`generated carrier registry drift in ${path.relative(root, file)}`);
-      source = source.replace(declaration, "");
-    }
+    const source = fs.readFileSync(file, "utf8");
     if (/:protocol\s*(?:=|",|"\s*:\s*)\s*["']?webtransport["']?(?!-h3)|sec-webtransport-http3-draft[^\n]*draft02/i.test(source)) {
       errors.push(`legacy WebTransport wire in ${path.relative(root, file)}`);
     }

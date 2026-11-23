@@ -3,7 +3,7 @@ package flowersec
 import (
 	"context"
 	"errors"
-	"io"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,15 +12,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/defaults"
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v7/internal/framing/jsonframe"
 	"github.com/gorilla/websocket"
 )
 
 const (
 	proxyHTTPStreamKind = "flowersec-proxy/http1"
 	proxyWSStreamKind   = "flowersec-proxy/ws"
-	proxyWireVersion    = 2
+	proxyWireVersion    = 1
 )
 
 var ErrInvalidProxyServer = errors.New("invalid Flowersec proxy server")
@@ -29,19 +29,19 @@ var ErrInvalidProxyServer = errors.New("invalid Flowersec proxy server")
 // application. The upstream is fixed by the application and can never be
 // selected by an untrusted session peer.
 type ProxyServerOptions struct {
-	Credentials          *ProxyCredentialPolicy
-	Upstream             string
-	UpstreamOrigin       string
-	AllowedUpstreamHosts []string
-	// AllowedUpstreamAddresses fixes the numeric addresses or CIDRs for a named
-	// upstream. Numeric upstreams are always pinned to their exact address.
-	AllowedUpstreamAddresses    []string
+	// SessionBoundRequests disables HTTP elapsed/idle deadlines for this host.
+	// Session/request cancellation and all concurrency/byte limits remain active.
+	// The peer cannot enable this policy through request metadata.
+	SessionBoundRequests        bool
+	Upstream                    string
+	UpstreamOrigin              string
+	AllowedUpstreamHosts        []string
 	AllowedOrigins              []string
 	MaxConcurrentStreams        int
 	MaxConcurrentHTTPStreams    int
 	MaxConcurrentEventStreams   int
 	EventStreamIdleTimeout      time.Duration
-	MaxMetadataBytes            int
+	MaxJSONFrameBytes           int
 	MaxChunkBytes               int
 	MaxBodyBytes                int64
 	MaxWebSocketFrameBytes      int
@@ -71,37 +71,29 @@ type ProxyServer struct {
 	closeCtx     context.Context
 	closeCancel  context.CancelFunc
 	active       sync.WaitGroup
-	cookieOwners map[string]*proxyCookieOwner
-	cookieBytes  uint64
-}
-
-type proxyStream interface {
-	io.ReadWriter
-	Reset() error
 }
 
 type proxyServerConfig struct {
-	credentials       *ProxyCredentialPolicy
-	upstream          *url.URL
-	network           *proxyNetworkPolicy
-	upstreamOrigin    string
-	allowedOrigins    map[string]struct{}
-	maxMetadata       int
-	maxChunk          int
-	maxBody           int64
-	maxWSFrame        int
-	defaultTimeout    time.Duration
-	maxTimeout        time.Duration
-	eventIdleTimeout  time.Duration
-	maxHTTP           int
-	maxEvents         int
-	requestHeaders    map[string]struct{}
-	responseHeaders   map[string]struct{}
-	blockedResponses  map[string]struct{}
-	webSocketHeaders  map[string]struct{}
-	forbiddenCookies  map[string]struct{}
-	forbiddenPrefixes []string
-	onError           func(error)
+	sessionBoundRequests bool
+	upstream             *url.URL
+	upstreamOrigin       string
+	allowedOrigins       map[string]struct{}
+	maxJSONFrame         int
+	maxChunk             int
+	maxBody              int64
+	maxWSFrame           int
+	defaultTimeout       time.Duration
+	maxTimeout           time.Duration
+	eventIdleTimeout     time.Duration
+	maxHTTP              int
+	maxEvents            int
+	requestHeaders       map[string]struct{}
+	responseHeaders      map[string]struct{}
+	blockedResponses     map[string]struct{}
+	webSocketHeaders     map[string]struct{}
+	forbiddenCookies     map[string]struct{}
+	forbiddenPrefixes    []string
+	onError              func(error)
 }
 
 // NewProxyServer creates one bounded server-side proxy application.
@@ -110,16 +102,16 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	credentials, err := compileProxyCredentials(options.Credentials)
-	if err != nil {
-		return nil, err
+	transport := &http.Transport{
+		Proxy:               nil,
+		DisableCompression:  true,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		ForceAttemptHTTP2:   false,
+		MaxIdleConnsPerHost: 8,
 	}
-	config.credentials = credentials
-	transport := newProxyHTTPTransport(config)
 	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &ProxyServer{
 		config:       config,
-		cookieOwners: make(map[string]*proxyCookieOwner),
 		permits:      make(chan struct{}, concurrent),
 		httpPermits:  make(chan struct{}, config.maxHTTP),
 		eventPermits: make(chan struct{}, config.maxEvents),
@@ -129,8 +121,39 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 			Transport:     transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		wsDialer: &websocket.Dialer{Proxy: nil, NetDialContext: config.network.dialContext, HandshakeTimeout: 10 * time.Second, EnableCompression: false},
+		wsDialer: &websocket.Dialer{Proxy: nil, HandshakeTimeout: 10 * time.Second, EnableCompression: false},
 	}, nil
+}
+
+// RegisterStreamHandlers installs the HTTP and WebSocket proxy handlers on a
+// carrier-neutral stream registry. A handler registry can contain at most one
+// ProxyServer.
+func (server *ProxyServer) RegisterStreamHandlers(handlers StreamHandlerRegistrar) error {
+	return server.register(handlers)
+}
+
+func (server *ProxyServer) register(handlers StreamHandlerRegistrar) error {
+	if server == nil || server.httpClient == nil || server.wsDialer == nil || handlers == nil {
+		return ErrInvalidProxyServer
+	}
+	server.stateMu.Lock()
+	defer server.stateMu.Unlock()
+	if server.closed {
+		return ErrInvalidProxyServer
+	}
+	err := handlers.registerStreams(map[string]StreamHandler{
+		proxyHTTPStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
+			server.serveHTTP(ctx, incoming)
+			return nil
+		}),
+		proxyWSStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
+			return server.serveWebSocket(ctx, incoming)
+		}),
+	})
+	if err != nil {
+		return fmt.Errorf("%w: handler registration rejected", ErrInvalidProxyServer)
+	}
+	return nil
 }
 
 // Close cancels active upstream operations, waits for their handlers to
@@ -143,58 +166,47 @@ func (server *ProxyServer) Close() error {
 		server.stateMu.Lock()
 		server.closed = true
 		server.closeCancel()
-		owners := make([]*proxyCookieOwner, 0, len(server.cookieOwners))
-		for _, owner := range server.cookieOwners {
-			owners = append(owners, owner)
-		}
 		server.stateMu.Unlock()
-		for _, owner := range owners {
-			_ = owner.clear()
-		}
-		for _, owner := range owners {
-			<-owner.done
-		}
-		if transport, ok := server.httpClient.Transport.(*proxyHTTPTransport); ok {
-			transport.Close()
+		if transport, ok := server.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
 		}
 		server.active.Wait()
 	})
 	return nil
 }
 
-func (server *ProxyServer) runLimited(ctx context.Context, stream proxyStream, handler func(context.Context) error) error {
-	server.stateMu.Lock()
-	if server.closed {
-		server.stateMu.Unlock()
-		if stream != nil {
-			_ = stream.Reset()
-		}
-		server.report(ErrInvalidProxyServer)
-		return nil
-	}
-	server.active.Add(1)
-	server.stateMu.Unlock()
-	defer server.active.Done()
-
-	select {
-	case server.permits <- struct{}{}:
-		defer func() { <-server.permits }()
-		operationCtx, cancel := context.WithCancel(ctx)
-		stopped := make(chan struct{})
-		stop := context.AfterFunc(server.closeCtx, func() { defer close(stopped); cancel() })
-		defer func() {
-			if !stop() {
-				<-stopped
+func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
+	return func(ctx context.Context, incoming IncomingStream) error {
+		server.stateMu.Lock()
+		if server.closed {
+			server.stateMu.Unlock()
+			if incoming.Stream != nil {
+				_ = incoming.Stream.Reset()
 			}
-			cancel()
-		}()
-		return handler(operationCtx)
-	default:
-		if stream != nil {
-			_ = stream.Reset()
+			server.report(ErrInvalidProxyServer)
+			return nil
 		}
-		server.report(ErrInvalidProxyServer)
-		return nil
+		server.active.Add(1)
+		server.stateMu.Unlock()
+		defer server.active.Done()
+
+		select {
+		case server.permits <- struct{}{}:
+			defer func() { <-server.permits }()
+			operationCtx, cancel := context.WithCancel(ctx)
+			stop := context.AfterFunc(server.closeCtx, cancel)
+			defer func() {
+				stop()
+				cancel()
+			}()
+			return handler(operationCtx, incoming)
+		default:
+			if incoming.Stream != nil {
+				_ = incoming.Stream.Reset()
+			}
+			server.report(ErrInvalidProxyServer)
+			return nil
+		}
 	}
 }
 
@@ -217,12 +229,6 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		return fail()
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
-	portText = strconv.Itoa(port)
-	upstream.Host = net.JoinHostPort(host, portText)
-	network, err := compileProxyNetworkPolicy(host, portText, options.AllowedUpstreamAddresses)
-	if err != nil {
-		return fail()
-	}
 	allowedHosts := options.AllowedUpstreamHosts
 	if len(allowedHosts) == 0 {
 		allowedHosts = []string{"127.0.0.1"}
@@ -262,14 +268,14 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if maxHTTP < 1 || maxHTTP > maxConcurrent || maxEvents < 1 || maxEvents > maxHTTP || eventIdleTimeout < 0 {
 		return fail()
 	}
-	maxMetadata := positiveProxyLimit(options.MaxMetadataBytes, protocolv4.ProxyMetadataLimit())
+	maxJSON := positiveProxyLimit(options.MaxJSONFrameBytes, internaljsonframe.DefaultMaxJSONFrameBytes)
 	maxChunk := positiveProxyLimit(options.MaxChunkBytes, defaults.ProxyMaxChunkBytes)
 	maxWS := positiveProxyLimit(options.MaxWebSocketFrameBytes, defaults.ProxyMaxWSFrameBytes)
 	maxBody := options.MaxBodyBytes
 	if maxBody == 0 {
 		maxBody = defaults.ProxyMaxBodyBytes
 	}
-	if maxConcurrent < 1 || maxMetadata < 1 || maxChunk < 1 || maxWS < 1 || maxBody < 1 || options.DefaultHTTPRequestTimeout < 0 || options.MaxHTTPRequestTimeout < 0 {
+	if maxConcurrent < 1 || maxJSON < 1 || maxChunk < 1 || maxWS < 1 || maxBody < 1 || options.DefaultHTTPRequestTimeout < 0 || options.MaxHTTPRequestTimeout < 0 {
 		return fail()
 	}
 	defaultTimeout := options.DefaultHTTPRequestTimeout
@@ -287,14 +293,11 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if err != nil {
 		return fail()
 	}
-	responseHeaders, err := normalizeProxyHeaderSet(options.ExtraResponseHeaders, true)
+	responseHeaders, err := normalizeProxyHeaderSet(options.ExtraResponseHeaders)
 	if err != nil {
 		return fail()
 	}
 	blockedResponses, err := normalizeProxyHeaderSet(options.BlockedResponseHeaders)
-	if _, stripsCoding := blockedResponses["content-encoding"]; stripsCoding {
-		return fail()
-	}
 	if err != nil {
 		return fail()
 	}
@@ -319,8 +322,8 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		forbiddenPrefixes = append(forbiddenPrefixes, prefix)
 	}
 	return proxyServerConfig{
-		upstream: upstream, network: network, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxMetadata: maxMetadata, maxChunk: maxChunk,
-		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout,
+		upstream: upstream, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
+		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout, sessionBoundRequests: options.SessionBoundRequests,
 		maxBody: maxBody, maxWSFrame: maxWS, defaultTimeout: defaultTimeout, maxTimeout: maxTimeout,
 		requestHeaders: requestHeaders, responseHeaders: responseHeaders, blockedResponses: blockedResponses,
 		webSocketHeaders: webSocketHeaders, forbiddenCookies: forbiddenCookies, forbiddenPrefixes: forbiddenPrefixes,
@@ -343,12 +346,4 @@ func positiveProxyLimit(value, fallback int) int {
 		return fallback
 	}
 	return value
-}
-
-func validOrigin(value string) bool {
-	if value == "" {
-		return true
-	}
-	origin, err := url.Parse(value)
-	return err == nil && (origin.Scheme == "https" || origin.Scheme == "http") && origin.Host != "" && origin.User == nil && origin.Hostname() != "" && origin.Path == "" && origin.RawPath == "" && origin.Opaque == "" && origin.RawQuery == "" && !origin.ForceQuery && origin.Fragment == "" && origin.RawFragment == ""
 }

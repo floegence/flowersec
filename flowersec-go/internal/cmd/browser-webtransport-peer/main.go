@@ -13,17 +13,12 @@ import (
 	"os"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest/tunnelworkload"
 )
 
 type endpoint struct {
-	WireRevision             int    `json:"wire_revision"`
-	Profile                  string `json:"profile"`
-	Source                   string `json:"source"`
-	TrustPEM                 string `json:"trust_pem"`
-	Origin                   string `json:"origin"`
 	URL                      string `json:"url"`
 	CertificateHash          string `json:"certificate_hash"`
 	CertificateNotAfterUnixS int64  `json:"certificate_not_after_unix_s,omitempty"`
@@ -31,19 +26,25 @@ type endpoint struct {
 }
 
 func main() {
-	productDirect := flag.Bool("product-direct", false, "serve one production current transport direct WebTransport session")
-	publicCA := flag.Bool("public-ca", false, "use deployment-provided public-CA TLS material")
-	wrongPin := flag.Bool("wrong-pin", false, "issue an independently signed mismatched pin without CA fallback")
-	exchangeDatagram := flag.Bool("datagram", false, "exchange one encrypted current transport datagram")
+	productDirect := flag.Bool("v3-product-direct", false, "serve one production Transport v3 direct WebTransport session")
+	rawTunnel := flag.Bool("raw-quic-tunnel", false, "serve one WebTransport to raw QUIC tunnel")
+	publicCA := flag.Bool("v3-public-ca", false, "use deployment-provided public-CA TLS material")
+	exchangeDatagram := flag.Bool("v3-datagram", false, "exchange one encrypted Transport v3 datagram")
 	origin := flag.String("origin", "", "exact browser Origin")
 	flag.Parse()
-	if !*productDirect || flag.NArg() != 0 {
-		fail(errors.New("usage: browser-webtransport-peer --product-direct --origin <origin> [--public-ca] [--wrong-pin] [--datagram]"))
+	if *rawTunnel && !*productDirect && !*publicCA && !*exchangeDatagram && flag.NArg() == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fail(tunnelworkload.ServeBrowserRawQUICSmoke(ctx, *origin, os.Stdout))
+		return
 	}
-	fail(runProductDirect(*origin, *publicCA, *wrongPin, *exchangeDatagram))
+	if *rawTunnel || !*productDirect || flag.NArg() != 0 {
+		fail(errors.New("usage: browser-webtransport-peer --origin <origin> (--raw-quic-tunnel | --v3-product-direct [--v3-public-ca] [--v3-datagram])"))
+	}
+	fail(runProductDirect(*origin, *publicCA, *exchangeDatagram))
 }
 
-func runProductDirect(origin string, publicCA, wrongPin, exchangeDatagram bool) error {
+func runProductDirect(origin string, publicCA, exchangeDatagram bool) error {
 	if origin == "" {
 		return errors.New("product-direct mode requires an exact browser Origin")
 	}
@@ -78,9 +79,7 @@ func runProductDirect(origin string, publicCA, wrongPin, exchangeDatagram bool) 
 	}
 	defer server.Close()
 	var issued *transporttest.ProductDirectBrowserArtifact
-	if wrongPin {
-		issued, err = server.IssueBrowserWrongPinArtifact()
-	} else if publicCA {
+	if publicCA {
 		issued, err = server.IssueBrowserCAArtifact()
 	} else {
 		issued, err = server.IssueBrowserArtifact()
@@ -93,12 +92,7 @@ func runProductDirect(origin string, publicCA, wrongPin, exchangeDatagram bool) 
 	if err != nil {
 		return err
 	}
-	var original interopharness.Material
-	if err = json.Unmarshal([]byte(issued.ArtifactJSON()), &original); err != nil {
-		return err
-	}
 	if err := json.NewEncoder(os.Stdout).Encode(endpoint{
-		WireRevision: original.WireRevision, Profile: original.Profile, Source: original.Source, TrustPEM: server.TrustPEM(), Origin: origin,
 		URL: server.CandidateURL(), CertificateHash: certificateHash,
 		CertificateNotAfterUnixS: certificateNotAfter, ArtifactJSON: issued.ArtifactJSON(),
 	}); err != nil {
@@ -113,11 +107,10 @@ func runProductDirect(origin string, publicCA, wrongPin, exchangeDatagram bool) 
 			return err
 		}
 	}
-	closeErr := established.Close()
-	return errors.Join(closeErr, established.WaitCleanup(ctx))
+	return established.Close()
 }
 
-func exchangeOneDatagram(ctx context.Context, session *flowersec.Session) error {
+func exchangeOneDatagram(ctx context.Context, session flowersession.Session) error {
 	channel, err := session.UnreliableMessages()
 	if err != nil {
 		return err
@@ -132,12 +125,12 @@ func exchangeOneDatagram(ctx context.Context, session *flowersec.Session) error 
 	status, err := channel.Send(
 		ctx,
 		[]byte("browser-webtransport-datagram-response"),
-		flowersec.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)},
+		flowersession.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)},
 	)
 	if err != nil {
 		return fmt.Errorf("send browser WebTransport datagram response: %w", err)
 	}
-	if status != flowersec.UnreliableAccepted {
+	if status != flowersession.UnreliableAccepted {
 		return fmt.Errorf("send browser WebTransport datagram response status = %s", status)
 	}
 	return nil

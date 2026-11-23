@@ -6,11 +6,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 // EstablishmentLimits fixes all initial map/Hello/workspace capacity before
@@ -34,7 +33,6 @@ type LiveProofVerification struct {
 // authenticated trust/authority and key lifetimes remain shared original owners.
 type EstablishmentMaterial struct {
 	Artifact, Proof, ClientCertificate, ServerCertificate *protocolv4.SignedMap
-	Grant, RelayCertificate                               *protocolv4.SignedMap
 	Activation                                            *protocolv4.ActivationBinding
 	Authority                                             *protocolv4.ActivationAuthority
 	LocalDH                                               cryptov4.StaticDH
@@ -43,7 +41,6 @@ type EstablishmentMaterial struct {
 	Source                                                string
 	Role                                                  protocolv4.Direction
 	Live                                                  LiveProofVerification
-	LiveGrant                                             protocolv4.LiveGrantPreparation
 }
 
 // SessionEstablishment assembles original FSB/FSA, Noise and dual READY. It is
@@ -54,15 +51,13 @@ type SessionEstablishment struct{ *sessionEstablishment }
 type sessionEstablishment struct {
 	mu                                sync.Mutex
 	material                          EstablishmentMaterial
-	hop                               hopAuthentication
-	serverAllow                       tunnelServerPublication
 	hello                             *protocolv4.HelloWorkspace
 	selection                         *protocolv4.PoolSelectionWorkspace
 	expected                          protocolv4.PoolMember
 	session                           protocolv4.ArtifactSessionParameters
-	codecs                            [9]*protocolv4.SignedMapCodec
+	codecs                            [6]*protocolv4.SignedMapCodec
 	fsb, fsa                          *protocolv4.SignedMap
-	mapBytes                          int
+	fsbCopy, fsaCopy                  []byte
 	reservation, shared               resourcev4.Reference
 	admission                         *SessionAdmissionReservation
 	entrance                          *AcceptedEntrance
@@ -72,7 +67,7 @@ type sessionEstablishment struct {
 	started, running, closed, cleaned bool
 }
 
-var establishmentSchemas = [...]string{"Artifact", "ActivationAuthorization", "IdentityCertificate", "IdentityCertificate", "FSB4", "FSA4", "Grant", "IdentityCertificate", "Grant"}
+var establishmentSchemas = [...]string{"Artifact", "ActivationAuthorization", "IdentityCertificate", "IdentityCertificate", "FSB4", "FSA4"}
 
 func EstablishmentCharge(l EstablishmentLimits) (resourcev4.Vector, error) {
 	if l.MapBytes < 1024 || l.MapBytes > 1<<20 || l.MapNodes < 1 || l.MapNodes > 1<<20 || l.RuntimeBytes == 0 {
@@ -82,7 +77,7 @@ func EstablishmentCharge(l EstablishmentLimits) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	charge := resourcev4.Vector{resourcev4.SDKBytes: n + uint64(unsafe.Sizeof(timev4.Window{})) + 1024, resourcev4.Items: 1, resourcev4.WorkSlots: 1, resourcev4.Tasks: 1, resourcev4.Timers: 1}
+	charge := resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 1, resourcev4.WorkSlots: 1}
 	add := func(n uint64) error {
 		var e error
 		charge, e = charge.Add(resourcev4.Vector{resourcev4.SDKBytes: n})
@@ -101,7 +96,7 @@ func EstablishmentCharge(l EstablishmentLimits) (resourcev4.Vector, error) {
 			return resourcev4.Vector{}, err
 		}
 	}
-	for _, cost := range []func() (uint64, error){protocolv4.ActivationAuthorityBackingBytes, protocolv4.ActivationBindingBackingBytes, hopAuthenticationScratchBytes, func() (uint64, error) { return protocolv4.PoolSelectionBackingBytes(l.Hello.RouteBytes, l.MapBytes) }} {
+	for _, cost := range []func() (uint64, error){protocolv4.ActivationAuthorityBackingBytes, protocolv4.ActivationBindingBackingBytes, func() (uint64, error) { return protocolv4.PoolSelectionBackingBytes(l.Hello.RouteBytes, l.MapBytes) }} {
 		extra, err := cost()
 		if err != nil {
 			return resourcev4.Vector{}, err
@@ -132,41 +127,14 @@ func EstablishmentCharge(l EstablishmentLimits) (resourcev4.Vector, error) {
 	if err = add(l.RuntimeBytes); err != nil {
 		return resourcev4.Vector{}, err
 	}
-	grantCredential, err := protocolv4.CredentialBackingBytes("Grant")
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	if err = add(grantCredential); err != nil {
-		return resourcev4.Vector{}, err
-	}
 	return charge, nil
 }
 
 func NewSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits, reservation, environment, materialOwner resourcev4.Reference) (_ *SessionEstablishment, err error) {
-	return newSessionEstablishment(m, limits, reservation, environment, materialOwner, nil)
-}
-
-func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits, reservation, environment, materialOwner resourcev4.Reference, prepared *resourcev4.Reference) (_ *SessionEstablishment, err error) {
 	if m.Role > protocolv4.ServerToClient || m.Source != "live_authority" && m.Source != "preauthorized_pool" || m.Artifact == nil || m.ClientCertificate == nil || m.ServerCertificate == nil || m.LocalDH == nil || m.Signer == nil || len(m.Hello.Policy.Exporter) > 256 || len(m.Hello.IdentityHint) > 256 {
 		return nil, cryptov4.ErrConfiguration
 	}
-	if err = m.Artifact.CheckCandidate(m.Hello.Index); err != nil {
-		return nil, err
-	}
-	candidate := m.Artifact.Field("candidates").Index(int(m.Hello.Index))
-	path, ok := candidate.Named("Candidate", "path_kind").Uint()
-	tunnel, tunnelErr := protocolv4.EnumValue("Candidate", "path_kind", "tunnel")
-	if !ok || tunnelErr != nil {
-		return nil, cryptov4.ErrConfiguration
-	}
 	pendingLive := m.Source == "live_authority" && m.Proof == nil
-	pendingGrant := pendingLive && path == tunnel && m.Grant == nil && m.LiveGrant.Validation.Namespace != nil
-	if pendingLive && path == tunnel && !pendingGrant {
-		return nil, cryptov4.ErrConfiguration
-	}
-	if (path == tunnel) != (m.RelayCertificate != nil && (m.Grant != nil || pendingGrant)) || (path != tunnel && (m.Grant != nil || m.RelayCertificate != nil)) {
-		return nil, cryptov4.ErrConfiguration
-	}
 	if pendingLive {
 		if m.Activation != nil || m.Authority != nil || m.Live.Rules == nil || m.Live.Key == ([32]byte{}) {
 			return nil, cryptov4.ErrConfiguration
@@ -193,17 +161,7 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	if err = materialOwner.CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}
-	var shared resourcev4.Reference
-	if prepared == nil {
-		shared, err = materialOwner.Borrow()
-	} else {
-		if err = prepared.CheckBorrowedFrom(materialOwner); err == nil {
-			shared, err = prepared.TakeBorrow()
-			if err == nil {
-				*prepared = resourcev4.Reference{}
-			}
-		}
-	}
+	shared, err := materialOwner.Borrow()
 	if err != nil {
 		return nil, err
 	}
@@ -217,9 +175,8 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	if err != nil {
 		return nil, err
 	}
-	p := &sessionEstablishment{material: m, mapBytes: limits.MapBytes, reservation: held, shared: shared}
+	p := &sessionEstablishment{material: m, reservation: held, shared: shared}
 	p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate = nil, nil, nil, nil
-	p.material.Grant, p.material.RelayCertificate = nil, nil
 	p.material.Hello.Policy.Exporter, p.material.Hello.IdentityHint = nil, nil
 	p.material.Live.Delegation, p.material.Live.Once = nil, nil
 	result := &SessionEstablishment{p}
@@ -233,33 +190,25 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 		return nil, err
 	}
 	decode := protocolv4.DecodeContext{Selectors: map[string]string{"activation_source_profile": m.Source}}
-	originals := [...]*protocolv4.SignedMap{m.Artifact, m.Proof, m.ClientCertificate, m.ServerCertificate, nil, nil, m.Grant, m.RelayCertificate}
+	originals := [...]*protocolv4.SignedMap{m.Artifact, m.Proof, m.ClientCertificate, m.ServerCertificate}
 	// Clear caller map pointers before the error cleanup can release anything.
 	p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate = nil, nil, nil, nil
-	targets := [...]**protocolv4.SignedMap{&p.material.Artifact, &p.material.Proof, &p.material.ClientCertificate, &p.material.ServerCertificate, &p.fsb, &p.fsa, &p.material.Grant, &p.material.RelayCertificate}
+	targets := [...]**protocolv4.SignedMap{&p.material.Artifact, &p.material.Proof, &p.material.ClientCertificate, &p.material.ServerCertificate}
 	for i, schema := range establishmentSchemas {
-		if i == 6 && m.Grant == nil && !pendingGrant || i == 7 && m.RelayCertificate == nil ||
-			i == 8 && (m.Role != protocolv4.ClientToServer || m.Source != "preauthorized_pool" || m.Grant == nil) {
-			continue
-		}
 		limit, e := protocolv4.SchemaByteLimit(schema)
 		if e != nil {
 			return nil, e
 		}
-		if i == 4 && m.Role == protocolv4.ClientToServer || i == 5 && m.Role == protocolv4.ServerToClient {
-			// The original Initial flight signs once and retains that exact map
-			// through FSA/Noise, under the complete original signing allowance.
-			p.codecs[i], err = protocolv4.NewOnceSigningMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
-		} else {
-			// Pending live proof/grant slots retain full decode capacity until
-			// their first verification, then keep only that immutable fact.
-			p.codecs[i], err = protocolv4.NewImmutableSignedMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
-		}
+		p.codecs[i], err = protocolv4.NewSignedMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
 		if err != nil {
 			return nil, err
 		}
 		if i < len(originals) && originals[i] != nil {
-			*targets[i], err = p.codecs[i].CopyVerified(originals[i], decode)
+			wire, e := originals[i].Bytes()
+			if e != nil {
+				return nil, e
+			}
+			*targets[i], err = p.codecs[i].Verify(wire, originals[i].Key(), decode)
 			if err != nil {
 				return nil, err
 			}
@@ -335,6 +284,7 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	p.material.Hello.Artifact, p.material.Hello.Workspace = p.material.Artifact, p.hello
 	p.material.Hello.Policy.Exporter = bytes.Clone(m.Hello.Policy.Exporter)
 	p.material.Hello.IdentityHint = bytes.Clone(m.Hello.IdentityHint)
+	p.fsbCopy, p.fsaCopy = make([]byte, limits.MapBytes), make([]byte, limits.MapBytes)
 	adopted = true
 	return result, nil
 }
@@ -377,7 +327,7 @@ func (p *SessionEstablishment) attach(a *SessionAdmissionReservation) error {
 	if p.session != a.binding.Session || p.expected != a.binding.Candidate || p.material.Hello.Attempt != a.binding.Attempt {
 		return cryptov4.ErrConfiguration
 	}
-	if err := p.material.Artifact.CheckConnectionGuarantees(a.binding.Candidate.Index, a.binding.Role, a.guarantees); err != nil {
+	if err := p.material.Artifact.CheckDirectConnectionGuarantees(a.binding.Candidate.Index, a.binding.Role, a.guarantees); err != nil {
 		return err
 	}
 	if p.material.Activation != nil {
@@ -389,20 +339,6 @@ func (p *SessionEstablishment) attach(a *SessionAdmissionReservation) error {
 	defer p.mu.Unlock()
 	if p.closed {
 		return cryptov4.ErrClosed
-	}
-	if p.material.Role == protocolv4.ClientToServer {
-		if err := p.material.Artifact.CheckBindingMode(p.expected.Index, p.material.Hello.Policy.BindingMode); err != nil {
-			return err
-		}
-		policy, err := a.prepared.bindHelloPolicy(p.material.Hello.Policy, p.session.ArtifactDigest)
-		if err != nil {
-			return err
-		}
-		clear(p.material.Hello.Policy.Exporter)
-		p.material.Hello.Policy = policy
-	}
-	if err := p.prepareHop(a); err != nil {
-		return err
 	}
 	p.admission, a.establishment = a, p
 	a.establishActive = true
@@ -448,11 +384,11 @@ func (p *SessionEstablishment) guard() error {
 
 // ConnectPool runs the complete original consumer path. It returns only after
 // both READY flights authenticate; no intermediate transport escapes to users.
-func (p *SessionEstablishment) ConnectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, allow ...TunnelServerAllowConfig) (core *SessionCore, err error) {
-	return p.connectPool(a, store, authority, consume, nil, nil, allow...)
+func (p *SessionEstablishment) ConnectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference) (core *SessionCore, err error) {
+	return p.connectPool(a, store, authority, consume, nil)
 }
 
-func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, host *EnvironmentSession, observation *ledgerv4.PoolSpendObservation, allow ...TunnelServerAllowConfig) (core *SessionCore, err error) {
+func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, host *EnvironmentSession) (core *SessionCore, err error) {
 	if a == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -469,52 +405,23 @@ func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store
 	if err = p.authorizeApplication(a); err != nil {
 		return nil, err
 	}
-	if len(allow) > 1 {
-		return nil, cryptov4.ErrConfiguration
-	}
-	var allowConfig TunnelServerAllowConfig
-	if len(allow) == 1 {
-		allowConfig = allow[0]
-	}
-	// The original Connect fixes the publication before TxA-P. Issuer COMMIT,
-	// installation acknowledgement and a runner command grant no dispatch right.
-	// A tunnel cannot spend without its exact server Allow publication owner.
-	publishAllow := p.material.Grant != nil
-	if !publishAllow && allowConfig != (TunnelServerAllowConfig{}) {
-		return nil, cryptov4.ErrConfiguration
-	}
-	if publishAllow {
-		if err = p.prepareTunnelServerAllow(allowConfig); err != nil {
-			return nil, err
-		}
-		defer p.serverAllow.dispatch.Close()
-	}
 	proof, err := p.material.Proof.Bytes()
 	if err != nil {
 		return nil, err
 	}
-	x, err := a.ConsumePoolSQLite(store, authority, p.material.Authority, proof, consume, observation)
+	x, err := a.ConsumePoolSQLite(store, authority, p.material.Authority, proof, consume)
 	if err != nil {
 		return nil, err
-	}
-	if publishAllow {
-		if err = p.publishTunnelServerAllow(a.ctx); err != nil {
-			return nil, err
-		}
 	}
 	return p.connectActivated(a, x)
 }
 
 func (p *SessionEstablishment) connectActivated(a *SessionAdmissionReservation, x *InitialExchange) (*SessionCore, error) {
-	p.recordAdmissionState("not_started")
-	if err := x.authenticateHop(); err != nil {
-		return nil, err
-	}
 	hello, err := x.NegotiateClient(p.material.Hello)
 	if err != nil {
 		return nil, err
 	}
-	p.fsb, _, err = x.sendAdmission(p.material.Activation, p.material.Proof, p.material.ClientCertificate, p.codecs[4], p.material.Signer, p.guard, func() { p.recordAdmissionState("in_flight") })
+	p.fsb, _, err = x.SendAdmission(p.material.Activation, p.material.Proof, p.material.ClientCertificate, p.codecs[4], p.material.Signer, p.guard)
 	if err != nil {
 		return nil, err
 	}
@@ -534,22 +441,7 @@ func (p *SessionEstablishment) connectActivated(a *SessionAdmissionReservation, 
 	if err != nil {
 		return nil, err
 	}
-	p.recordAdmissionState("admitted")
 	return p.authenticate(a, hello)
-}
-
-func (p *SessionEstablishment) recordAdmissionState(state string) {
-	p.mu.Lock()
-	host := p.host
-	p.mu.Unlock()
-	if host == nil {
-		return
-	}
-	host.mu.Lock()
-	if host.admissionState != "admitted" {
-		host.admissionState = state
-	}
-	host.mu.Unlock()
 }
 
 // Accept continues the original entrance after material lookup has consumed
@@ -607,22 +499,6 @@ func (p *SessionEstablishment) accept(ctx context.Context, e *AcceptedEntrance, 
 			return nil, nil, err
 		}
 	}
-	if p.material.RelayCertificate != nil && p.material.Grant == nil {
-		if e.tunnel == nil || e.hop.grant == nil {
-			return nil, nil, cryptov4.ErrConfiguration
-		}
-		grant, err := e.hop.grant.Bytes()
-		if err != nil {
-			return nil, nil, err
-		}
-		closure, err := p.bindLiveGrantClosure(grant)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err = subscriptions.CompleteLiveGrant(closure); err != nil {
-			return nil, nil, err
-		}
-	}
 	config.applicationHost = host
 	a, err = newAcceptedSessionAdmissionReservation(ctx, config, e, AcceptedAdmissionMaterial{Activation: p.material.Activation, Authority: p.material.Authority, FSB: p.fsb, ClientCertificate: p.material.ClientCertificate, Subscriptions: subscriptions, Attempt: p.material.Hello.Attempt}, root, owner, environment, preauth, scope, host)
 	if err != nil {
@@ -656,43 +532,12 @@ func (p *SessionEstablishment) authenticate(a *SessionAdmissionReservation, hell
 	_, end := p.material.Activation.Deadlines()
 	c := a.config
 	keys := cryptov4.AdmissionKeyConfig{Role: p.material.Role, LocalDH: p.material.LocalDH, Signer: p.material.Signer, Deadline: c.Initial.Deadline, Clock: c.Core.Clock, SessionDeadlineMS: end, LocalIdleDurationMS: c.Core.LocalIdleDurationMS, Authorization: a.authorization}
-	config, err := p.admissionHandshakeConfig(material, keys)
+	config, err := cryptov4.AdmissionHandshakeConfig(material, keys, p.fsbCopy, p.fsaCopy)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(config.PSK[:])
-	// Initial compares these original bytes before NewHandshake consumes them.
-	// Keep both copies through the synchronous authentication's actual provider
-	// exit, including cancellation; retained Handshake config holds no aliases.
-	defer clear(config.FSB)
-	defer clear(config.FSA)
 	return a.Authenticate(config)
-}
-
-// The complete two-map allowance stays charged to this establishment. Only the
-// original bound maps' actual bytes need copying for this authentication. A map
-// beyond the declared limit still reaches Material.Read's original refusal,
-// after AdmissionHandshakeConfig has checked the original local key inputs.
-// Success transfers only these scoped copies; the caller clears them after the
-// original authentication returns. Failure erases both allocations here.
-func (p *SessionEstablishment) admissionHandshakeConfig(material *protocolv4.HandshakeMaterial, keys cryptov4.AdmissionKeyConfig) (config cryptov4.HandshakeConfig, err error) {
-	fsb, err := p.fsb.Bytes()
-	if err != nil {
-		return config, err
-	}
-	fsa, err := p.fsa.Bytes()
-	if err != nil {
-		return config, err
-	}
-	fsbCopy := make([]byte, min(len(fsb), p.mapBytes))
-	fsaCopy := make([]byte, min(len(fsa), p.mapBytes))
-	defer func() {
-		if err != nil {
-			clear(fsbCopy)
-			clear(fsaCopy)
-		}
-	}()
-	return cryptov4.AdmissionHandshakeConfig(material, keys, fsbCopy, fsaCopy)
 }
 
 func (p *SessionEstablishment) Close() {
@@ -728,24 +573,20 @@ func (p *SessionEstablishment) cleanup() error {
 	if p.running {
 		return cryptov4.ErrCapacity
 	}
-	for _, m := range []*protocolv4.SignedMap{p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate, p.material.Grant, p.material.RelayCertificate, p.fsb, p.fsa} {
+	for _, m := range []*protocolv4.SignedMap{p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate, p.fsb, p.fsa} {
 		if m != nil {
 			m.Release()
 		}
 	}
-	if p.serverAllow.grant != nil {
-		p.serverAllow.grant.Release()
-	}
+	clear(p.fsbCopy)
+	clear(p.fsaCopy)
 	clear(p.material.Hello.Policy.Exporter)
 	clear(p.material.Hello.IdentityHint)
 	clear(p.material.Live.Delegation)
 	clear(p.material.Live.Once)
-	p.material, p.codecs = EstablishmentMaterial{}, [9]*protocolv4.SignedMapCodec{}
-	p.hop = hopAuthentication{}
-	p.serverAllow = tunnelServerPublication{}
+	p.material, p.codecs = EstablishmentMaterial{}, [6]*protocolv4.SignedMapCodec{}
 	p.fsb, p.fsa, p.hello, p.selection = nil, nil, nil, nil
-	p.mapBytes = 0
-	p.admission, p.entrance = nil, nil
+	p.fsbCopy, p.fsaCopy, p.admission, p.entrance = nil, nil, nil, nil
 	p.host = nil
 	p.reservation.Release()
 	p.shared.Release()

@@ -5,8 +5,6 @@ import (
 	"unsafe"
 )
 
-const protectedBorrowSlots = 5
-
 // ProtectedReservation keeps one already admitted responsibility unavailable
 // to unrelated work between uses. Checkout reuses its original reference slot;
 // it never reserves a new root, account, vector, or reference position. Each use
@@ -17,12 +15,10 @@ type ProtectedReservation struct {
 	root          *Root
 	index, charge uint32
 	generation    uint64
-	borrowIndices [protectedBorrowSlots]uint32
-	borrowCount   int
+	borrowIndex   uint32
+	hasBorrow     bool
 	anchorIndex   uint32
 	hasAnchor     bool
-	scopeCount    uint32
-	scopeFirst    uint32
 }
 
 func ProtectedCharge(minimum Vector) (Vector, error) {
@@ -32,8 +28,8 @@ func ProtectedCharge(minimum Vector) (Vector, error) {
 	return minimum.Add(Vector{SDKBytes: uint64(unsafe.Sizeof(ProtectedReservation{})), Items: 1})
 }
 
-// Up to five already admitted borrows protect the original execution/I/O
-// reference positions as well as their backing. All stay in the root slab.
+// An optional already admitted Borrow protects one actual execution reference
+// as well as the backing. Both positions stay in the original root slab.
 func NewProtectedReservation(ref Reference, minimum Vector, borrows ...Reference) (*ProtectedReservation, error) {
 	return newProtectedReservation(ref, minimum, Reference{}, borrows...)
 }
@@ -54,7 +50,7 @@ func newProtectedReservation(ref Reference, minimum Vector, anchor Reference, bo
 	if err != nil {
 		return nil, err
 	}
-	if ref.root == nil || len(borrows) > protectedBorrowSlots {
+	if ref.root == nil || len(borrows) > 1 {
 		return nil, ErrOwner
 	}
 	r := ref.root
@@ -79,37 +75,27 @@ func newProtectedReservation(ref Reference, minimum Vector, anchor Reference, bo
 			return nil, ErrOwner
 		}
 		a, ac := anchor.slotsLocked()
-		if a == nil || ac != c || a.primary || a.borrowPool != nil || a.owner != s.owner || a.transferID != ([16]byte{}) || !sameProtectedScopes(s, a) || a.generation == math.MaxUint64 {
+		if a == nil || ac != c || a.primary || a.owner != s.owner || a.transferID != ([16]byte{}) || !sameProtectedScopes(s, a) || a.generation == math.MaxUint64 {
 			return nil, ErrOwner
 		}
-		for _, alias := range borrows {
-			if alias == anchor {
-				return nil, ErrOwner
-			}
+		if len(borrows) != 0 && borrows[0] == anchor {
+			return nil, ErrOwner
 		}
 	}
-	// Validate the entire alias set before mutating any generation.
-	for i, alias := range borrows {
+	p := &ProtectedReservation{root: r, index: ref.index, charge: s.charge, generation: c.generation}
+	if len(borrows) != 0 {
+		alias := borrows[0]
 		if alias.root != r {
 			return nil, ErrOwner
 		}
 		b, bc := alias.slotsLocked()
-		if b == nil || bc != c || b.primary || b.borrowPool != nil || b.owner != s.owner || b.transferID != ([16]byte{}) || !sameProtectedScopes(s, b) {
+		if b == nil || bc != c || b.primary || b.owner != s.owner || b.transferID != ([16]byte{}) || !sameProtectedScopes(s, b) {
 			return nil, ErrOwner
 		}
 		if b.generation == math.MaxUint64 {
 			return nil, ErrCapacity
 		}
-		for _, previous := range borrows[:i] {
-			if previous == alias {
-				return nil, ErrOwner
-			}
-		}
-	}
-	p := &ProtectedReservation{root: r, index: ref.index, charge: s.charge, generation: c.generation, borrowCount: len(borrows)}
-	for i, alias := range borrows {
-		b, _ := alias.slotsLocked()
-		p.borrowIndices[i] = alias.index
+		p.borrowIndex, p.hasBorrow = alias.index, true
 		b.generation++
 		b.protectedIdle = true
 	}
@@ -173,13 +159,8 @@ func (p *ProtectedReservation) checkoutReadyLocked() error {
 			return ErrClosed
 		}
 	}
-	if !p.idleLocked(s, c) || s.generation == math.MaxUint64 {
+	if !p.idleLocked(s, c) || s.generation == math.MaxUint64 || p.hasBorrow && r.refs[p.borrowIndex].generation == math.MaxUint64 {
 		return ErrCapacity
-	}
-	for _, index := range p.borrowIndices[:p.borrowCount] {
-		if r.refs[index].generation == math.MaxUint64 {
-			return ErrCapacity
-		}
 	}
 	return nil
 }
@@ -197,51 +178,38 @@ func sameProtectedScopes(a, b *referenceSlot) bool {
 }
 
 func (p *ProtectedReservation) owns(index uint32) bool {
-	if index == p.index || p.hasAnchor && index == p.anchorIndex {
-		return true
-	}
-	for _, borrowed := range p.borrowIndices[:p.borrowCount] {
-		if index == borrowed {
-			return true
-		}
-	}
-	return false
+	return index == p.index || p.hasBorrow && index == p.borrowIndex || p.hasAnchor && index == p.anchorIndex
 }
 
 func (p *ProtectedReservation) idleLocked(s *referenceSlot, c *chargeSlot) bool {
 	if !s.protectedIdle {
 		return false
 	}
-	refs := uint32(1+p.borrowCount) + p.scopeCount
+	refs := uint32(1)
 	if p.hasAnchor {
 		refs++
 	}
-	if c.refs != refs {
-		return false
+	if p.hasBorrow {
+		return c.refs == refs+1 && p.root.refs[p.borrowIndex].protectedIdle
 	}
-	for _, index := range p.borrowIndices[:p.borrowCount] {
-		if !p.root.refs[index].protectedIdle {
-			return false
-		}
-	}
-	return true
+	return c.refs == refs
 }
 
 // Reusing the preadmitted alias does not attach another account reference. A
 // transferred owner with other scopes must obtain its own ordinary reference.
 func (p *ProtectedReservation) borrowLocked(source *referenceSlot) (Reference, bool) {
-	r := p.root
-	for _, index := range p.borrowIndices[:p.borrowCount] {
-		b := &r.refs[index]
-		if !b.protectedIdle || b.generation == math.MaxUint64 || !sameProtectedScopes(source, b) {
-			continue
-		}
-		b.protectedIdle = false
-		r.changeReferenceOwner(index, source.owner)
-		b.generation++
-		return Reference{r, index, b.generation}, true
+	if !p.hasBorrow {
+		return Reference{}, false
 	}
-	return Reference{}, false
+	r := p.root
+	b := &r.refs[p.borrowIndex]
+	if !b.protectedIdle || b.generation == math.MaxUint64 || !sameProtectedScopes(source, b) {
+		return Reference{}, false
+	}
+	b.protectedIdle = false
+	b.owner = source.owner
+	b.generation++
+	return Reference{r, p.borrowIndex, b.generation}, true
 }
 
 func (p *ProtectedReservation) checkoutLocked() (Reference, error) {
@@ -338,7 +306,7 @@ func (p *ProtectedReservation) CleanupComplete() bool {
 // Final close removes it only after the last real use/transfer/borrow exits.
 func (r *Root) finishProtectedLocked(c *chargeSlot) {
 	p := c.protected
-	if p == nil || !c.protectedClosed || p.scopeCount != 0 {
+	if p == nil || !c.protectedClosed {
 		return
 	}
 	s, _ := p.slotsLocked()
@@ -347,10 +315,10 @@ func (r *Root) finishProtectedLocked(c *chargeSlot) {
 	}
 	s.protectedIdle = false
 	c.protected = nil
-	for _, index := range p.borrowIndices[:p.borrowCount] {
-		b := &r.refs[index]
+	if p.hasBorrow {
+		b := &r.refs[p.borrowIndex]
 		b.protectedIdle = false
-		Reference{r, index, b.generation}.releaseLocked()
+		Reference{r, p.borrowIndex, b.generation}.releaseLocked()
 	}
 	Reference{r, p.index, s.generation}.releaseLocked()
 }
@@ -368,9 +336,11 @@ func (r *Root) retireResultProtectionLocked(c *chargeSlot) {
 		return
 	}
 	c.protected = nil
-	indices := [2 + protectedBorrowSlots]uint32{p.index, p.anchorIndex}
-	copy(indices[2:], p.borrowIndices[:p.borrowCount])
-	n := 2 + p.borrowCount
+	indices := [3]uint32{p.index, p.anchorIndex, p.borrowIndex}
+	n := 2
+	if p.hasBorrow {
+		n++
+	}
 	for _, index := range indices[:n] {
 		s := &r.refs[index]
 		if s.protectedIdle {

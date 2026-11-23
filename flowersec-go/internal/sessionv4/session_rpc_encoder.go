@@ -5,9 +5,9 @@ import (
 	"errors"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 var ErrSynchronousEncoderExit = errors.New("sessionv4: synchronous encoder exited abnormally")
@@ -33,8 +33,8 @@ func synchronousUnaryCharge(inputBytes uint32, codec SynchronousUnaryCodec, runt
 // returning the immutable prepared operation. A live ordinary invocation uses
 // its original serial stage and work class. Every other caller must immediately
 // acquire an actual ordinary slot; neither path adds a ready job or goroutine.
-// Preparation opens no channel. Invocation-origin preparation first observes
-// its existing shape-specific path; Start retains the complete admission gate.
+// Preparation opens no channel and has no publisher dependency. Start retains
+// the existing complete request/publication/result admission boundary.
 func (r *RPCServices) PrepareEncodedUnaryResult(ctx context.Context, route rpcv4.ContractRoute, input []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, codec SynchronousUnaryCodec, decode UnaryResultDecoder) (*UnaryOperation, error) {
 	plan, err := r.resultPlan(decode)
 	if err != nil {
@@ -54,34 +54,12 @@ func (r *RPCServices) PrepareEncodedShortUnaryResult(ctx context.Context, route 
 func (o *UnaryOperation) encodeSynchronous(ctx context.Context, executor *ApplicationExecutor, origin *applicationContext, input []byte, codec SynchronousUnaryCodec, backing, task resourcev4.Reference, prepared *rpcv4.PreparedRequest) error {
 	var permit *ApplicationPermit
 	var err error
-	o.services.mu.Lock()
-	plan := o.services.plan
-	o.services.mu.Unlock()
-	if plan == nil {
-		return cryptov4.ErrClosed
-	}
-	plan.mu.Lock()
-	group := plan.applicationGroup
-	plan.mu.Unlock()
-	if group == nil {
-		return cryptov4.ErrClosed
-	}
 	if origin == nil {
-		permit, err = executor.tryAcquireInGroup(group, o.class, task, backing)
+		permit, err = executor.TryAcquire(o.class, task, backing)
 		if err != nil {
 			return err
 		}
 		defer permit.Close()
-	} else {
-		if err := executor.retainSynchronousWork(group); err != nil {
-			return err
-		}
-		defer executor.releaseSynchronousWork(group)
-	}
-	// Retain the target group before repeating the new-work gate, so Drain
-	// either refuses this encoder or observes its real callback responsibility.
-	if o.services.draining.Load() {
-		return ErrSessionDraining
 	}
 	invoke := func() {
 		err = o.runSynchronousEncoder(ctx, executor, origin == nil, input, codec, backing, prepared)

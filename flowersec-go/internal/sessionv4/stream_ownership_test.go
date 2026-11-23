@@ -8,20 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 func ownedFixture(t *testing.T, capacity uint64) (*serviceFixture, *SendQueue, *StreamFlow, OpenHandle, resourcev4.Reference) {
 	t.Helper()
-	return ownedFixtureWithClock(t, capacity, sessionTestClock(t))
-}
-
-func ownedFixtureWithClock(t *testing.T, capacity uint64, clock *timev4.Clock) (*serviceFixture, *SendQueue, *StreamFlow, OpenHandle, resourcev4.Reference) {
-	t.Helper()
-	f := newServiceFixtureResourcesWithClock(t, clock, 1, [3]uint32{1}, capacity, 2, testAuthorization{}, true, []resourcev4.Vector{StreamOwnershipCharge()})
+	f := newServiceFixtureResources(t, 1, [3]uint32{1}, capacity, 2, testAuthorization{}, true, []resourcev4.Vector{StreamOwnershipCharge()})
 	w := &serviceTestWriter{frames: make(chan []byte, 16)}
 	q, peer := f.open(t, BusinessStream, 64, w)
 	h := OpenHandle{f.local.admission, f.flows[0].receive.scope}

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -69,59 +67,41 @@ func newIDNAReference(t testing.TB, reference *cborReference) *idnaReference {
 	if pin.Path != "testdata/unicode15_1/idna_generated.json" {
 		t.Fatal("unexpected IDNA table path")
 	}
-	data, err := loadIDNAReference()
+	raw, err := os.ReadFile(filepath.Join("../../..", pin.Path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data.digest != pin.SHA256 {
+	digest := sha256.Sum256(raw)
+	if hex.EncodeToString(digest[:]) != pin.SHA256 {
 		t.Fatal("IDNA table hash drift")
 	}
-	if data.nfcHash != reference.registry.Unicode.NFCData.SHA256 {
-		t.Fatal("IDNA/NFC version drift")
-	}
-	return &idnaReference{nfc: reference.unicode, tables: data.reference.tables, sources: data.reference.sources}
-}
-
-// The table maps are immutable after loading; each reference keeps its own
-// NFC binding and checks both pinned digests before using the shared tables.
-type idnaReferenceData struct {
-	reference       *idnaReference
-	digest, nfcHash string
-}
-
-var loadIDNAReference = sync.OnceValues(func() (*idnaReferenceData, error) {
-	raw, err := os.ReadFile(filepath.Join("../../..", "testdata/unicode15_1/idna_generated.json"))
-	if err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256(raw)
 	var data map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &data); err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
 	var version, nfcHash string
 	var revision int
-	if json.Unmarshal(data["unicode_version"], &version) != nil || version != "15.1.0" || json.Unmarshal(data["uts46_revision"], &revision) != nil || revision != 31 || json.Unmarshal(data["nfc_data_sha256"], &nfcHash) != nil {
-		return nil, errors.New("IDNA/NFC version drift")
+	if json.Unmarshal(data["unicode_version"], &version) != nil || version != "15.1.0" || json.Unmarshal(data["uts46_revision"], &revision) != nil || revision != 31 || json.Unmarshal(data["nfc_data_sha256"], &nfcHash) != nil || nfcHash != reference.registry.Unicode.NFCData.SHA256 {
+		t.Fatal("IDNA/NFC version drift")
 	}
-	r := &idnaReference{tables: map[string][]idnaProperty{}}
+	r := &idnaReference{nfc: reference.unicode, tables: map[string][]idnaProperty{}}
 	if err := json.Unmarshal(data["sources"], &r.sources); err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
 	for _, name := range []string{"mapping", "classes", "categories", "bidi", "ccc", "joining", "scripts"} {
 		var rows []idnaProperty
 		if err := json.Unmarshal(data[name], &rows); err != nil {
-			return nil, err
+			t.Fatal(err)
 		}
 		for i, row := range rows {
 			if row.first > row.last || (i > 0 && rows[i-1].last >= row.first) {
-				return nil, errors.New("unordered IDNA table")
+				t.Fatal("unordered IDNA table")
 			}
 		}
 		r.tables[name] = rows
 	}
-	return &idnaReferenceData{reference: r, digest: hex.EncodeToString(digest[:]), nfcHash: nfcHash}, nil
-})
+	return r
+}
 
 func (r *idnaReference) lookup(table string, cp rune) idnaProperty {
 	rows := r.tables[table]

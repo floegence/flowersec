@@ -7,10 +7,10 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // SessionStreamConfig fixes the shared transport Stream factory's geometry.
@@ -19,7 +19,6 @@ import (
 // same original Session/tenant accounts before each OPEN outcome is published.
 // The zero value leaves only the lower-level transport assembly enabled.
 type SessionStreamConfig struct {
-	NormalTerminationMS                                 uint64
 	ReceivePoolBytes, ReceiveBytes, InitialReceiveLimit uint64
 	SendBytes, QueueBytes, RuntimeBytes                 uint64
 	WriteWaiters                                        uint32
@@ -34,15 +33,10 @@ const (
 	streamFactoryInvocation
 	streamFactoryAuthorizeTask
 	streamFactoryHandlerTask
-	streamFactoryNativeReceive
 	streamFactoryOwners
 )
 
 type sessionStreamAllocation struct {
-	service     bool
-	floor       *streamServiceFloor
-	callerFloor *streamCallerFloor
-	serviceRefs [3]resourcev4.Reference
 	identity    [16]byte
 	refs        [streamFactoryOwners]resourcev4.Reference
 	reservation StreamReservation
@@ -51,7 +45,7 @@ type sessionStreamAllocation struct {
 }
 
 func sessionStreamCharges(config SessionStreamConfig, profile string, frame, maxData uint64, snapshotBytes int) (charges [streamFactoryOwners]resourcev4.Vector, err error) {
-	if config.NormalTerminationMS > 60000 || config.ReceivePoolBytes == 0 || config.ReceiveBytes == 0 || config.ReceiveBytes > config.ReceivePoolBytes || config.InitialReceiveLimit > config.ReceiveBytes ||
+	if config.ReceivePoolBytes == 0 || config.ReceiveBytes == 0 || config.ReceiveBytes > config.ReceivePoolBytes || config.InitialReceiveLimit > config.ReceiveBytes ||
 		config.SendBytes == 0 || config.SendBytes > maxData || config.QueueBytes == 0 || config.WriteWaiters == 0 || config.Chunk <= 0 || uint64(config.Chunk) > config.SendBytes ||
 		config.RuntimeBytes == 0 || snapshotBytes < 0 || config.MaxPlaintext <= 0 {
 		return charges, cryptov4.ErrConfiguration
@@ -83,11 +77,11 @@ func sessionStreamCharges(config SessionStreamConfig, profile string, frame, max
 // prepareStream pins the original plan through the factory's actual method
 // tail. An exhausted root or account cannot leave a partial allocation behind.
 func (p *SessionCorePlan) prepareStream(ctx context.Context, snapshotBytes int) (*sessionStreamAllocation, *OpenAdmission, error) {
-	return p.prepareStreamInvocation(ctx, snapshotBytes, nil, false)
+	return p.prepareStreamInvocation(ctx, snapshotBytes, nil)
 }
 
-func (p *SessionCorePlan) prepareStreamInvocation(ctx context.Context, snapshotBytes int, dispatcher *sessionStreamDispatcher, service bool, caller ...*streamCallerFloor) (*sessionStreamAllocation, *OpenAdmission, error) {
-	if ctx == nil || len(caller) > 1 || len(caller) != 0 && (dispatcher != nil || service) {
+func (p *SessionCorePlan) prepareStreamInvocation(ctx context.Context, snapshotBytes int, dispatcher *sessionStreamDispatcher) (*sessionStreamAllocation, *OpenAdmission, error) {
+	if ctx == nil {
 		return nil, nil, cryptov4.ErrConfiguration
 	}
 	if err := ctx.Err(); err != nil {
@@ -98,7 +92,7 @@ func (p *SessionCorePlan) prepareStreamInvocation(ctx context.Context, snapshotB
 	if p.closed {
 		return nil, nil, cryptov4.ErrClosed
 	}
-	if p.config.Native && p.nativeStreams == nil || p.receivePool == nil || p.runtime == nil || p.admission == nil || p.writer == nil {
+	if p.config.Native || p.receivePool == nil || p.runtime == nil || p.admission == nil || p.writer == nil {
 		return nil, nil, cryptov4.ErrConfiguration
 	}
 	p.admission.mu.Lock()
@@ -110,22 +104,13 @@ func (p *SessionCorePlan) prepareStreamInvocation(ctx context.Context, snapshotB
 	if err := p.engine.CheckApplicationAuthorization(); err != nil {
 		return nil, nil, err
 	}
-	if len(caller) == 1 && caller[0] != nil {
-		return p.prepareCallerStreamLocked(snapshotBytes, caller[0])
-	}
-	if p.streamMethods-p.streamServices+p.streamCallerProtected-p.streamCallerUsed >= p.config.Open.Opening+p.config.Open.IngressItems || p.streamCalls == math.MaxUint64 {
+	if p.streamMethods == p.config.Open.Opening+p.config.Open.IngressItems || p.streamCalls == math.MaxUint64 {
 		return nil, nil, cryptov4.ErrCapacity
 	}
 	config := p.config.Streams
 	charges, err := sessionStreamCharges(config, p.config.Session.Profile, uint64(p.config.Session.Contract.Limits().MaxFrame), p.config.MaxDataPayloadBytes, snapshotBytes)
 	if err != nil {
 		return nil, nil, err
-	}
-	if p.config.Native {
-		charges[streamFactoryNativeReceive], err = NativeDataAssemblyCharge(math.MaxInt64, 1-p.role, p.config.Session.Profile, p.config.Session.Contract.Limits().MaxFrame)
-		if err != nil {
-			return nil, nil, err
-		}
 	}
 	if dispatcher != nil {
 		charges[streamFactoryInvocation], err = streamHandlerInvocationCharge(dispatcher.config)
@@ -157,77 +142,25 @@ func (p *SessionCorePlan) prepareStreamInvocation(ctx context.Context, snapshotB
 		positions[count] = i
 		count++
 	}
-	var floor *streamServiceFloor
-	var complete [streamServiceOwners]resourcev4.Reference
-	if service {
-		for i := range p.serviceFloors {
-			candidate := &p.serviceFloors[i]
-			if candidate.used {
-				continue
-			}
-			complete, err = candidate.checkout()
-			if err == nil {
-				floor = candidate
-				floor.used = true
-				break
-			}
-		}
-		if floor == nil {
-			return nil, nil, cryptov4.ErrCapacity
-		}
-	} else if err := p.root.ReserveBatch(requests[:count], refs[:count]); err != nil {
+	if err := p.root.ReserveBatch(requests[:count], refs[:count]); err != nil {
 		return nil, nil, err
 	}
-	allocation := &sessionStreamAllocation{floor: floor, identity: requests[0].Owner.Backing}
-	if floor != nil {
-		copy(allocation.refs[:], complete[:streamFactoryOwners])
-		copy(allocation.serviceRefs[:], complete[streamFactoryOwners:streamServiceCallback])
-	} else {
-		for i, ref := range refs[:count] {
-			allocation.refs[positions[i]] = ref
-		}
+	allocation := &sessionStreamAllocation{identity: requests[0].Owner.Backing}
+	for i, ref := range refs[:count] {
+		allocation.refs[positions[i]] = ref
 	}
-	transferred := false
-	defer func() {
-		if !transferred {
-			allocation.releaseReferences()
-			if floor != nil {
-				floor.used = false
-			}
-		}
-	}()
-	if err = p.buildStreamAllocationLocked(allocation, requests[0].Owner, snapshotBytes); err != nil {
-		return nil, nil, err
-	}
-	p.streamMethods++
-	transferred = true
-	return allocation, p.admission, nil
-}
-
-// All stream factory paths materialize the same flow/queue/ownership graph.
-// Caller and delegated-service floors supply original references to this path.
-func (p *SessionCorePlan) buildStreamAllocationLocked(allocation *sessionStreamAllocation, owner resourcev4.OwnerKey, snapshotBytes int) (err error) {
-	config := p.config.Streams
 	allocation.candidate, err = prepareStreamOwnership(allocation.refs[streamFactoryOwnership])
 	if err != nil {
-		return err
+		for _, ref := range refs {
+			ref.Release()
+		}
+		return nil, nil, err
 	}
 	allocation.candidate.allocationRoot = p.root
-	allocation.candidate.allocationOwner = owner
+	allocation.candidate.allocationOwner = requests[0].Owner
 	allocation.candidate.allocationScopes = p.accounts
 	allocation.candidate.allocationCount = p.accountCount
-	allocation.candidate.allocationRuntimeBytes = config.RuntimeBytes
-	if allocation.floor != nil {
-		handlers := p.config.Handlers.Plan
-		allocation.candidate.allocationExecutor, allocation.candidate.allocationGroup = handlers.executor, handlers.group
-		allocation.candidate.allocationExecutionBacking, err = allocation.refs[streamFactoryMetadata].Borrow()
-	} else if allocation.callerFloor != nil {
-		if p.rpc == nil || p.rpc.plan == nil {
-			return cryptov4.ErrConfiguration
-		}
-		allocation.candidate.allocationExecutor, allocation.candidate.allocationGroup = p.rpc.plan.executor, p.rpc.plan.applicationGroup
-		allocation.candidate.allocationExecutionBacking, err = allocation.refs[streamFactoryMetadata].Borrow()
-	} else if application := p.application; application != nil {
+	if application := p.application; application != nil {
 		application.mu.Lock()
 		allocation.candidate.allocationExecutor, allocation.candidate.allocationGroup = application.executor, application.applicationGroup
 		allocation.candidate.allocationExecutionBacking, err = application.reservation.Borrow()
@@ -243,24 +176,21 @@ func (p *SessionCorePlan) buildStreamAllocationLocked(allocation *sessionStreamA
 		allocation.candidate.allocationExecutionBacking, err = p.rpc.plan.reservation.Borrow()
 	}
 	if err != nil {
-		return err
+		allocation.candidate.reservation.Release()
+		for _, ref := range refs {
+			ref.Release()
+		}
+		return nil, nil, err
 	}
 	allocation.queue = SendQueueReservation{Capacity: config.QueueBytes, Waiters: config.WriteWaiters, Chunk: config.Chunk, Reservation: allocation.refs[streamFactoryQueue]}
-	allocation.reservation = StreamReservation{NormalTerminationMS: config.NormalTerminationMS, Pool: p.receivePool, OpenStorage: make([]byte, snapshotBytes),
+	allocation.reservation = StreamReservation{Pool: p.receivePool, OpenStorage: make([]byte, snapshotBytes),
 		SendCapacity: config.SendBytes, SendReservation: allocation.refs[streamFactorySend], ReceiveCapacity: config.ReceiveBytes,
 		Writer: p.input, MaxPlaintext: config.MaxPlaintext, InitialReceiveLimit: config.InitialReceiveLimit, SendQueue: &allocation.queue}
-	allocation.reservation.NativeReceive = allocation.refs[streamFactoryNativeReceive]
-	if allocation.floor != nil {
-		allocation.reservation.ReceiveProtection = allocation.floor.receive
-	}
-	if allocation.callerFloor != nil {
-		allocation.reservation.ReceiveProtection = allocation.callerFloor.receive
-		allocation.reservation.openProtection = allocation.callerFloor.open
-	}
-	return nil
+	p.streamMethods++
+	return allocation, p.admission, nil
 }
 
-func (allocation *sessionStreamAllocation) releaseReferences() {
+func (p *SessionCorePlan) finishStream(allocation *sessionStreamAllocation) {
 	if allocation.candidate != nil {
 		allocation.candidate.allocationExecutionBacking.Release()
 		allocation.candidate.reservation.Release()
@@ -274,31 +204,8 @@ func (allocation *sessionStreamAllocation) releaseReferences() {
 		ref.Release() // Transferred generations stay with the original flow.
 		allocation.refs[i] = resourcev4.Reference{}
 	}
-	for i, ref := range allocation.serviceRefs {
-		ref.Release()
-		allocation.serviceRefs[i] = resourcev4.Reference{}
-	}
-}
-
-func (p *SessionCorePlan) finishStream(allocation *sessionStreamAllocation) {
-	allocation.releaseReferences()
 	p.mu.Lock()
-	if allocation.floor != nil {
-		allocation.floor.used = false
-	}
-	if allocation.callerFloor != nil {
-		floor := allocation.callerFloor
-		floor.used = false
-		p.streamCallerUsed--
-		if floor.closed {
-			p.streamCallerProtected--
-			floor.registered = false
-		}
-	}
 	p.streamMethods--
-	if allocation.service {
-		p.streamServices--
-	}
 	p.notifyLocked()
 	p.mu.Unlock()
 }
@@ -327,7 +234,7 @@ func (c *SessionCore) OpenStream(ctx context.Context, kind string, metadata []by
 		return nil, err
 	}
 	defer p.finishStream(allocation)
-	h, _, err := p.openBusinessStream(ctx, allocation, kind, metadata, deadline)
+	h, _, err := a.OpenLocal(ctx, BusinessStream, kind, metadata, &CarrierAssociation{shared: a.sharedIngress}, allocation.reservation, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -340,34 +247,6 @@ func (c *SessionCore) OpenStream(ctx context.Context, kind string, metadata []by
 		_ = a.Cancel(h)
 	}
 	return owner, err
-}
-
-// Every business shape publishes OPEN on its original carrier association.
-// Native creation is pinned through that publication, then its authenticated
-// scope owns transport cleanup. Message carriers use the shared ingress.
-func (p *SessionCorePlan) openBusinessStream(ctx context.Context, allocation *sessionStreamAllocation, kind string, metadata []byte, deadline *timev4.Deadline) (OpenHandle, RecordWriteResult, error) {
-	a := p.admission
-	association := &CarrierAssociation{shared: a.sharedIngress}
-	if p.nativeStreams != nil {
-		var protection *nativeStreamProtection
-		if allocation.callerFloor != nil {
-			protection = allocation.callerFloor.native
-		}
-		native, err := p.nativeStreams.openProtected(ctx, protection)
-		if err != nil {
-			return OpenHandle{}, RecordWriteResult{}, err
-		}
-		defer p.nativeStreams.finishOpen(native)
-		association = &native.association
-		allocation.reservation.Writer = native.stream
-	}
-	handle, publication, err := a.OpenLocal(ctx, BusinessStream, kind, metadata, association, allocation.reservation, deadline)
-	if allocation.callerFloor != nil && handle.scope != 0 {
-		p.mu.Lock()
-		allocation.callerFloor.openHandle = handle
-		p.mu.Unlock()
-	}
-	return handle, publication, err
 }
 
 // AcceptStream runs after the original immutable handler plan has authorized

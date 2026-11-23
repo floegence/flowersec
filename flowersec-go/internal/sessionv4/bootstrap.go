@@ -6,8 +6,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 // BootstrapReservation supplies the original fixed channel's actual backing
@@ -15,8 +15,7 @@ import (
 // owner's responsibility; a logical writer is bound only to its real result.
 type BootstrapReservation struct {
 	StreamReservation
-	Receiver         *RecordReceiver
-	reusableReceiver bool
+	Receiver *RecordReceiver
 }
 
 type bootstrapWriter struct {
@@ -74,12 +73,6 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 		reservation.InitialReceiveLimit != spec.ReceiveLimit || reservation.SendCapacity == 0 || reservation.ReceiveCapacity < spec.ReceiveLimit || reservation.SendQueue != nil && reservation.SendQueue.Capacity < spec.ReceiveLimit {
 		return nil, cryptov4.ErrConfiguration
 	}
-	header := protocolv4.RecordHeader{Scope: spec.Scope, Epoch: ^uint32(0)}
-	wire, _, err := protocolv4.EncodeOpen(reservation.OpenStorage, header, spec.Opener, spec.Kind, nil, spec.ReceiveLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer clear(wire)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if shared != nil && (a.sharedIngress != shared || shared.admission != a || shared.receiver != reservation.Receiver) {
@@ -92,6 +85,11 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 	if i < 0 {
 		return nil, cryptov4.ErrCapacity
 	}
+	header := protocolv4.RecordHeader{Scope: spec.Scope, Epoch: ^uint32(0)}
+	wire, _, err := protocolv4.EncodeOpen(reservation.OpenStorage, header, spec.Opener, spec.Kind, nil, spec.ReceiveLimit)
+	if err != nil {
+		return nil, err
+	}
 	provider := &bootstrapWriter{}
 	reservation.Writer = provider
 	flow, err := a.newFlow(spec.Scope, spec.ReceiveLimit, InternalStream, reservation.StreamReservation)
@@ -101,11 +99,11 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 	if err = a.engine.BindBootstrapResources(); err != nil {
 		flow.send.Stop()
 		_ = flow.send.retire()
-		_ = flow.releaseUnpublished(true)
+		_ = flow.receive.releaseUnpublished(true)
 		return nil, err
 	}
 	b := &Bootstrap{admission: a, spec: spec, handle: OpenHandle{a, spec.Scope}, reader: reservation.Receiver, provider: provider, prefixMax: len(wire), shared: shared, output: output, carrier: CarrierAssociation{shared: shared}}
-	if shared != nil || reservation.reusableReceiver {
+	if shared != nil {
 		b.reader = nil // The shared ingress retains its sole reader ownership.
 	}
 	clear(wire)
@@ -146,7 +144,7 @@ func (b *Bootstrap) Complete() error {
 	b.creation, b.complete = creation, true
 	s.phase = openLive
 	a.highestAccepted[b.spec.Opener] = max(a.highestAccepted[b.spec.Opener], s.scope)
-	notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
+	notifyOpenWait(a.outcomeWake[a.find(s.scope)])
 	return nil
 }
 
@@ -199,7 +197,7 @@ func (b *Bootstrap) WaitMaterialized(ctx context.Context) error {
 	}
 	s.outcomeWaiting = true
 	s.retirementReferences++
-	wake := a.outcomeWakeLocked(a.find(s.scope))
+	wake := a.outcomeWake[a.find(s.scope)]
 	a.mu.Unlock()
 	defer a.finishOutcomeWait(b.handle)
 	for {
@@ -313,40 +311,20 @@ func (b *Bootstrap) PublishPrefix(ctx context.Context) (result RecordWriteResult
 	flow.send.mu.Unlock()
 	a.mu.Unlock()
 	result, err = flow.send.writer.WriteBuildGuard(ctx, protocolv4.FrameOpenStream, b.prefixMax, func(header protocolv4.RecordHeader, dst []byte) (int, error) {
-		defer func() {
-			flow.send.mu.Lock()
-			flow.send.encoding = false
-			flow.send.mu.Unlock()
-		}()
 		a.mu.Lock()
+		defer a.mu.Unlock()
 		s, err := a.slot(b.handle)
 		if err != nil {
-			a.mu.Unlock()
 			return 0, err
 		}
 		s.header, s.submitted = header, true
 		flow.send.mu.Lock()
+		defer func() { flow.send.encoding = false; flow.send.mu.Unlock() }()
 		if header.Epoch != flow.send.frontier.Epoch || header.Sequence != 0 || flow.send.frontier.NextSequence != 0 || flow.send.frontier.Offset != 0 {
-			flow.send.mu.Unlock()
-			a.mu.Unlock()
 			return 0, ErrStreamData
 		}
 		flow.send.frontier.NextSequence = header.Sequence + 1
-		flow.send.mu.Unlock()
-		a.mu.Unlock()
 		wire, digest, err := protocolv4.EncodeOpen(dst, header, b.spec.Opener, b.spec.Kind, nil, b.spec.ReceiveLimit)
-		if err != nil {
-			return 0, err
-		}
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		s, err = a.slot(b.handle)
-		if err != nil {
-			return 0, err
-		}
-		if a.closed || s.cancelled || s.header != header {
-			return 0, cryptov4.ErrClosed
-		}
 		s.digest = digest
 		return len(wire), err
 	}, nil, sendTicket{flow: flow.send})
@@ -354,7 +332,7 @@ func (b *Bootstrap) PublishPrefix(ctx context.Context) (result RecordWriteResult
 	if s, lookupErr := a.slot(b.handle); lookupErr == nil {
 		s.deciding = false
 		b.materialized = err == nil && result.Complete
-		notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
+		notifyOpenWait(a.outcomeWake[a.find(s.scope)])
 	}
 	flow.send.mu.Lock()
 	flow.send.active = false
@@ -417,6 +395,6 @@ func (b *Bootstrap) BindPeerPrefix(record *ReceivedRecord, carrier *CarrierAssoc
 	flow.lastObserved = flow.observed
 	s.header, s.submitted = f.Header, true
 	b.materialized = true
-	notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
+	notifyOpenWait(a.outcomeWake[a.find(s.scope)])
 	return nil
 }

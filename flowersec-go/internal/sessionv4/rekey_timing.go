@@ -3,10 +3,9 @@ package sessionv4
 import (
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // RekeyPhaseBudgets is admitted with the resource/time profile. The reference
@@ -15,17 +14,14 @@ import (
 type RekeyPhaseBudgets struct{ LocalPrepareMS, ProtocolPrepareMS, ConfirmationMS uint64 }
 
 type rekeyTiming struct {
-	diagnostics         *diagnosticv4.Counters
-	diagnosticOperation *DiagnosticOperation
-	timeoutObserved     bool
-	mu                  sync.Mutex
-	credit              *RekeyCredit
-	budgets             RekeyPhaseBudgets
-	anchor              timev4.Sample
-	local               *timev4.Window
-	phase               *timev4.Deadline
-	stage               uint8
-	wake                chan struct{}
+	mu      sync.Mutex
+	credit  *RekeyCredit
+	budgets RekeyPhaseBudgets
+	anchor  timev4.Sample
+	local   *timev4.Window
+	phase   *timev4.Deadline
+	stage   uint8
+	wake    chan struct{}
 }
 
 func newRekeyTiming(c *RekeyCredit, b RekeyPhaseBudgets) (*rekeyTiming, error) {
@@ -55,8 +51,7 @@ func newRekeyTiming(c *RekeyCredit, b RekeyPhaseBudgets) (*rekeyTiming, error) {
 	return t, nil
 }
 
-func (t *rekeyTiming) check(now timev4.Sample) (err error) {
-	defer func() { t.observeTimeoutLocked(err) }()
+func (t *rekeyTiming) check(now timev4.Sample) error {
 	if now.Incarnation != t.anchor.Incarnation || now.Milliseconds < t.anchor.Milliseconds {
 		return ErrTimeContinuity
 	}
@@ -127,7 +122,6 @@ func (t *rekeyTiming) advance(expected uint8) error {
 		}
 		t.phase = phase
 	}
-	t.observePhaseLocked(now)
 	t.stage++
 	t.anchor = now
 	if t.wake != nil {

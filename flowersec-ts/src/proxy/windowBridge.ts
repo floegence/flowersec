@@ -1,9 +1,8 @@
-import { writeAll, type ProxyStream } from "./stream.js";
-import { StreamAdmission } from "./admission.js";
 import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
+import { writeAll } from "./stream.js";
 import { SDK_DEFAULTS } from "../defaults.js";
-import { SessionError, type OperationOptions } from "../public/contract.js";
+import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 
 import {
   createServiceWorkerControllerGuard,
@@ -28,10 +27,10 @@ type BridgeMessage = Readonly<{
   data?: ArrayBuffer;
 }>;
 
-export class MessagePortByteStream implements ProxyStream {
+export class MessagePortByteStream implements ByteStream {
   readonly kind = "flowersec.proxy.window.v2";
   terminalError: SessionError | undefined;
-  private readonly reads: Uint8Array[] = [];
+  private readonly reads: Array<{ id: number; bytes: Uint8Array }> = [];
   private readonly readWaiters: Array<Readonly<{ resolve(value: Uint8Array | null): void; reject(error: Error): void }>> = [];
   private readonly writeWaiters = new Map<number, Readonly<{
     bytes: number;
@@ -55,13 +54,14 @@ export class MessagePortByteStream implements ProxyStream {
 
   async read(options: OperationOptions = {}): Promise<Uint8Array | null> {
     if (options.signal?.aborted === true) throw new SessionError("canceled");
+    if (this.terminalError !== undefined) throw this.terminalError;
     const queued = this.reads.shift();
     if (queued !== undefined) {
-      this.readBuffered -= queued.byteLength;
-      return queued;
+      this.readBuffered -= queued.bytes.byteLength;
+      this.port.postMessage({ type: "ack", id: queued.id } satisfies BridgeMessage);
+      return queued.bytes;
     }
     if (this.ended) return null;
-    if (this.terminalError !== undefined) throw this.terminalError;
     return await new Promise<Uint8Array | null>((resolve, reject) => {
       const cleanup = () => options.signal?.removeEventListener("abort", onAbort);
       const waiter = {
@@ -89,10 +89,15 @@ export class MessagePortByteStream implements ProxyStream {
       throw new SessionError("resource_exhausted");
     }
     const id = this.nextWrite++;
+    // ByteStream writes may be partial. Bound the bridge message, not the
+    // caller's application frame, and report the acknowledged byte count.
     const copy = data.slice(0, length);
     this.buffered += copy.length;
     await new Promise<void>((resolve, reject) => {
-      const onAbort = () => this.settleWrite(id, new SessionError("canceled"));
+      const onAbort = () => {
+        this.port.postMessage({ type: "reset" } satisfies BridgeMessage);
+        this.fail(new SessionError("canceled"));
+      };
       this.writeWaiters.set(id, {
         bytes: copy.length,
         ...(options.signal === undefined ? {} : { signal: options.signal, onAbort }),
@@ -115,13 +120,6 @@ export class MessagePortByteStream implements ProxyStream {
     this.port.postMessage({ type: "end" } satisfies BridgeMessage);
   }
 
-  async finish(options: OperationOptions = {}): Promise<void> {
-    if (options.signal?.aborted) throw new SessionError("canceled");
-    // Port messages preserve order. The host retains the original Stream's
-    // authenticated drain and cleanup responsibility after this local FIN.
-    await this.closeWrite();
-  }
-
   async reset(): Promise<void> {
     if (this.closed) return;
     this.port.postMessage({ type: "reset" } satisfies BridgeMessage);
@@ -131,7 +129,7 @@ export class MessagePortByteStream implements ProxyStream {
   async close(): Promise<void> {
     if (this.closed) return;
     this.port.postMessage({ type: "close" } satisfies BridgeMessage);
-    this.closeLocal();
+    this.finish();
   }
 
   private handle(value: BridgeMessage | unknown): void {
@@ -142,7 +140,7 @@ export class MessagePortByteStream implements ProxyStream {
         this.fail(new SessionError("operation_failed"));
         return;
       }
-      if (!Number.isSafeInteger(message.id) || !(message.data instanceof ArrayBuffer) || message.data.byteLength > MAX_BRIDGE_CHUNK_BYTES) {
+      if (!Number.isSafeInteger(message.id) || !(message.data instanceof ArrayBuffer) || message.data.byteLength === 0 || message.data.byteLength > MAX_BRIDGE_CHUNK_BYTES) {
         this.fail(new SessionError("operation_failed"));
         return;
       }
@@ -154,12 +152,12 @@ export class MessagePortByteStream implements ProxyStream {
           this.fail(new SessionError("resource_exhausted"));
           return;
         }
-        this.reads.push(chunk);
+        this.reads.push({ id, bytes: chunk });
         this.readBuffered += chunk.byteLength;
       } else {
         waiter.resolve(chunk);
+        this.port.postMessage({ type: "ack", id } satisfies BridgeMessage);
       }
-      this.port.postMessage({ type: "ack", id } satisfies BridgeMessage);
       return;
     }
     if (message.type === "ack" && Number.isSafeInteger(message.id)) {
@@ -173,10 +171,10 @@ export class MessagePortByteStream implements ProxyStream {
       return;
     }
     if (message.type === "reset") this.fail(new SessionError("stream_reset"));
-    else if (message.type === "close") this.closeLocal();
+    else if (message.type === "close") this.finish();
   }
 
-  private closeLocal(): void {
+  private finish(): void {
     if (this.closed) return;
     this.closed = true;
     this.ended = true;
@@ -216,7 +214,7 @@ function bridgeLimits(maxWsFrameBytes?: number, maxWsBufferedAmountBytes?: numbe
     throw new TypeError("invalid proxy window bridge limits");
   }
   return Object.freeze({
-    maxMetadataBytes: SDK_DEFAULTS.proxy.maxMetadataBytes,
+    maxJsonFrameBytes: SDK_DEFAULTS.proxy.maxJsonFrameBytes,
     maxChunkBytes: SDK_DEFAULTS.proxy.maxChunkBytes,
     maxBodyBytes: SDK_DEFAULTS.proxy.maxBodyBytes,
     maxWsFrameBytes: wsFrame,
@@ -270,28 +268,23 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
   };
 
   const lifetime = new AbortController();
-  const admission = new StreamAdmission(limits.maxConcurrentHttpStreams, limits.maxQueuedHttpRequests, limits.maxQueuedHttpBodyBytes);
-  const dispose = () => { disposed = true; lifetime.abort(); admission.close(); };
+  const dispose = () => { disposed = true; lifetime.abort(); };
   const runtime: ProxyRuntime = Object.freeze({
     limits,
     fetch: async (input, init) => {
       if (disposed) throw new SessionError("closed");
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-      const requestSignal = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
-      const permit = await admission.acquire(0, requestSignal, true);
-      try {
-        const prepared = await prepareProxyFetch(input, { ...init, signal: requestSignal }, target.location?.origin, limits.maxBodyBytes, permit);
-        return await fetchProxyPort(dispatchFetch, prepared.request, prepared.signal, limits.maxChunkBytes, permit);
-      } catch (error) { permit(); throw error; }
+      const prepared = await prepareProxyFetch(input, { ...init, signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]) }, target.location?.origin, limits.maxBodyBytes);
+      return fetchProxyPort(dispatchFetch, prepared.request, AbortSignal.any([prepared.signal, lifetime.signal]), limits.maxChunkBytes);
     },
     dispatchFetch,
     openWebSocketStream: async (path, openOptions = {}) => {
       if (disposed) throw new SessionError("closed");
       if (openOptions.signal?.aborted === true) throw new SessionError("canceled");
       const channel = new MessageChannel();
-      const response = new Promise<Readonly<{ stream: ProxyStream; protocol: string }>>((resolve, reject) => {
+      const response = new Promise<Readonly<{ stream: ByteStream; protocol: string }>>((resolve, reject) => {
         let settled = false;
-        const finish = (error?: SessionError, opened?: Readonly<{ stream: ProxyStream; protocol: string }>) => {
+        const finish = (error?: SessionError, opened?: Readonly<{ stream: ByteStream; protocol: string }>) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
@@ -363,17 +356,11 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
   targetWindow?: Window;
   expectedSource?: Window | null;
   capabilityNonce?: string;
-  /** A finite host-owned bound for this attachment, even if lifecycle observation is unavailable. */
-  attachmentLifetimeMS?: number;
-  /** Host-observed navigation or document lifecycle revokes this attachment. */
-  lifecycleSignal?: AbortSignal;
-  /** Notifies the original Surface owner when this attachment expires or is revoked. */
-  onRevoke?: () => void;
 }>;
 
 export type ProxyControllerWindowHandle = Readonly<{ dispose(): void }>;
 
-async function bridgeStreams(runtimeStream: ProxyStream, port: MessagePort, signal?: AbortSignal): Promise<void> {
+async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort, signal?: AbortSignal): Promise<void> {
   const bridge = new MessagePortByteStream(port);
   const controller = new AbortController();
   let resetTask: Promise<unknown> | undefined;
@@ -412,16 +399,12 @@ async function bridgeStreams(runtimeStream: ProxyStream, port: MessagePort, sign
       throw failure.reason;
     }
     try {
-      if (runtimeStream.finish !== undefined) await runtimeStream.finish({ signal: controller.signal });
-      else await runtimeStream.close();
-      await bridge.close();
+      await Promise.all([runtimeStream.close(), bridge.close()]);
     } catch (error) {
       await resetBoth();
       throw error;
     }
   } finally {
-    await resetTask;
-    runtimeStream.dispose?.();
     signal?.removeEventListener("abort", abort);
   }
 }
@@ -433,22 +416,8 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     throw new TypeError("allowedOrigins must contain exact origins");
   }
   const nonce = capability(options.capabilityNonce);
-  const attachmentLifetimeMS = options.attachmentLifetimeMS ?? SDK_DEFAULTS.proxy.defaultTimeoutMs;
-  if (!Number.isSafeInteger(attachmentLifetimeMS) || attachmentLifetimeMS < 1 || attachmentLifetimeMS > SDK_DEFAULTS.proxy.maxTimeoutMs) {
-    throw new TypeError("invalid proxy attachment lifetime");
-  }
   let disposed = false;
-  let lifetimeTimer: ReturnType<typeof setTimeout> | undefined;
-  let lifecycleRevoke: (() => void) | undefined;
   const active = new Set<AbortController>();
-  const dispose = (): void => {
-    if (disposed) return;
-    disposed = true;
-    if (lifetimeTimer !== undefined) clearTimeout(lifetimeTimer);
-    if (lifecycleRevoke !== undefined) options.lifecycleSignal?.removeEventListener("abort", lifecycleRevoke);
-    for (const controller of active) controller.abort(new SessionError("closed"));
-    active.clear();
-  };
   const onMessage = (event: MessageEvent) => {
     if (disposed || !allowed.has(event.origin) || (options.expectedSource !== undefined && event.source !== options.expectedSource)) return;
     if (nonce !== undefined && event.data?.capabilityNonce !== nonce) return;
@@ -493,17 +462,14 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
       })();
     }
   };
-  const revoke = (notifyOwner: boolean): void => {
-    target.removeEventListener("message", onMessage);
-    dispose();
-    if (notifyOwner) options.onRevoke?.();
-  };
   target.addEventListener("message", onMessage);
-  lifetimeTimer = setTimeout(() => revoke(true), attachmentLifetimeMS);
-  lifecycleRevoke = () => revoke(true);
-  options.lifecycleSignal?.addEventListener("abort", lifecycleRevoke, { once: true });
-  if (options.lifecycleSignal?.aborted === true) revoke(true);
-  return Object.freeze({ dispose: () => revoke(false) });
+  return Object.freeze({
+    dispose: () => {
+      disposed = true;
+      target.removeEventListener("message", onMessage);
+      for (const controller of active) controller.abort(new SessionError("closed"));
+    },
+  });
 }
 
 export type ProxyAppServiceWorkerControlOptions = Readonly<{

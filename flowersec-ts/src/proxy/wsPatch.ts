@@ -1,7 +1,7 @@
-import { readU32be, u16be, u32be } from "../utils/bin.js";
-import type { ProxyStream } from "./stream.js";
+import { readU32be, u16be } from "../utils/bin.js";
+import type { ByteStream } from "../public/contract.js";
 
-import { ProxyByteReader, writeAll } from "./stream.js";
+import { ProxyByteReader, writeProxyWebSocketFrame as writeFrame } from "./stream.js";
 import type { ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -17,16 +17,7 @@ function readU16(input: Uint8Array): number {
   return ((input[0]! << 8) | input[1]!) >>> 0;
 }
 
-async function writeFrame(stream: ProxyStream, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
-  if (payload.length > maximum) throw new Error("WebSocket frame exceeds the proxy limit");
-  const header = new Uint8Array(5);
-  header[0] = opcode;
-  header.set(u32be(payload.length), 1);
-  await writeAll(stream, header);
-  await writeAll(stream, payload);
-}
-
-async function readFrame(reader: ProxyByteReader, maximum: number): Promise<Readonly<{ opcode: number; payload: Uint8Array }>> {
+async function readFrame(reader: ProxyByteReader, maximum: number): Promise<Readonly<{ opcode: number; payload: Uint8Array<ArrayBuffer> }>> {
   const header = await reader.readExactly(5);
   const length = readU32be(header, 1);
   if (length > maximum) throw new Error("WebSocket frame exceeds the proxy limit");
@@ -108,7 +99,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
 
     private readonly listeners = new EventListeners();
     private readonly abort = new AbortController();
-    private stream: ProxyStream | undefined;
+    private stream: ByteStream | undefined;
     private writes: Promise<void> = Promise.resolve();
     private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -127,27 +118,33 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       if (this.readyState !== ProxyWebSocket.OPEN || this.stream === undefined) throw new DOMException("WebSocket is not open", "InvalidStateError");
       let opcode: number;
       let bytes: number;
-      let load: () => Promise<Uint8Array>;
+      let source: Uint8Array | Blob;
       if (typeof data === "string") {
-        const encoded = encoder.encode(data);
-        opcode = 1; bytes = encoded.length; load = async () => encoded;
+        if (data.length > maxFrameBytes || this.bufferedAmount + data.length > maxBufferedBytes) { this.fail(); return; }
+        source = encoder.encode(data);
+        opcode = 1; bytes = source.length;
       } else if (typeof Blob !== "undefined" && data instanceof Blob) {
-        opcode = 2; bytes = data.size; load = async () => new Uint8Array(await data.arrayBuffer());
+        opcode = 2; bytes = data.size; source = data;
       } else if (ArrayBuffer.isView(data)) {
         opcode = 2; bytes = data.byteLength;
-        load = async () => new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
+        source = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
       } else {
         const buffer = data as ArrayBufferLike;
         opcode = 2; bytes = buffer.byteLength;
-        load = async () => new Uint8Array(buffer).slice();
+        source = new Uint8Array(buffer);
       }
       if (bytes > maxFrameBytes || this.bufferedAmount + bytes > maxBufferedBytes) {
         this.fail();
         return;
       }
       this.bufferedAmount += bytes;
+      const snapshot = source instanceof Uint8Array && opcode === 2 ? source.slice() : source;
       const stream = this.stream;
-      this.writes = this.writes.then(async () => await writeFrame(stream, opcode, await load(), maxFrameBytes))
+      this.writes = this.writes.then(async () => {
+        this.abort.signal.throwIfAborted();
+        const payload = snapshot instanceof Uint8Array ? snapshot : new Uint8Array(await snapshot.arrayBuffer());
+        await writeFrame(stream, opcode, payload, maxFrameBytes, { signal: this.abort.signal });
+      })
         .catch(() => this.fail())
         .finally(() => { this.bufferedAmount = Math.max(0, this.bufferedAmount - bytes); });
     }
@@ -188,7 +185,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       }
     }
 
-    private async readLoop(stream: ProxyStream): Promise<void> {
+    private async readLoop(stream: ByteStream): Promise<void> {
       const reader = new ProxyByteReader(stream, { signal: this.abort.signal });
       while (this.readyState !== ProxyWebSocket.CLOSED) {
         const frame = await readFrame(reader, maxFrameBytes);
@@ -200,25 +197,19 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           const reason = frame.payload.length > 2 ? decoder.decode(frame.payload.subarray(2)) : "";
           const peerInitiated = this.readyState === ProxyWebSocket.OPEN;
           this.readyState = ProxyWebSocket.CLOSING;
-          this.closeTimer ??= setTimeout(() => this.fail(), closeHandshakeTimeoutMs);
+          if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
           if (peerInitiated) {
             this.writes = this.writes.then(async () => await writeFrame(stream, 8, frame.payload, maxFrameBytes));
           }
           await this.writes;
-          if (stream.finish !== undefined) {
-            await stream.closeWrite({ signal: this.abort.signal });
-            await stream.finish({ signal: this.abort.signal });
-            if (reader.bufferedBytes !== 0 || await stream.read({ signal: this.abort.signal }) !== null) throw new Error("WebSocket close has trailing data");
-            stream.dispose?.();
-          }
-          this.completeClose(code, reason, stream.finish !== undefined);
+          this.completeClose(code, reason);
           return;
         } else if (frame.opcode === 1) {
           this.emit("message", new MessageEvent("message", { data: decoder.decode(frame.payload) }));
         } else if (frame.opcode === 2) {
           const data = this.binaryType === "arraybuffer"
-            ? frame.payload.slice().buffer
-            : new Blob([frame.payload.slice()]);
+            ? frame.payload.buffer
+            : new Blob([frame.payload]);
           this.emit("message", new MessageEvent("message", { data }));
         }
       }
@@ -240,10 +231,10 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
-      void stream?.reset().catch(() => undefined).finally(() => stream?.dispose?.());
+      void stream?.reset().catch(() => undefined);
     }
 
-    private completeClose(code: number, reason: string, drained = false): void {
+    private completeClose(code: number, reason: string): void {
       if (this.readyState === ProxyWebSocket.CLOSED) return;
       if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
       this.readyState = ProxyWebSocket.CLOSED;
@@ -252,7 +243,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
-      if (!drained) void stream?.close().catch(() => stream.reset().catch(() => undefined)).finally(() => stream?.dispose?.());
+      void stream?.close().catch(() => stream.reset().catch(() => undefined));
     }
   }
 

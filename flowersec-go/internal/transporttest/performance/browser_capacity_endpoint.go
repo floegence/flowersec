@@ -23,11 +23,10 @@ import (
 	"syscall"
 	"time"
 
-	fs "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transporttest/tunnelworkload"
 )
 
 type browserCapacityEndpointConfig struct {
@@ -41,9 +40,6 @@ type browserCapacityEndpointConfig struct {
 	ServerAddress     string
 	OutputDirectory   string
 	OperationDeadline time.Duration
-	// The original host checks actual origin/UA and supplies its installed native,
-	// application and resource declarations before any capacity publication.
-	RunnerInstallation func(context.Context, interopharness.BrowserRuntimeObservation, browserCapacityArtifact) (map[string]any, error)
 }
 
 const browserDirectWebTransportTopology tunnelworkload.BrowserTopology = "browser_webtransport"
@@ -113,7 +109,7 @@ type browserCapacityEndpoint struct {
 	resourceMu      sync.Mutex
 	resourceSamples []browserCapacityProducerResourceSample
 	streamMu        sync.Mutex
-	heldStreams     map[string][]fs.Stream
+	heldStreams     map[string][]flowersession.ByteStream
 
 	quiesceOnce sync.Once
 	quiesceDone chan struct{}
@@ -128,17 +124,6 @@ type directBrowserCapacityArtifact struct {
 }
 
 func (*directBrowserCapacityArtifact) Start(context.Context) error { return nil }
-func (a *directBrowserCapacityArtifact) AwaitServer(ctx context.Context) (browserServerSession, error) {
-	return a.ProductDirectBrowserArtifact.AwaitServer(ctx)
-}
-
-type tunnelBrowserCapacityArtifact struct {
-	*tunnelworkload.BrowserArtifact
-}
-
-func (a *tunnelBrowserCapacityArtifact) AwaitServer(ctx context.Context) (browserServerSession, error) {
-	return a.BrowserArtifact.AwaitServer(ctx)
-}
 
 // openProductionBrowserCapacityEndpoint creates the production Chromium and Go
 // production legs inside the same Linux network namespaces used by browser
@@ -193,7 +178,6 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 	var issue func() (browserCapacityArtifact, error)
 	var certificate func() (string, error)
 	var cleanupOwner func(context.Context) error
-	var bindOriginalRuntime func(string) error
 	if err := linuxnetlab.InNamespace(config.ServerNamespace, func() error {
 		if config.Topology == browserDirectWebTransportTopology {
 			owner, openErr := transporttest.OpenProductDirectBrowserStreamCapacityEndpointAt(context.Background(), config.ServerAddress, allowedOrigin)
@@ -208,7 +192,6 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 				return &directBrowserCapacityArtifact{ProductDirectBrowserArtifact: artifact}, nil
 			}
 			certificate = owner.CertificateHashBase64URL
-			bindOriginalRuntime = owner.BindOriginalBrowserRuntimeOrigin
 			cleanupOwner = func(context.Context) error { return owner.Close() }
 			return nil
 		}
@@ -222,18 +205,8 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 		if openErr != nil {
 			return openErr
 		}
-		if err := owner.SetNetworkNamespaces(config.ServerNamespace, config.ClientNamespace); err != nil {
-			return errors.Join(err, owner.Close(context.Background()))
-		}
-		issue = func() (browserCapacityArtifact, error) {
-			original, err := owner.IssueBrowserArtifact()
-			if err != nil {
-				return nil, err
-			}
-			return &tunnelBrowserCapacityArtifact{original}, nil
-		}
+		issue = func() (browserCapacityArtifact, error) { return owner.IssueBrowserArtifact() }
 		certificate = owner.CertificateHashBase64URL
-		bindOriginalRuntime = owner.BindOriginalBrowserRuntimeOrigin
 		cleanupOwner = owner.Close
 		return nil
 	}); err != nil {
@@ -254,22 +227,14 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 	closeHTTP := func() error { return closeBrowserArtifactHTTPServer(server, listener) }
 	control, wait, output, err := startBrowserCapacityControl(ctx, config, eventSinkURL, certificateHash)
 	if err != nil {
-		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return nil, errors.Join(err, closeHTTP(), broker.cancelAll(cleanup), cleanupOwner(cleanup))
-	}
-	originalControl, ok := control.(*remoteBrowserCapacityControl)
-	if !ok || bindOriginalRuntime == nil {
-		return nil, errors.Join(errors.New("browser capacity requires its original runtime origin binding"), control.Shutdown(ctx), wait(ctx), closeHTTP(), cleanupOwner(ctx))
-	}
-	if err = bindOriginalRuntime(originalControl.runtimeObservation.Origin); err != nil {
-		return nil, errors.Join(err, control.Shutdown(ctx), wait(ctx), closeHTTP(), cleanupOwner(ctx))
+		broker.cancelAll()
+		return nil, errors.Join(err, closeHTTP(), cleanupOwner(context.Background()))
 	}
 	return &browserCapacityEndpoint{
 		broker: broker, control: control, closeOwner: cleanupOwner, closeHTTP: closeHTTP, wait: wait,
 		output: output, topology: config.Topology, profileID: config.ProfileID, sessions: config.Sessions, streamsPerSession: config.StreamsPerSession,
 		contract: contract, resourcePreflight: resourcePreflight,
-		resourceOutput: filepath.Join(config.OutputDirectory, "producer-resource.json"), heldStreams: make(map[string][]fs.Stream),
+		resourceOutput: filepath.Join(config.OutputDirectory, "producer-resource.json"), heldStreams: make(map[string][]flowersession.ByteStream),
 		quiesceDone: make(chan struct{}), closeDone: make(chan struct{}),
 	}, nil
 }
@@ -320,7 +285,7 @@ func (endpoint *browserCapacityEndpoint) OpenStreamCapacity(ctx context.Context,
 	sort.Slice(records, func(left, right int) bool { return records[left].id < records[right].id })
 	type streamResult struct {
 		record *browserCapacityRecord
-		stream fs.Stream
+		stream flowersession.ByteStream
 		err    error
 	}
 	type streamProgress struct {
@@ -353,8 +318,8 @@ func (endpoint *browserCapacityEndpoint) OpenStreamCapacity(ctx context.Context,
 					return
 				}
 				progress.accepted.Add(1)
-				if incoming.Kind != "capacity-bidi" || !capacityMetadataIndex(incoming.Metadata.Values()["session_index"], sessionIndex) ||
-					!claimCapacityMetadataIndex(seenStreamIndexes, incoming.Metadata.Values()["stream_index"]) {
+				if incoming.Kind != "capacity-bidi" || !capacityMetadataIndex(incoming.Metadata["session_index"], sessionIndex) ||
+					!claimCapacityMetadataIndex(seenStreamIndexes, incoming.Metadata["stream_index"]) {
 					ready <- streamResult{err: errors.New("browser stream capacity metadata mismatch")}
 					return
 				}
@@ -466,59 +431,38 @@ func capacityMetadataIndex(value any, want int) bool {
 	}
 }
 
-func (endpoint *browserCapacityEndpoint) Connect(ctx context.Context) (result capacitySession, resultErr error) {
-	if endpoint == nil || endpoint.broker == nil || endpoint.control == nil || ctx == nil {
-		return nil, errors.New("browser capacity endpoint and context are required")
+func (endpoint *browserCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
+	if endpoint == nil || endpoint.broker == nil || endpoint.control == nil {
+		return nil, errors.New("browser capacity endpoint is not initialized")
 	}
-	record, err := endpoint.broker.issueConnectionRecord(ctx)
+	record, err := endpoint.broker.issueRecord()
 	if err != nil {
 		return nil, err
 	}
-	// Admission cleanup runs before publishing callback completion to Quiesce.
-	defer close(record.connectDone)
-	defer func() {
-		if resultErr != nil {
-			record.cancelConnect()
-			record.artifact.Cancel()
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			closeErr := endpoint.control.CloseSession(cleanup, record)
-			record.mu.Lock()
-			session := record.session
-			record.mu.Unlock()
-			if session != nil {
-				closeErr = errors.Join(closeErr, normalizeBrowserCapacitySessionClose(session.Close()), session.WaitCleanup(cleanup))
-			}
-			if closeErr == nil {
-				record.markTerminated()
-				endpoint.broker.remove(record)
-			}
-			resultErr = errors.Join(resultErr, closeErr)
-		}
-	}()
-	if err = endpoint.control.Connect(record.connectContext, record); err != nil {
+	if err := endpoint.control.Connect(ctx, record); err != nil {
+		record.artifact.Cancel()
+		endpoint.broker.remove(record)
 		return nil, err
 	}
-	session, err := record.artifact.AwaitServer(record.connectContext)
+	session, err := record.artifact.AwaitServer(ctx)
 	if err != nil {
-		return nil, err
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		closeErr := endpoint.control.CloseSession(cleanupCtx, record)
+		cancel()
+		endpoint.broker.remove(record)
+		return nil, errors.Join(err, closeErr)
 	}
 	record.mu.Lock()
-	record.session = session
 	if !record.spent {
 		record.mu.Unlock()
+		_ = session.Close()
+		endpoint.broker.remove(record)
 		return nil, errors.New("Chromium connected without committing the one-shot artifact")
 	}
-	if err = context.Cause(record.connectContext); err != nil {
-		record.mu.Unlock()
-		return nil, err
-	}
-	monitorDone := make(chan struct{})
-	record.monitorDone = monitorDone
+	record.session = session
 	record.mu.Unlock()
 	go func() {
-		defer close(monitorDone)
-		_ = session.WaitTermination(context.Background())
+		<-session.Termination()
 		record.markTerminated()
 	}()
 	return &browserCapacitySession{endpoint: endpoint, record: record, done: make(chan struct{})}, nil
@@ -552,8 +496,9 @@ func (endpoint *browserCapacityEndpoint) Quiesce(ctx context.Context) error {
 		defer close(endpoint.quiesceDone)
 		if residual := endpoint.broker.residual(); residual != 0 {
 			endpoint.quiesceErr = fmt.Errorf("browser capacity endpoint has %d residual sessions", residual)
+			endpoint.broker.cancelAll()
 		}
-		endpoint.quiesceErr = errors.Join(endpoint.quiesceErr, endpoint.closeHTTP(), endpoint.broker.cancelAll(ctx), endpoint.control.Quiesce(ctx), endpoint.closeOwner(ctx))
+		endpoint.quiesceErr = errors.Join(endpoint.quiesceErr, endpoint.control.Quiesce(ctx), endpoint.closeHTTP(), endpoint.closeOwner(ctx))
 	})
 	select {
 	case <-endpoint.quiesceDone:
@@ -811,14 +756,14 @@ func (session *browserCapacitySession) ProbeLiveness(ctx context.Context) error 
 	if serverSession == nil {
 		return errors.New("browser capacity server session is unavailable")
 	}
-	_, err := serverSession.ProbeLiveness(ctx, 5000)
+	_, err := serverSession.ProbeLiveness(ctx)
 	return err
 }
 func (session *browserCapacitySession) Close(ctx context.Context) error {
 	session.once.Do(func() {
 		defer close(session.done)
 		session.endpoint.streamMu.Lock()
-		heldStreams := append([]fs.Stream(nil), session.endpoint.heldStreams[session.record.id]...)
+		heldStreams := append([]flowersession.ByteStream(nil), session.endpoint.heldStreams[session.record.id]...)
 		delete(session.endpoint.heldStreams, session.record.id)
 		session.endpoint.streamMu.Unlock()
 		var streamErr error
@@ -828,23 +773,12 @@ func (session *browserCapacitySession) Close(ctx context.Context) error {
 		controllerErr := session.endpoint.control.CloseSession(ctx, session.record)
 		session.record.mu.Lock()
 		serverSession := session.record.session
-		monitorDone := session.record.monitorDone
 		session.record.mu.Unlock()
 		var serverErr error
 		if serverSession != nil {
 			serverErr = closeBrowserCapacityServerSession(ctx, serverSession)
 		}
-		if serverErr == nil && monitorDone != nil {
-			select {
-			case <-monitorDone:
-			case <-ctx.Done():
-				serverErr = context.Cause(ctx)
-			}
-		}
 		if controllerErr == nil && streamErr == nil && serverErr == nil {
-			if session.record.cancelConnect != nil {
-				session.record.cancelConnect()
-			}
 			session.record.markTerminated()
 			session.endpoint.broker.remove(session.record)
 		}
@@ -858,56 +792,56 @@ func (session *browserCapacitySession) Close(ctx context.Context) error {
 	}
 }
 
-func closeBrowserCapacityServerSession(ctx context.Context, session browserServerSession) error {
+func closeBrowserCapacityServerSession(ctx context.Context, session flowersession.Session) error {
 	return closeBrowserCapacityServerSessionAfter(ctx, session, 2*time.Second)
 }
-func closeBrowserCapacityServerSessionAfter(ctx context.Context, session browserServerSession, peerTerminationGrace time.Duration) error {
-	if ctx == nil || session == nil || peerTerminationGrace <= 0 {
-		return errors.New("original session and positive peer termination grace are required")
+
+func closeBrowserCapacityServerSessionAfter(ctx context.Context, session flowersession.Session, peerTerminationGrace time.Duration) error {
+	if peerTerminationGrace <= 0 {
+		return errors.New("browser capacity peer termination grace must be positive")
 	}
-	grace, stop := context.WithTimeout(ctx, peerTerminationGrace)
-	terminal := session.WaitTermination(grace)
-	expired := grace.Err()
-	stop()
-	if expired == nil {
-		return errors.Join(normalizeBrowserCapacitySessionClose(terminal), session.WaitCleanup(ctx))
-	}
-	if ctx.Err() != nil {
+	select {
+	case <-session.Termination():
+		return normalizeBrowserCapacitySessionClose(session.WaitClosed(ctx))
+	case <-time.After(peerTerminationGrace):
+		// The peer close may have won the timer race. Recheck before initiating
+		// the server side close so orderly GOAWAY propagation remains authoritative.
+		select {
+		case <-session.Termination():
+			return normalizeBrowserCapacitySessionClose(session.WaitClosed(ctx))
+		default:
+		}
+	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
-	return errors.Join(normalizeBrowserCapacitySessionClose(session.Close()), session.WaitCleanup(ctx))
+	closed := make(chan error, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			return normalizeBrowserCapacitySessionClose(err)
+		}
+		return normalizeBrowserCapacitySessionClose(session.WaitClosed(ctx))
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 }
+
 func normalizeBrowserCapacitySessionClose(err error) error {
-	return transporttest.NormalizeCloseError(err)
+	if errors.Is(err, flowersession.ErrSessionClosed) {
+		return nil
+	}
+	return err
 }
 
 type remoteBrowserCapacityControl struct {
-	url                string
-	client             *http.Client
-	sampler            *linuxProcessTreeSampler
-	maxSessions        int
-	installationOwner  *interopharness.BrowserRunnerInstallationOwner
-	runtimeObservation interopharness.BrowserRuntimeObservation
-	installOriginal    func(context.Context, interopharness.BrowserRuntimeObservation, browserCapacityArtifact) (map[string]any, error)
+	url         string
+	client      *http.Client
+	sampler     *linuxProcessTreeSampler
+	maxSessions int
 }
 
 func (control *remoteBrowserCapacityControl) Connect(ctx context.Context, record *browserCapacityRecord) error {
-	if control.installationOwner == nil || control.installOriginal == nil {
-		return errors.New("browser capacity requires its original installation owner and deployment declarations")
-	}
-	source, ok := record.artifact.(interface {
-		InstallOriginalBrowserRunner(context.Context, *interopharness.BrowserRunnerInstallationOwner, interopharness.BrowserRuntimeObservation, map[string]any) error
-	})
-	if !ok {
-		return errors.New("browser capacity material has no original installation source")
-	}
-	declaration, err := control.installOriginal(ctx, control.runtimeObservation, record.artifact)
-	if err != nil {
-		return err
-	}
-	if err = source.InstallOriginalBrowserRunner(ctx, control.installationOwner, control.runtimeObservation, declaration); err != nil {
-		return err
-	}
 	var response struct {
 		SchemaVersion int    `json:"schema_version"`
 		SessionID     string `json:"session_id"`
@@ -1037,26 +971,12 @@ func (control *remoteBrowserCapacityControl) post(ctx context.Context, path stri
 }
 
 func startBrowserCapacityControl(ctx context.Context, config browserCapacityEndpointConfig, eventSinkURL, certificateHash string) (browserCapacityControl, func(context.Context) error, []string, error) {
-	if config.RunnerInstallation == nil {
-		return nil, nil, nil, errors.New("browser capacity needs the original runtime origin/UA installation callback")
-	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	historyDirectory := filepath.Join(config.OutputDirectory, "browser-history")
-	manifestPath := filepath.Join(config.OutputDirectory, "browser-installation.json")
-	installationOwner, err := interopharness.ProvisionBrowserRunnerInstallation(ctx, node, config.SourceRoot, manifestPath, historyDirectory, uint32(config.Sessions))
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	temporary, err := os.MkdirTemp(config.OutputDirectory, ".browser-capacity-plan-*")
+	temporary, err := os.MkdirTemp("", "flowersec-browser-capacity-*")
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	planPath := filepath.Join(temporary, "plan.json")
 	plan := map[string]any{
-		"installation_manifest_path": manifestPath, "history_directory": historyDirectory,
 		"schema_version": 1, "topology": config.Topology, "profile_id": config.ProfileID, "sessions": config.Sessions,
 		"workload": func() string {
 			if config.StreamsPerSession > 0 {
@@ -1076,6 +996,11 @@ func startBrowserCapacityControl(ctx context.Context, config browserCapacityEndp
 		return nil, nil, nil, err
 	}
 	if err := os.WriteFile(planPath, planJSON, 0o600); err != nil {
+		_ = os.RemoveAll(temporary)
+		return nil, nil, nil, err
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
 		_ = os.RemoveAll(temporary)
 		return nil, nil, nil, err
 	}
@@ -1167,15 +1092,7 @@ func startBrowserCapacityControl(ctx context.Context, config browserCapacityEndp
 		_ = os.RemoveAll(temporary)
 		return nil, nil, nil, context.Cause(ctx)
 	}
-	observation, observationErr := installationOwner.ObserveRuntime(ctx)
-	if observationErr != nil {
-		_ = sampler.Kill()
-		<-waitDone
-		_ = sampler.Close()
-		_ = os.RemoveAll(temporary)
-		return nil, nil, nil, observationErr
-	}
-	control := &remoteBrowserCapacityControl{installationOwner: installationOwner, runtimeObservation: observation, installOriginal: config.RunnerInstallation, url: controlURL, client: &http.Client{Transport: &http.Transport{DisableKeepAlives: false, MaxIdleConnsPerHost: 1000}}, sampler: sampler, maxSessions: config.Sessions}
+	control := &remoteBrowserCapacityControl{url: controlURL, client: &http.Client{Transport: &http.Transport{DisableKeepAlives: false, MaxIdleConnsPerHost: 1000}}, sampler: sampler, maxSessions: config.Sessions}
 	wait := func(waitCtx context.Context) error {
 		select {
 		case waitErr := <-waitDone:

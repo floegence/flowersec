@@ -30,6 +30,7 @@ var (
 	ErrInvalidPath            = errors.New("invalid carrier path")
 	ErrInvalidStreamCapacity  = errors.New("invalid carrier stream capacity")
 	ErrStreamReset            = errors.New("carrier stream reset")
+	ErrPeerSessionClosed      = errors.New("peer closed carrier normally")
 	ErrStopSendingUnavailable = errors.New("carrier STOP_SENDING unavailable")
 	ErrUnreliableUnavailable  = errors.New("carrier unreliable messages unavailable")
 	ErrUnreliableTooLarge     = errors.New("carrier unreliable message too large")

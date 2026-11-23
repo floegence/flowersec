@@ -5,7 +5,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
 )
 
 // RecordRecoveryToken is the explicit issuer's original history operation.

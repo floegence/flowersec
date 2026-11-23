@@ -1,7 +1,9 @@
 {
   "schema": "flowersec.go-security-modules.v1",
   "modules": [
+    "examples/go/parity",
     "flowersec-go",
+    "flowersec-go/adapters/sqlite",
     "tools/releasenotes",
     "tools/stabilitycheck"
   ]

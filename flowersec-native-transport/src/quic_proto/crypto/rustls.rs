@@ -1,10 +1,10 @@
 use std::{any::Any, io, str, sync::Arc};
 
-#[cfg(all(any(), not(all())))]
+#[cfg(any())]
 use aws_lc_rs::aead;
 use bytes::BytesMut;
-#[cfg(all())]
 use ring::aead;
+pub(crate) use rustls::Error;
 #[cfg(any())]
 use rustls::NamedGroup;
 use rustls::{
@@ -579,9 +579,8 @@ pub(crate) fn initial_suite_from_provider(
 }
 
 pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
-    #[cfg(all(any(), not(all())))]
+    #[cfg(any())]
     let provider = rustls::crypto::aws_lc_rs::default_provider();
-    #[cfg(all())]
     let provider = rustls::crypto::ring::default_provider();
     Arc::new(provider)
 }

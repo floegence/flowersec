@@ -6,10 +6,10 @@ import (
 	"encoding/binary"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
 
 // ResumeStreamBinding comes from the trusted method/kind registration. It
@@ -72,9 +72,7 @@ func claimResumeTarget(ctx context.Context, core *SessionCore, owner *StreamOwne
 	if err != nil {
 		return nil, err
 	}
-	// The OPEN scratch metadata is released after acceptance. Its bounded kind
-	// digest stays on the original scope and cannot be replaced by caller data.
-	if a.closed || a.draining || s.owner != owner || !s.accepted || s.cancelled || s.phase != openLive || s.kindDigest != sha256.Sum256([]byte(binding.Kind)) {
+	if a.closed || a.draining || s.owner != owner || !s.accepted || s.cancelled || s.phase != openLive || string(a.metadata[s.metadataStart:s.metadataStart+s.kindSize]) != binding.Kind {
 		return nil, ErrStreamOwned
 	}
 	q, f := owner.queue, owner.flow.receive

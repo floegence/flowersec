@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
 )
 
 type DurableExecutionAdmission struct{ *durableExecutionAdmission }
@@ -23,7 +23,6 @@ type durableExecutionAdmission struct {
 	claimed, using, closed                              atomic.Bool
 	tails                                               atomic.Uint32
 	cleaned                                             bool
-	started, authorityAdopted                           bool
 }
 
 func (s *DurableExecutions) ShortAdmissionCharges(maxResponse uint32, runtimeBytes uint64) (charges [4]resourcev4.Vector, err error) {
@@ -259,7 +258,6 @@ func (a *DurableExecutionAdmission) begin(s *DurableExecutions) error {
 	if err := resourcev4.CheckoutProtectedBatch(a.floors[:], a.held[:]); err != nil {
 		return err
 	}
-	a.started = true
 	a.using.Store(true)
 	return nil
 }

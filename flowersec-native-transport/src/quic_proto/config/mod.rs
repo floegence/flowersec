@@ -5,17 +5,13 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(any(any(), all()))]
 use rustls::client::WebPkiServerVerifier;
-#[cfg(any(any(), all()))]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
 #[cfg(any())]
 use crate::quic_proto::BloomTokenLog;
-#[cfg(not(any()))]
 use crate::quic_proto::NoneTokenLog;
-#[cfg(any(any(), all()))]
 use crate::quic_proto::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::quic_proto::{
     DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
@@ -176,13 +172,11 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-#[cfg(any(any(), all()))]
 impl Default for EndpointConfig {
     fn default() -> Self {
-        #[cfg(all(any(), not(all())))]
+        #[cfg(any())]
         use aws_lc_rs::hmac;
         use rand::Rng;
-        #[cfg(all())]
         use ring::hmac;
 
         let mut reset_key = [0; 64];
@@ -378,7 +372,6 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(any(), all()))]
 impl ServerConfig {
     /// Create a server config with the given certificate chain to be presented to clients
     ///
@@ -393,16 +386,14 @@ impl ServerConfig {
     }
 }
 
-#[cfg(any(any(), all()))]
 impl ServerConfig {
     /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
     pub(crate) fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
-        #[cfg(all(any(), not(all())))]
+        #[cfg(any())]
         use aws_lc_rs::hkdf;
         use rand::Rng;
-        #[cfg(all())]
         use ring::hkdf;
 
         let rng = &mut rand::rng();
@@ -530,7 +521,6 @@ impl Default for ValidationTokenConfig {
     fn default() -> Self {
         #[cfg(any())]
         let log = Arc::new(BloomTokenLog::default());
-        #[cfg(not(any()))]
         let log = Arc::new(NoneTokenLog);
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
@@ -623,7 +613,6 @@ impl ClientConfig {
     }
 }
 
-#[cfg(any(any(), all()))]
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[deprecated(since = "0.11.13", note = "use `try_with_platform_verifier()` instead")]

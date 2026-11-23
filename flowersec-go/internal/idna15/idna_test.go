@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/idna15"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/idna15"
 )
 
 func TestLookupASCIIUsesFrozenUnicode15_1UTS46(t *testing.T) {
@@ -37,8 +37,9 @@ func TestLookupASCIIRejectsInvalidUTS46Hosts(t *testing.T) {
 }
 
 type fixture struct {
-	UnicodeVersion string `json:"unicode_version"`
-	Positive       []struct {
+	TransportContractVersion int    `json:"transport_contract_version"`
+	UnicodeVersion           string `json:"unicode_version"`
+	Positive                 []struct {
 		ID    string `json:"id"`
 		Input string `json:"input"`
 		ASCII string `json:"ascii"`
@@ -51,13 +52,16 @@ type fixture struct {
 
 func loadFixture(t *testing.T) fixture {
 	t.Helper()
-	data, err := os.ReadFile("../../../testdata/idna/idna_vectors.json")
+	data, err := os.ReadFile("../../../testdata/transport_v5/idna_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded fixture
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
+	}
+	if decoded.TransportContractVersion != 5 || len(decoded.Positive) == 0 || len(decoded.Negative) == 0 {
+		t.Fatalf("unexpected IDNA vectors: contract=%d positive=%d negative=%d", decoded.TransportContractVersion, len(decoded.Positive), len(decoded.Negative))
 	}
 	return decoded
 }

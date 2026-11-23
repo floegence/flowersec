@@ -7,9 +7,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // SQLiteAdmissionAuthority is the trusted host's stable service mapping. It
@@ -20,25 +20,13 @@ type SQLiteAdmissionAuthority interface {
 	CheckAdmission(SQLiteIdentity, protocolv4.AdmissionFacts) error
 }
 
-// SQLiteAdmissionScheduler optionally schedules finite original admission
-// positions before their durable operations use one shared connection.
-// It must observe the supplied original context without retrying durable work.
-// A successful call returns one release that the caller invokes exactly once.
-type SQLiteAdmissionScheduler interface {
-	ScheduleAdmission(context.Context) (release func(), err error)
-}
-
 // SQLiteAdmission owns the single original reserve/admit path. Its original
 // Invocation is never returned. Only a successful original CAS and Dispatch
 // may call the supplied trusted Acceptor continuation; queries cannot do so.
 type SQLiteAdmission struct{ *sqliteAdmission }
 type sqliteAdmission struct {
-	winnerContinuation                SQLiteOriginalParentWinnerContinuation
-	environment                       resourcev4.Reference
 	mu                                sync.Mutex
 	store                             *sqliteStore
-	parent                            *sqliteStore
-	parentReference                   resourcev4.Reference
 	invocation                        *Invocation
 	guard                             func() error
 	record                            admissionRecord
@@ -53,11 +41,6 @@ type sqliteAdmission struct {
 func (a *sqliteAdmission) check() error {
 	if err := a.storeReference.Check(); err != nil {
 		return err
-	}
-	if a.parent != nil {
-		if err := a.parentReference.Check(); err != nil {
-			return err
-		}
 	}
 	return a.guard()
 }
@@ -127,32 +110,6 @@ func NewSQLiteAdmission(ctx context.Context, store *SQLiteStore, authority SQLit
 	if err = authority.CheckAdmission(identity, facts); err != nil {
 		return nil, err
 	}
-	var parent *SQLiteStore
-	var parentRef resourcev4.Reference
-	if fields.Source == "preauthorized_pool" {
-		pool, ok := authority.(SQLitePoolAdmissionAuthority)
-		if !ok {
-			return nil, ErrConfiguration
-		}
-		parent = pool.ParentWinnerStore()
-		var parentIdentity SQLiteIdentity
-		var parentLimit uint32
-		parentRef, parentIdentity, _, parentLimit, err = parent.admissionReference(environment)
-		if err != nil {
-			return nil, err
-		}
-		defer func() {
-			if !adopted {
-				parentRef.Release()
-			}
-		}()
-		if parentLimit < limit {
-			return nil, ErrConfiguration
-		}
-		if err = pool.CheckParentWinner(parentIdentity, facts); err != nil {
-			return nil, err
-		}
-	}
 	if err = guard(); err != nil {
 		return nil, err
 	}
@@ -185,14 +142,6 @@ func NewSQLiteAdmission(ctx context.Context, store *SQLiteStore, authority SQLit
 		*p = strings.Clone(*p)
 	}
 	a := &sqliteAdmission{store: store.sqliteStore, invocation: i, guard: guard, reservation: held, storeReference: ref, reserved: make([]byte, limit), target: make([]byte, limit), scratch: make([]byte, limit), record: admissionRecord{fields: fields, owner: owner, authority: strings.Clone(identity.Authority), storeID: identity.StoreID, storeGeneration: identity.Generation, fence: epoch, deadline: deadline.Cap(), reservedAt: sample.UpperMS}}
-	if parent != nil {
-		a.winnerContinuation, _ = authority.(SQLiteOriginalParentWinnerContinuation)
-		a.environment = environment
-		a.parent, a.parentReference = parent.sqliteStore, parentRef
-		if _, err = a.record.encodeParentWinner(a.target); err != nil {
-			return nil, err
-		}
-	}
 	a.keySize, err = a.record.key(a.key[:])
 	if err != nil {
 		return nil, err
@@ -225,33 +174,6 @@ func (a *SQLiteAdmission) Admit(action func(context.Context, protocolv4.Admissio
 			a.Close(err)
 		}
 	}()
-	// A separate parent authority is fixed before any local admission write.
-	// In one real transaction domain, reserve atomically fixes both facts.
-	// Any failure closes this invocation; it never returns to the race.
-	if a.record.fields.Source == "preauthorized_pool" {
-		if a.parent == nil {
-			return ErrConfiguration
-		}
-		n, encodeErr := a.record.encodeParentWinner(a.target)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		if a.winnerContinuation != nil {
-			// The registered owner matches the original relay winner. A local
-			// empty winner store cannot establish this remote authority fact.
-			n, err = protocolv4.EncodePoolWinnerControlProjection(a.target, a.record.fields)
-			if err != nil {
-				return err
-			}
-			if err = a.winnerContinuation.ContinueOriginalParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.environment, a.check); err != nil {
-				return err
-			}
-		} else if a.parent != a.store {
-			if err = a.parent.matchParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.scratch, a.check); err != nil {
-				return err
-			}
-		}
-	}
 	if err = a.reserve(a.invocation.ctx); err != nil {
 		return err
 	}
@@ -328,13 +250,9 @@ func (a *SQLiteAdmission) Cleanup() error {
 	clear(a.key[:])
 	a.reserved, a.target, a.scratch = nil, nil, nil
 	a.guard = nil
-	a.winnerContinuation = nil
-	a.environment = resourcev4.Reference{}
 	a.record = admissionRecord{}
 	a.store = nil
 	a.storeReference.Release()
-	a.parentReference.Release()
-	a.parent = nil
 	a.reservation.Release()
 	a.cleaned = true
 	return nil

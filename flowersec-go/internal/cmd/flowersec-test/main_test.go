@@ -15,10 +15,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/perfreport"
 )
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
+
+func TestRoutedParityTitleSelectsBothDirectCases(t *testing.T) {
+	pattern := regexp.MustCompile(exactTitle("direct WSS (routed=%s)"))
+	for _, title := range []string{"suite direct WSS (routed=false)", "suite direct WSS (routed=true)"} {
+		if !pattern.MatchString(title) {
+			t.Fatal("missing parameterized direct case:", title)
+		}
+	}
+	if pattern.MatchString("suite direct WSS") || pattern.MatchString("suite direct WSS (routed=other)") {
+		t.Fatal("matched unregistered routing case")
+	}
+}
 
 var testPerformanceEnvironment = perfreport.Environment{HostName: "orange", OS: "Ubuntu 22.04", Kernel: "5.10", Architecture: "arm64", CPUModel: "Cortex-A55", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.27", NodeVersion: "v24.20.0", ChromiumVersion: "Chromium 140"}
 
@@ -47,6 +59,32 @@ func TestPlaywrightTitleMatchesAUniqueTitleInsideTheFullTestName(t *testing.T) {
 	if pattern.MatchString("Firefox reports another capability") {
 		t.Fatal("Playwright selector matched a different title")
 	}
+}
+
+func TestChromiumRawQUICTunnelDispatchesItsOwnPlaywrightCase(t *testing.T) {
+	selected, err := selectSuite(registry(), "browser-smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range selected {
+		if entry.ID != "browser/chromium/webtransport/raw-quic/tunnel" {
+			continue
+		}
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "npm"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > args\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", directory)
+		if err := entry.Run(t.Context(), runContext{Root: directory}); err != nil {
+			t.Fatal(err)
+		}
+		args, err := os.ReadFile(filepath.Join(directory, "args"))
+		if err != nil || string(args) != "--prefix\nflowersec-ts\nrun\ntest:browser:chromium\n--\n--grep\nChromium runs a WebTransport to raw QUIC tunnel through the Go relay\n" {
+			t.Fatalf("unexpected browser smoke command: %q, %v", args, err)
+		}
+		return
+	}
+	t.Fatal("missing Chromium WebTransport to raw QUIC tunnel case")
 }
 
 func TestVitestEntryScopesDiscoveryToTheCurrentTypeScriptPackage(t *testing.T) {
@@ -137,17 +175,16 @@ func TestAcceptanceRegistryOwnsPrivateLoopbackInterop(t *testing.T) {
 }
 
 func TestGoAcceptorRegistryPatternEnumeratesProductionNativeListeners(t *testing.T) {
-	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../transporttest")
+	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../..")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("list Go acceptor tests: %v\n%s", err, output)
 	}
 	listed := string(output)
 	for _, name := range []string{
-		"TestProductDirectCarriersUsePublicConnectorAndAdmission",
-		"TestProductDirectEndpointReusesListenerForConcurrentArtifacts",
-		"TestCurrentDirectInterruptionReleasesOriginalOwnersBeforeReconnect",
-		"TestCurrentDirectCanceledAcceptanceCannotConsumeReplacement",
+		"TestRawQUICAcceptorListenerEstablishesApplicationSession",
+		"TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup",
+		"TestWebTransportAcceptorListenerEstablishesApplicationSession",
 	} {
 		if !strings.Contains(listed, name+"\n") {
 			t.Fatalf("server/go-acceptor pattern did not enumerate %s:\n%s", name, listed)

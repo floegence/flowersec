@@ -9,10 +9,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // RuntimeInput is the original provider reader. InterruptRead must request
@@ -26,10 +25,6 @@ type RuntimeInput interface {
 type runtimeService struct {
 	run  func(context.Context) error
 	wait func(context.Context) error
-}
-
-type runtimeEvent struct {
-	cause error
 }
 
 // The original Run caller observes parent cancellation. This private context
@@ -103,11 +98,9 @@ type SessionRuntime struct {
 	shared                   *SharedIngress
 	maint                    *MaintenanceIngress
 	reservation              resourcev4.Reference
-	services                 [14]runtimeService
+	services                 [12]runtimeService
 	handlers                 *sessionStreamDispatcher
 	rpc                      *RPCServices
-	native                   *nativeStreamTransport
-	unreliable               *UnreliableMessages
 	applicationPublication   <-chan struct{}
 	count                    int
 	started, closed, retired bool
@@ -115,7 +108,6 @@ type SessionRuntime struct {
 	parent                   context.Context
 	stop, cleanup            chan struct{}
 	result                   error
-	transportFailure         bool
 }
 
 // SessionRuntimeCharge covers only the supervisor and lifetime watchdog.
@@ -123,7 +115,7 @@ type SessionRuntime struct {
 // Complete profiles additionally account for host stacks and runtime overhead.
 func SessionRuntimeCharge() resourcev4.Vector {
 	return resourcev4.Vector{
-		resourcev4.SDKBytes: uint64(unsafe.Sizeof(SessionRuntime{})) + uint64(unsafe.Sizeof(IdleWatchdog{})) + 15*uint64(unsafe.Sizeof(runtimeEvent{})),
+		resourcev4.SDKBytes: uint64(unsafe.Sizeof(SessionRuntime{})) + uint64(unsafe.Sizeof(IdleWatchdog{})) + 13*uint64(unsafe.Sizeof(error(nil))),
 		resourcev4.Items:    2, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 1,
 	}
 }
@@ -137,8 +129,6 @@ type SessionRuntimeConfig struct {
 	Reservation        resourcev4.Reference
 	handlers           *sessionStreamDispatcher
 	rpc                *RPCServices
-	native             *nativeStreamTransport
-	unreliable         *UnreliableMessages
 }
 
 // NewSessionRuntime captures one immutable service set under the admission
@@ -160,7 +150,7 @@ func NewSessionRuntime(config SessionRuntimeConfig) (*SessionRuntime, error) {
 	if _, err := timev4.NewAge(a.engine.Clock(), config.DispatchTimeoutMS, math.MaxUint64); err != nil {
 		return nil, err
 	}
-	var refs [11]resourcev4.Reference
+	var refs [10]resourcev4.Reference
 	nrefs := 1
 	if a.lifecycle != nil {
 		refs[nrefs] = a.lifecycle.reservation
@@ -216,23 +206,8 @@ func NewSessionRuntime(config SessionRuntimeConfig) (*SessionRuntime, error) {
 		refs[nrefs] = config.handlers.reservation
 		nrefs++
 	}
-	if config.native != nil {
-		if config.native.admission != a || config.MaintenanceIngress == nil {
-			return nil, cryptov4.ErrConfiguration
-		}
-		refs[nrefs] = config.native.reservation
-		nrefs++
-	}
 	for _, ref := range refs[:nrefs] {
 		if err := config.Reservation.CheckSameEnvironment(ref); err != nil {
-			return nil, err
-		}
-	}
-	if config.unreliable != nil {
-		if config.unreliable.engine != a.engine || config.native == nil {
-			return nil, cryptov4.ErrConfiguration
-		}
-		if err := config.Reservation.CheckSameEnvironment(config.unreliable.reservation); err != nil {
 			return nil, err
 		}
 	}
@@ -246,8 +221,6 @@ func NewSessionRuntime(config SessionRuntimeConfig) (*SessionRuntime, error) {
 	r := &SessionRuntime{admission: a, input: config.Input, dispatchTimeoutMS: config.DispatchTimeoutMS, shared: config.SharedIngress, maint: config.MaintenanceIngress, reservation: owned, context: sessionRuntimeContext{done: make(chan struct{})}, stop: make(chan struct{}), cleanup: make(chan struct{})}
 	r.handlers = config.handlers
 	r.rpc = config.rpc
-	r.native = config.native
-	r.unreliable = config.unreliable
 	add := func(run func(context.Context) error, wait func(context.Context) error) {
 		r.services[r.count] = runtimeService{run, wait}
 		r.count++
@@ -286,12 +259,6 @@ func NewSessionRuntime(config SessionRuntimeConfig) (*SessionRuntime, error) {
 	if r.rpc != nil {
 		add(r.rpc.run, r.rpc.waitChannel)
 	}
-	if r.native != nil {
-		add(r.native.Run, r.native.WaitCleanup)
-	}
-	if r.unreliable != nil {
-		add(r.unreliable.Run, r.unreliable.WaitCleanup)
-	}
 	a.runtime = r
 	if a.lifecycle != nil {
 		add(a.lifecycle.Run, a.lifecycle.WaitCleanup)
@@ -314,21 +281,12 @@ func (r *SessionRuntime) ingress(ctx context.Context) error {
 				err = r.shared.Dispatch(ctx, record, deadline)
 			}
 			record.Release()
-			if errors.Is(err, errMaintenanceDiscarded) {
-				continue
-			}
 			if err != nil {
 				return err
 			}
 			continue
 		}
 		record, err := r.maint.Read(ctx, r.maint.carrier, r.input)
-		if errors.Is(err, errMaintenanceDiscarded) {
-			if record != nil {
-				record.Release()
-			}
-			continue
-		}
 		if errors.Is(err, cryptov4.ErrCapacity) {
 			// Retain the original candidate and rate token until real capacity returns.
 			select {
@@ -341,18 +299,11 @@ func (r *SessionRuntime) ingress(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		body, err := record.Body()
-		var deadline *timev4.Deadline
+		deadline, err := r.dispatchDeadline(record)
 		if err == nil {
-			deadline, err = r.dispatchDeadlineFrame(record, body)
-		}
-		if err == nil {
-			err = r.admission.dispatchControlFrame(ctx, record, deadline, body)
+			err = r.admission.dispatchControl(ctx, record, deadline)
 		}
 		record.Release()
-		if errors.Is(err, errMaintenanceDiscarded) {
-			continue
-		}
 		if err != nil {
 			return err
 		}
@@ -386,17 +337,10 @@ func (r *SessionRuntime) bindApplicationPublication(published <-chan struct{}) e
 // Each newly authenticated owner gets its own finite original deadline. A
 // duplicate retirement input keeps the deadline already retained by Retirement.
 func (r *SessionRuntime) dispatchDeadline(record *ReceivedRecord) (*timev4.Deadline, error) {
-	if complete, err := record.dispatchComplete(); complete || err != nil {
-		return nil, err
-	}
 	body, err := record.Body()
 	if err != nil {
 		return nil, err
 	}
-	return r.dispatchDeadlineFrame(record, body)
-}
-
-func (r *SessionRuntime) dispatchDeadlineFrame(record *ReceivedRecord, body *protocolv4.Frame) (*timev4.Deadline, error) {
 	if record.incoming == nil && body.Schema != "STREAM_ACK_RETIRE_BATCH" {
 		return nil, nil
 	}
@@ -438,24 +382,19 @@ func (r *SessionRuntime) Run(ctx context.Context) error {
 }
 
 func (r *SessionRuntime) supervise(ctx context.Context) {
-	events := make(chan runtimeEvent, r.count+1)
+	events := make(chan error, r.count+1)
 	for _, service := range r.services[:r.count] {
-		go func() { events <- runtimeEvent{cause: service.run(ctx)} }()
+		go func() { events <- service.run(ctx) }()
 	}
-	go func() { events <- runtimeEvent{cause: r.ingress(ctx)} }()
+	go func() { events <- r.ingress(ctx) }()
 	for remaining := r.count + 1; remaining > 0; remaining-- {
-		event := <-events
-		r.stopWith(event.cause)
+		r.stopWith(<-events)
 	}
 	<-r.stop
 	r.finishCleanup()
 }
 
 func (r *SessionRuntime) stopWith(cause error) {
-	r.stopWithSource(cause, false)
-}
-
-func (r *SessionRuntime) stopWithSource(cause error, transport bool) {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -471,10 +410,8 @@ func (r *SessionRuntime) stopWithSource(cause error, transport bool) {
 	r.admission.mu.Lock()
 	if r.admission.failure != nil {
 		cause = r.admission.failure
-		transport = r.admission.transportFailure
 	}
 	r.admission.mu.Unlock()
-	r.transportFailure = transport && controllerNetworkRetry(cause)
 	if cause != nil && !errors.Is(cause, cryptov4.ErrClosed) {
 		r.result = cause
 	}
@@ -487,14 +424,8 @@ func (r *SessionRuntime) stopWithSource(cause error, transport bool) {
 	if r.rpc != nil {
 		r.rpc.Close()
 	}
-	if r.unreliable != nil {
-		r.unreliable.Close()
-	}
 	r.admission.closeWithCause(cause)
 	r.input.InterruptRead()
-	if r.native != nil {
-		r.native.Close()
-	}
 	close(r.stop)
 	if !started {
 		// The one reserved coordinator observes original external tails even when
@@ -564,8 +495,6 @@ func (r *SessionRuntime) Retire() error {
 		r.admission, r.input, r.shared, r.maint = nil, nil, nil, nil
 		r.handlers = nil
 		r.rpc = nil
-		r.unreliable = nil
-		r.native = nil
 		r.applicationPublication = nil
 		clear(r.services[:])
 		r.context.mu.Lock()

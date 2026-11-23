@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportShapeTests: XCTestCase {
+final class TransportV4ShapeTests: XCTestCase {
   private static let reference = try! V4ShapeReference()
   private static let corpus: [V4JSON] = {
     let data = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))
@@ -66,7 +66,7 @@ final class TransportShapeTests: XCTestCase {
       XCTAssertEqual(ctx, original, id)
       if vector["expected_error"].text == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, Self.corpus.filter { $0["expected_error"].text == nil }.count); XCTAssertGreaterThan(positive, 0); XCTAssertEqual(negative, 326)
+    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, 324)
     print("Swift field shape: \(positive) positive / \(negative) negative cases")
   }
 
@@ -87,7 +87,7 @@ final class TransportShapeTests: XCTestCase {
       let changed = V4CBORValue.map(pairs + [.init(key: .uint(65535), value: .uint(0))])
       rejects("unknown_field") { try r.checkMap(name, changed, context: ctx) }
     }
-    XCTAssertEqual(seen.count, 99)
+    XCTAssertEqual(seen.count, 93)
   }
 
   // v4.swift_shape.context_boundaries

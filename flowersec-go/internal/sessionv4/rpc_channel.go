@@ -3,23 +3,15 @@ package sessionv4
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
-	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/rpcv4"
 )
-
-// ErrRPCFragmentProgress is returned when an already started application
-// fragment receives no further bytes for the fixed progress allowance. The
-// allowance applies only after a fragment byte has arrived; an idle channel
-// remains governed by its Session lifetime/idle owners.
-var ErrRPCFragmentProgress = errors.New("sessionv4: rpc fragment made no progress")
-
-const rpcFragmentProgressAllowance = 5 * time.Second
 
 // RPCChannel attaches the sole ordinary RPC engine to an accepted original
 // Stream. Its reader and publisher are protected SDK services, independent of
@@ -38,9 +30,6 @@ type RPCChannel struct {
 	done                                        chan struct{}
 	closeDone                                   chan struct{}
 	writerDone                                  chan error
-	readerEnded                                 chan struct{}
-	inputEnded                                  bool
-	failure                                     error
 	started, running, closed, cleaned, cleaning bool
 }
 
@@ -71,7 +60,7 @@ func NewRPCChannel(owner *StreamOwnership, network *rpcv4.Network, channel [16]b
 	if err != nil {
 		return nil, err
 	}
-	c := &RPCChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1), readerEnded: make(chan struct{})}
+	c := &RPCChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1)}
 	defer func() {
 		if err != nil {
 			if c.receiver != nil {
@@ -120,7 +109,7 @@ func (c *RPCChannel) availablePublisher() *rpcv4.Publisher {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.inputEnded {
+	if c.closed {
 		return nil
 	}
 	return c.publisher
@@ -164,25 +153,13 @@ func (c *RPCChannel) Run(ctx context.Context) (err error) {
 		}
 		c.Close()
 		c.mu.Lock()
-		c.failure = err
 		c.running = false
 		c.cancel = nil
 		close(c.done)
 		c.mu.Unlock()
 	}()
 	for {
-		readCtx := runCtx
-		var cancelRead context.CancelFunc
-		if receiver.Partial() {
-			readCtx, cancelRead = context.WithTimeout(runCtx, rpcFragmentProgressAllowance)
-		}
-		result, readErr := owner.ReadInto(readCtx, c.buffer[:])
-		if cancelRead != nil {
-			cancelRead()
-		}
-		if errors.Is(readErr, context.DeadlineExceeded) && receiver.Partial() {
-			return ErrRPCFragmentProgress
-		}
+		result, readErr := owner.ReadInto(runCtx, c.buffer[:])
 		if result.Progress.Filled > 0 {
 			if _, err := receiver.Feed(c.buffer[:result.Progress.Filled]); err != nil {
 				return err
@@ -196,20 +173,11 @@ func (c *RPCChannel) Run(ctx context.Context) (err error) {
 			if err := receiver.End(); err != nil {
 				return err
 			}
-			c.mu.Lock()
-			c.inputEnded = true
-			close(c.readerEnded)
-			c.mu.Unlock()
-			// Peer EOF ends only its input direction. The original publisher
-			// must finish accepted replies before this channel can close.
-			<-runCtx.Done()
-			return nil
+			return io.EOF
 		}
 	}
 }
 func (c *RPCChannel) publish(ctx context.Context, p *rpcv4.Publisher, w *RPCBatchWriter) error {
-	readerEnded := c.readerEnded
-	inputEnded := false
 	for {
 		progressed, err := p.Step(ctx)
 		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) {
@@ -218,14 +186,9 @@ func (c *RPCChannel) publish(ctx context.Context, p *rpcv4.Publisher, w *RPCBatc
 		if progressed {
 			continue
 		}
-		if inputEnded && p.DrainIfIdle(w.drainIdle) {
-			return c.owner.Finish(ctx)
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-readerEnded:
-			inputEnded, readerEnded = true, nil
 		case <-p.Wake():
 		case <-w.Wake():
 		}
@@ -254,14 +217,6 @@ func (c *RPCChannel) Close() {
 	receiver.Close()
 	writer.Close()
 	_ = owner.Cancel()
-}
-
-func (c *RPCChannel) drainIdle() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.closed && c.publisher != nil {
-		c.publisher.DrainIfIdle(c.writer.drainIdle)
-	}
 }
 
 // WaitCleanup joins actual publisher/reader exit and the last queue/provider

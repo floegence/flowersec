@@ -9,9 +9,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var (
@@ -31,35 +31,9 @@ type StreamTerminationPolicy struct {
 type directionTermination struct {
 	mu               sync.Mutex
 	service          *StreamTerminationService
-	normalMS         uint64
 	normal, until    *timev4.Window
 	quarantine, done bool
 	cause, failure   error
-}
-
-// selectConnTermination fixes the native adapter and original directions to
-// the same normal-close preset before either starts. A received FIN may have
-// started a direction before adapter construction; that window cannot be
-// extended or silently replaced. Both selections commit together.
-func selectConnTermination(send, receive *directionTermination, normalMS uint64) error {
-	if normalMS == 0 || normalMS > 60000 {
-		return cryptov4.ErrConfiguration
-	}
-	send.mu.Lock()
-	defer send.mu.Unlock()
-	receive.mu.Lock()
-	defer receive.mu.Unlock()
-	for _, d := range [...]*directionTermination{send, receive} {
-		current := d.normalMS
-		if current == 0 && d.service != nil {
-			current = d.service.policy.NormalMS
-		}
-		if (d.until != nil || d.normal != nil || d.done || d.failure != nil) && current != normalMS {
-			return cryptov4.ErrTransition
-		}
-	}
-	send.normalMS, receive.normalMS = normalMS, normalMS
-	return nil
 }
 
 func (d *directionTermination) start(failed bool, cause error) {
@@ -84,12 +58,8 @@ func (d *directionTermination) start(failed bool, cause error) {
 		}
 		duration := p.policy.QuarantineMS
 		if !failed {
-			normal := d.normalMS
-			if normal == 0 {
-				normal = p.policy.NormalMS
-			}
-			duration += normal
-			d.normal, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, normal)
+			duration += p.policy.NormalMS
+			d.normal, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, p.policy.NormalMS)
 		}
 		if err == nil {
 			d.until, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, duration)
@@ -332,7 +302,7 @@ func (p *StreamTerminationService) checkLocked() (remaining uint64, err error) {
 			remaining = min(remaining, r, cap)
 		}
 	}
-	for scanned, i := 0, a.nextInitializedSlot(0); scanned < a.initializedSlotCount(); scanned, i = scanned+1, a.nextInitializedSlot(i+1) {
+	for i := range a.slots {
 		s := &a.slots[i]
 		if s.phase == openOpening || s.phase == openPending || s.pendingRejection() || s.rejectionToken && s.deciding {
 			r, err := s.deadline.RemainingMS()
@@ -389,13 +359,11 @@ const (
 
 func (p *StreamTerminationService) nextLocked() (chosen *openSlot, kind terminalMessage, next int) {
 	a := p.admission
-	for scanned, i := 0, a.nextInitializedSlot(p.cursor); scanned < a.initializedSlotCount(); scanned, i = scanned+1, a.nextInitializedSlot(i+1) {
+	for scanned := range len(a.slots) {
+		i := (p.cursor + scanned) % len(a.slots)
 		s := &a.slots[i]
 		if s.pendingRejection() && !s.deciding {
 			return s, terminalReject, (i + 1) % len(a.slots)
-		}
-		if s.compactRecent() && s.stoppedDirty && !s.terminalPublishing && !s.cleanupBusy {
-			return s, terminalStopped, (i + 1) % len(a.slots)
 		}
 		if !s.accepted || s.flow == nil || s.phase != openLive && s.phase != openRecent || s.terminalPublishing || s.cleanupBusy {
 			continue
@@ -419,7 +387,8 @@ func (p *StreamTerminationService) nextLocked() (chosen *openSlot, kind terminal
 	}
 	// Credit uses this same finite maintenance worker after terminal work.
 	// Each Stream retains only its latest absolute frontier, never an ACK queue.
-	for scanned, i := 0, a.nextInitializedSlot(p.cursor); scanned < a.initializedSlotCount(); scanned, i = scanned+1, a.nextInitializedSlot(i+1) {
+	for scanned := range len(a.slots) {
+		i := (p.cursor + scanned) % len(a.slots)
 		s := &a.slots[i]
 		if !s.accepted || s.flow == nil || s.phase != openLive || s.terminalPublishing || s.cleanupBusy {
 			continue
@@ -433,16 +402,6 @@ func (p *StreamTerminationService) nextLocked() (chosen *openSlot, kind terminal
 		}
 	}
 	return nil, terminalStop, p.cursor
-}
-
-// Near exhaustion, publish the original promise immediately rather than
-// spending a coalescing window. Unpublished local replenishment is excluded:
-// only the last actual encoded limit can permit further peer DATA.
-func (p *StreamTerminationService) creditUrgentLocked(s *openSlot) bool {
-	f := s.flow.receive
-	f.pool.mu.Lock()
-	defer f.pool.mu.Unlock()
-	return f.creditUrgentLocked()
 }
 
 // Progress publishes at most one message. Before-ticket contention retains
@@ -469,7 +428,7 @@ func (p *StreamTerminationService) Progress(ctx context.Context) (result RecordW
 	}
 	if kind == terminalReject {
 		p.rejectionPublication = chosen.deadline
-	} else if chosen.flow != nil {
+	} else {
 		d := &chosen.flow.receive.termination
 		if kind == terminalStopped {
 			d = &chosen.flow.send.termination
@@ -492,9 +451,6 @@ func (p *StreamTerminationService) Progress(ctx context.Context) (result RecordW
 	p.cursor = next
 	chosen.retirementReferences++
 	h := OpenHandle{a, chosen.scope}
-	// The independent coordinator must observe this publication's original
-	// cap even if its provider blocks before another input/cleanup event.
-	p.notify()
 	a.mu.Unlock()
 	if kind == terminalReject {
 		result, err = a.PublishRejection(ctx, h, p.writer)
@@ -564,16 +520,7 @@ func (p *StreamTerminationService) Run(ctx context.Context) (err error) {
 	timer.Stop()
 	defer timer.Stop()
 	busy, retry := false, false
-	var creditAt time.Time
 	for {
-		// The following complete scan observes every event already signaled.
-		// Consume its old hint first; events during or after the scan retain
-		// a fresh hint for the next pass, including a new publication cap.
-		select {
-		case <-p.wake:
-		default:
-		}
-		a.releaseClosedStreams()
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -581,28 +528,12 @@ func (p *StreamTerminationService) Run(ctx context.Context) (err error) {
 		remaining, err := p.checkLocked()
 		var submit chan<- struct{}
 		if err == nil && !busy {
-			if chosen, kind, _ := p.nextLocked(); chosen != nil {
+			if chosen, _, _ := p.nextLocked(); chosen != nil {
 				if retry {
 					remaining = min(remaining, uint64(10))
-				} else if kind == terminalCredit && !p.creditUrgentLocked(chosen) {
-					// CREDIT reports the latest absolute frontier. Give adjacent
-					// input/releases one bounded scheduling window to share it;
-					// later notifications never restart this first deadline.
-					// This timer is only a wake hint, never authorization.
-					now := time.Now()
-					if creditAt.IsZero() {
-						creditAt = now.Add(5 * time.Millisecond)
-					}
-					if now.Before(creditAt) {
-						remaining = min(remaining, uint64((creditAt.Sub(now)+time.Millisecond-1)/time.Millisecond))
-					} else {
-						submit = jobs
-					}
 				} else {
 					submit = jobs
 				}
-			} else {
-				creditAt = time.Time{}
 			}
 		}
 		a.mu.Unlock()
@@ -616,7 +547,6 @@ func (p *StreamTerminationService) Run(ctx context.Context) (err error) {
 		select {
 		case submit <- struct{}{}:
 			busy = true
-			creditAt = time.Time{}
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-p.stop:

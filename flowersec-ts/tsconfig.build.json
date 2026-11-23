@@ -1,10 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": [
-    "src/**/*.test.ts",
-    "src/v4/testSupport/**",
-    "src/e2e/**",
-    "src/bench/**"
-  ]
+  "files": ["src/facade.ts", "src/browser/index.ts", "src/node/index.ts", "src/proxy/index.ts", "src/cli.ts", "src/tr46.d.ts"],
+  "include": []
 }

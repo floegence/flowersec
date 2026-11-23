@@ -13,10 +13,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	noise "github.com/floegence/flowersec/flowersec-go/v6/internal/noisehandshake"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	noise "github.com/floegence/flowersec/flowersec-go/v7/internal/noisehandshake"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var ErrHandshake = errors.New("cryptov4: handshake failed")

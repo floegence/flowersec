@@ -7,8 +7,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // NamespaceRefreshRequest selects an independently installed namespace, never
@@ -66,7 +66,7 @@ func NamespaceRefreshCharge(l NamespaceRefreshLimits, configBytes int) (resource
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	decoder, err := schemaDecoderBackingBytes("FreshnessHead", limit, limit)
+	decoder, err := DecoderBackingBytes(limit, limit)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -82,12 +82,7 @@ func NamespaceRefreshCharge(l NamespaceRefreshLimits, configBytes int) (resource
 	return charge.Add(l.Provider)
 }
 
-func newNamespaceRefreshOwned(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, owned resourcev4.Reference) (_ *NamespaceRefresh, err error) {
-	defer func() {
-		if err != nil {
-			owned.Release()
-		}
-	}()
+func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, reservation resourcev4.Reference) (_ *NamespaceRefresh, err error) {
 	if n == nil || trust == nil {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
@@ -98,19 +93,32 @@ func newNamespaceRefreshOwned(n *LiveNamespace, trust *NamespaceTrustStore, limi
 	if n.destroyed || n.terminal != nil || n.refresh != nil || trust.closed || trust.retired || trust.namespace != n || n.trust != trust {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
-	if err = owned.CheckSameEnvironment(n.reservation); err == nil {
-		err = owned.CheckSameEnvironment(trust.reservation)
+	if err = reservation.CheckSameEnvironment(n.reservation); err == nil {
+		err = reservation.CheckSameEnvironment(trust.reservation)
 	}
 	if err != nil {
 		return nil, err
 	}
+	charge, err := NamespaceRefreshCharge(limits, trust.limits.ConfigBytes)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := reservation.Take(charge)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			owned.Release()
+		}
+	}()
 	r := &NamespaceRefresh{namespace: n, trust: trust, clock: n.clock, limits: limits, reservation: owned, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	limit, err := SchemaByteLimit("FreshnessHead")
 	if err != nil {
 		return nil, err
 	}
 	r.input = make([]byte, max(limit, trust.limits.ConfigBytes))
-	r.decoder, err = newSchemaDecoder("FreshnessHead", limit, limit)
+	r.decoder, err = NewDecoder(limit, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -121,21 +129,6 @@ func newNamespaceRefreshOwned(n *LiveNamespace, trust *NamespaceTrustStore, limi
 	r.ctx, r.cancel = context.WithCancelCause(n.ctx)
 	n.refresh = r
 	return r, nil
-}
-
-func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, reservation resourcev4.Reference) (*NamespaceRefresh, error) {
-	if n == nil || trust == nil {
-		return nil, CBORFailure("revocation_namespace_owner")
-	}
-	charge, err := NamespaceRefreshCharge(limits, trust.limits.ConfigBytes)
-	if err != nil {
-		return nil, err
-	}
-	owned, err := reservation.Take(charge)
-	if err != nil {
-		return nil, err
-	}
-	return newNamespaceRefreshOwned(n, trust, limits, owned)
 }
 
 func (r *NamespaceRefresh) Start(provider NamespaceRefreshProvider) error {
@@ -149,7 +142,7 @@ func (r *NamespaceRefresh) Start(provider NamespaceRefreshProvider) error {
 	}
 	r.namespace.mu.Lock()
 	defer r.namespace.mu.Unlock()
-	if r.namespace.terminal != nil || r.namespace.refreshFencing || r.ctx.Err() != nil {
+	if r.namespace.terminal != nil || r.ctx.Err() != nil {
 		return CBORFailure("revocation_namespace_owner")
 	}
 	r.namespace.refreshActive = true
@@ -254,32 +247,11 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 	var pinMu sync.Mutex
 	var pin *NamespacePin
 	go func() {
-		var failure error
-		returned := false
-		defer func() {
-			if recover() != nil || !returned {
-				failure = CBORFailure("revocation_refresh_provider")
-			}
-			if failure != nil {
-				cancel(failure)
-				pinMu.Lock()
-				p := pin
-				pinMu.Unlock()
-				if p != nil {
-					r.namespace.mu.Lock()
-					if r.namespace.pin == p && p.terminal == nil {
-						r.namespace.finishPin(p, failure)
-					}
-					r.namespace.mu.Unlock()
-				}
-			}
-			close(exited)
-		}()
+		defer close(exited)
 		timer := time.NewTimer(time.Hour)
 		defer timer.Stop()
 		for {
-			var remaining uint64
-			remaining, failure = window.RemainingMS()
+			remaining, failure := window.RemainingMS()
 			if failure == nil {
 				failure = r.reservation.Check()
 			}
@@ -300,13 +272,19 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 				failure = context.Cause(call)
 			}
 			if failure != nil {
-				returned = true
+				cancel(failure)
+				if p != nil {
+					r.namespace.mu.Lock()
+					if r.namespace.pin == p && p.terminal == nil {
+						r.namespace.finishPin(p, failure)
+					}
+					r.namespace.mu.Unlock()
+				}
 				return
 			}
 			timer.Reset(time.Duration(max(1, min(remaining, 100))) * time.Millisecond)
 			select {
 			case <-stop:
-				returned = true
 				return
 			case <-call.Done():
 			case <-canceled:
@@ -375,12 +353,9 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 			}
 			// Failed control transport does not revoke an independently valid
 			// existing configuration or cancel its selected content task.
-			sample, current := r.trust.sampleCurrent()
-			if current == nil {
-				r.trust.mu.Lock()
-				current = r.trust.checkCurrentLockedAt(sample)
-				r.trust.mu.Unlock()
-			}
+			r.trust.mu.Lock()
+			current := r.trust.checkCurrentLocked()
+			r.trust.mu.Unlock()
 			if current != nil {
 				return trustErr
 			}
@@ -441,42 +416,9 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 			return 0, post
 		}
 		return size, readErr
-	}, true, func(sample timev4.Sample) error {
-		if cause := context.Cause(call); cause != nil {
-			return cause
-		}
-		if err := r.reservation.Check(); err != nil {
-			return err
-		}
-		return window.CheckAt(sample.Mark)
-	})
+	}, true, check)
 	installed = err == nil
 	return err
-}
-
-func (r *NamespaceRefresh) waitCleanupBounded() error {
-	if r == nil {
-		return CBORFailure("revocation_namespace_owner")
-	}
-	// Provider calls are admitted with the refresh duration as their watchdog;
-	// include one complete cadence so a canceled worker can leave its timer and
-	// provider-exit tail before the owner is retired.
-	ms := r.limits.DurationMS + r.limits.HeadIntervalMS + r.limits.TrustIntervalMS + 1000
-	if ms < r.limits.DurationMS || ms < r.limits.HeadIntervalMS || ms < r.limits.TrustIntervalMS {
-		return CBORFailure("configuration_capacity")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ms)*time.Millisecond)
-	defer cancel()
-	return r.WaitCleanup(ctx)
-}
-
-// waitCleanupFinal keeps the refresh owner responsible for the physical
-// provider exit after the bounded observer window expires. The fallback waits
-// on the worker's actual done signal; it never releases the owner speculatively.
-func (r *NamespaceRefresh) waitCleanupFinal() {
-	if err := r.waitCleanupBounded(); err != nil {
-		<-r.done
-	}
 }
 
 func (r *NamespaceRefresh) Close() {

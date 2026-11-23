@@ -7,9 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 var ErrWriteOperationInput = errors.New("sessionv4: write operation input exceeds capacity")
@@ -41,23 +41,21 @@ type writeRequest struct {
 // closed signal. They do not retain the queue, Stream, Session or clock graph.
 // The caller owns that compact result after its original slab slot is returned.
 type WriteOperation struct {
-	mu                  sync.Mutex
-	queue               atomic.Pointer[SendQueue]
-	slot                int
-	progress            protocolv4.V4WriteProgress
-	failure             error
-	diagnosticOperation *DiagnosticOperation
-	done                chan struct{}
+	mu       sync.Mutex
+	queue    atomic.Pointer[SendQueue]
+	slot     int
+	progress protocolv4.V4WriteProgress
+	failure  error
+	done     chan struct{}
 }
 
 // MaxWriteOperationBytes is the admitted per-request staging cap. Ordinary
 // Write/WriteAll keep their existing segmented behavior for larger inputs.
 func (q *SendQueue) MaxWriteOperationBytes() uint64 { return uint64(q.maxOperationBytes) }
 
-// PrepareWrite takes a slot with its maximum staging already reserved before
-// allocating and copying only this input. It accepts no bytes. The original
-// running send coordinator owns expiration, including for objects whose Start
-// and Wait are never called.
+// PrepareWrite takes a slot and its already reserved immutable backing before
+// copying input. It accepts no bytes. The original running send coordinator
+// owns expiration, including for objects whose Start and Wait are never called.
 func (q *SendQueue) PrepareWrite(input []byte, options WriteOptions) (*WriteOperation, error) {
 	return q.prepareWriteOwned(input, options, nil)
 }
@@ -92,10 +90,9 @@ func (q *SendQueue) prepareWriteOwned(input []byte, options WriteOptions, owner 
 		q.removeWaitLocked(index)
 		return nil, err
 	}
-	storage := make([]byte, len(input))
+	storage := q.operationStorage[index*q.maxOperationBytes : index*q.maxOperationBytes+len(input)]
 	copy(storage, input)
-	diagnosticOperation := beginApplicationDiagnosticForSink(q.flow.diagnosticSink)
-	op := &WriteOperation{slot: index, done: make(chan struct{}), diagnosticOperation: diagnosticOperation, progress: protocolv4.V4WriteProgress{
+	op := &WriteOperation{slot: index, done: make(chan struct{}), progress: protocolv4.V4WriteProgress{
 		RequestedBytes: uint64(len(input)), Phase: protocolv4.V4WritePhasePrepared,
 		TerminalReason: protocolv4.V4WriteTerminalReasonNone,
 		CleanupStatus:  protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending},
@@ -262,8 +259,6 @@ func (q *SendQueue) finishOperationLocked(index int, reason protocolv4.V4WriteTe
 	op.mu.Lock()
 	op.progress.AcceptedBytes = r.accepted
 	op.progress.Phase, op.progress.TerminalReason = protocolv4.V4WritePhaseTerminal, reason
-	diagnosticOperation := op.diagnosticOperation
-	op.diagnosticOperation = nil
 	switch reason {
 	case protocolv4.V4WriteTerminalReasonComplete:
 		op.failure = nil
@@ -282,21 +277,6 @@ func (q *SendQueue) finishOperationLocked(index int, reason protocolv4.V4WriteTe
 	op.cleanupLocked()
 	close(op.done)
 	op.mu.Unlock()
-	if diagnosticOperation != nil {
-		var cause error
-		switch reason {
-		case protocolv4.V4WriteTerminalReasonCanceled:
-			cause = context.Canceled
-		case protocolv4.V4WriteTerminalReasonDeadlineExceeded:
-			cause = context.DeadlineExceeded
-		case protocolv4.V4WriteTerminalReasonStreamTerminated:
-			cause = ErrFlowClosed
-		case protocolv4.V4WriteTerminalReasonComplete:
-		default:
-			cause = ErrWriteOperationFailed
-		}
-		finishApplicationDiagnosticError(diagnosticOperation, cause)
-	}
 	q.removeWaitLocked(index)
 }
 
@@ -312,7 +292,7 @@ func (q *SendQueue) acceptanceErrorLocked() error {
 	if q.closed {
 		return q.failure
 	}
-	if q.sealed || q.flow == nil || q.flow.reset.Load() {
+	if q.sealed {
 		return ErrFlowClosed
 	}
 	if err := q.reservation.Check(); err != nil {
@@ -320,32 +300,6 @@ func (q *SendQueue) acceptanceErrorLocked() error {
 	}
 	if err := q.flow.writer.engine.CheckApplicationAuthorization(); err != nil {
 		return err
-	}
-	q.flow.mu.Lock()
-	defer q.flow.mu.Unlock()
-	if q.flow.stopping {
-		return ErrFlowClosed
-	}
-	return q.flow.reservation.Check()
-}
-
-// Called only inside the original request's current authorization/lease gate.
-// The full Engine check ran before entering that gate; local closure and all
-// concrete backing are rechecked here before the finite atomic ring transfer.
-func (q *SendQueue) authorizedRequestAcceptanceErrorLocked() error {
-	if q.closed {
-		return q.failure
-	}
-	if q.sealed || q.flow == nil || q.flow.reset.Load() {
-		return ErrFlowClosed
-	}
-	if err := q.reservation.Check(); err != nil {
-		return err
-	}
-	select {
-	case <-q.flow.writer.engine.Done():
-		return cryptov4.ErrClosed
-	default:
 	}
 	q.flow.mu.Lock()
 	defer q.flow.mu.Unlock()

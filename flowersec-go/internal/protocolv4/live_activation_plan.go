@@ -6,30 +6,26 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/timev4"
 )
 
 // LiveActivationConfig is fixed by the trusted authority before TxA. These
 // values are never recomputed from callback completion or confirmation time.
 type LiveActivationConfig struct {
-	Tunnel                              *LiveTunnelActivationConfig
 	Index                               uint64
 	Attempt                             [16]byte
 	IssuedAt, ActivationEnd, SessionEnd uint64
 }
 
-// LiveActivationFields describes the authority's original unsigned
+// LiveActivationFields describes the authority's original unsigned direct
 // projection. It is neither a signature nor permission to dispatch policy.
 type LiveActivationFields struct {
-	Tunnel                                           bool
-	GrantSigners, GrantProjections                   [2][32]byte
 	Tenant, Authority, SigningKey, Audience, Profile string
 	Issuer, Lease, Attempt                           [16]byte
 	Artifact, ClientIdentity, ServerIdentity, Signer [32]byte
 	Winner                                           PoolMember
 	IssuedAt, ActivationEnd, SessionEnd              uint64
-	ParentInitiationEnd, ParentSessionEnd            uint64
 }
 
 // LiveActivationPlan freezes the real unsigned proof and delegated signer.
@@ -41,18 +37,13 @@ type LiveActivationPlan struct {
 	binding                *ActivationBinding
 	authority              *ActivationAuthority
 	codec                  *SignedMapCodec
-	tunnel                 *liveTunnelPlan
 	signer                 MapSigner
 	unsigned, message      []byte
-	signedSize             int
 	reservation, shared    resourcev4.Reference
 	issued, active, closed bool
 }
 
-func LiveActivationPlanCharge(tunnel ...bool) (resourcev4.Vector, error) {
-	if len(tunnel) > 1 {
-		return resourcev4.Vector{}, resourcev4.ErrConfiguration
-	}
+func LiveActivationPlanCharge() (resourcev4.Vector, error) {
 	limit, err := SchemaByteLimit("ActivationAuthorization")
 	if err != nil {
 		return resourcev4.Vector{}, err
@@ -73,27 +64,14 @@ func LiveActivationPlanCharge(tunnel ...bool) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(LiveActivationPlan{})) + codec + authority + binding + 3*uint64(limit) + uint64(route) + 256, resourcev4.Items: 1, resourcev4.WorkSlots: 1}
-	if len(tunnel) == 1 && tunnel[0] {
-		extra, err := liveTunnelPlanCharge()
-		if err != nil {
-			return resourcev4.Vector{}, err
-		}
-		return charge.Add(extra)
-	}
-	return charge, nil
+	return resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(LiveActivationPlan{})) + codec + authority + binding + 3*uint64(limit) + uint64(route) + 256, resourcev4.Items: 1, resourcev4.WorkSlots: 1}, nil
 }
 
 func NewLiveActivationPlan(artifact *SignedMap, rules *NamespaceRules, delegation, once []byte, signer MapSigner, config LiveActivationConfig, reservation, environment, materialOwner resourcev4.Reference) (_ *LiveActivationPlan, err error) {
 	if artifact == nil || rules == nil || signer == nil || config.Attempt == ([16]byte{}) {
 		return nil, CBORFailure("activation_owner")
 	}
-	if config.Tunnel == nil {
-		err = artifact.CheckDirectListenerCandidate(config.Index)
-	} else {
-		err = artifact.CheckTunnelCandidate(config.Index)
-	}
-	if err != nil {
+	if err = artifact.CheckDirectListenerCandidate(config.Index); err != nil {
 		return nil, err
 	}
 	if err = reservation.CheckSameEnvironment(environment); err != nil {
@@ -102,7 +80,7 @@ func NewLiveActivationPlan(artifact *SignedMap, rules *NamespaceRules, delegatio
 	if err = materialOwner.CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}
-	charge, err := LiveActivationPlanCharge(config.Tunnel != nil)
+	charge, err := LiveActivationPlanCharge()
 	if err != nil {
 		return nil, err
 	}
@@ -180,14 +158,7 @@ func NewLiveActivationPlan(artifact *SignedMap, rules *NamespaceRules, delegatio
 		return nil, err
 	}
 	p.binding = b
-	p.fields = LiveActivationFields{Tunnel: config.Tunnel != nil, Tenant: b.tenant, Authority: b.authority, SigningKey: b.signingKey, Audience: b.audience, Profile: b.profile, Issuer: b.issuer, Lease: b.lease, Attempt: b.attempt, Artifact: b.artifactDigest, ClientIdentity: b.clientDigest, ServerIdentity: b.serverDigest, Signer: b.proofKey, Winner: b.winner, IssuedAt: b.issuedAt, ActivationEnd: b.activationEnd, SessionEnd: b.sessionEnd}
-	p.fields.ParentInitiationEnd = p.authority.parentActivation
-	p.fields.ParentSessionEnd = p.authority.parentEnd
-	if config.Tunnel != nil {
-		if err = p.freezeTunnel(artifact, config.Tunnel); err != nil {
-			return nil, err
-		}
-	}
+	p.fields = LiveActivationFields{Tenant: b.tenant, Authority: b.authority, SigningKey: b.signingKey, Audience: b.audience, Profile: b.profile, Issuer: b.issuer, Lease: b.lease, Attempt: b.attempt, Artifact: b.artifactDigest, ClientIdentity: b.clientDigest, ServerIdentity: b.serverDigest, Signer: b.proofKey, Winner: b.winner, IssuedAt: b.issuedAt, ActivationEnd: b.activationEnd, SessionEnd: b.sessionEnd}
 	fields := p.proofFields()
 	var complete [17]Field
 	copy(complete[:], fields[:])
@@ -197,7 +168,6 @@ func NewLiveActivationPlan(artifact *SignedMap, rules *NamespaceRules, delegatio
 	if err != nil {
 		return nil, err
 	}
-	p.signedSize = len(wire)
 	doc, err := p.codec.decoder.DecodeShape(wire, "ActivationAuthorization", DecodeContext{Selectors: map[string]string{"activation_source_profile": "live_authority"}})
 	if err != nil {
 		return nil, err
@@ -296,14 +266,6 @@ func (p *LiveActivationPlan) CheckTrust(namespace *LiveNamespace, artifact *Cred
 	if err := p.authority.CheckAdmission(now); err != nil {
 		return err
 	}
-	if p.tunnel != nil {
-		if namespace != p.tunnel.bindings[0][0].Namespace || permission != p.tunnel.bindings[0][0].Issuer {
-			return CBORFailure("credential_namespace_owner")
-		}
-		if err := p.tunnel.checkCurrent(p.fields.SessionEnd); err != nil {
-			return err
-		}
-	}
 	_, err := namespace.CheckDetachedActivation(p.authority, artifact, permission, staleness, signerLifetime, hardEnd)
 	return err
 }
@@ -318,46 +280,15 @@ func (s originalLiveSigner) Sign(message []byte) ([]byte, error) {
 	return s.plan.signer.Sign(message)
 }
 
-func (p *LiveActivationPlan) Issue(dst []byte, guard func() error) (int, error) {
-	sizes, err := p.issueMaterial([3][]byte{dst, nil, nil}, guard, true)
-	return sizes[0], err
-}
-
-func (p *LiveActivationPlan) issueMaterial(dst [3][]byte, guard func() error, directOnly bool) (sizes [3]int, err error) {
+func (p *LiveActivationPlan) Issue(dst []byte, guard func() error) (n int, err error) {
 	if p == nil || guard == nil {
-		return sizes, CBORFailure("activation_owner")
+		return 0, CBORFailure("activation_owner")
 	}
 	p.mu.Lock()
-	if p.closed || p.issued || directOnly && p.tunnel != nil {
+	if p.closed || p.issued {
 		p.mu.Unlock()
-		return sizes, CBORFailure("activation_owner")
+		return 0, CBORFailure("activation_owner")
 	}
-	// Reject every short output before claiming issuance or invoking a signer.
-	if len(dst[0]) < p.signedSize {
-		p.mu.Unlock()
-		return sizes, CBORFailure("configuration_capacity")
-	}
-	if p.tunnel != nil {
-		for side := range p.tunnel.grants {
-			if len(dst[side+1]) < len(p.tunnel.grants[side].document.Bytes()) {
-				p.mu.Unlock()
-				return sizes, CBORFailure("configuration_capacity")
-			}
-		}
-		if err := p.tunnel.checkCurrent(p.fields.SessionEnd); err != nil {
-			p.mu.Unlock()
-			return sizes, err
-		}
-	}
-	success := false
-	defer func() {
-		if !success {
-			for _, output := range dst {
-				clear(output)
-			}
-			sizes = [3]int{}
-		}
-	}()
 	p.issued, p.active = true, true
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.active = false; p.mu.Unlock() }()
@@ -379,36 +310,20 @@ func (p *LiveActivationPlan) issueMaterial(dst [3][]byte, guard func() error, di
 	fields := p.proofFields()
 	signed, err := p.codec.SignWith(fields[:], p.fields.Signer, originalLiveSigner{p}, DecodeContext{Selectors: map[string]string{"activation_source_profile": "live_authority"}}, check)
 	if err != nil {
-		return sizes, err
+		return 0, err
 	}
 	defer signed.Release()
 	wire, err := signed.Bytes()
 	if err != nil {
-		return sizes, err
+		return 0, err
 	}
-	if len(dst[0]) < len(wire) {
-		return sizes, CBORFailure("configuration_capacity")
-	}
-	if err = check(); err != nil {
-		return sizes, err
-	}
-	sizes[0] = copy(dst[0], wire)
-	if p.tunnel != nil {
-		for side := range p.tunnel.grants {
-			sizes[side+1], err = p.tunnel.grants[side].issue(dst[side+1], check)
-			if err != nil {
-				return sizes, err
-			}
-		}
-		if err = p.tunnel.checkCurrent(p.fields.SessionEnd); err != nil {
-			return sizes, err
-		}
+	if len(dst) < len(wire) {
+		return 0, CBORFailure("configuration_capacity")
 	}
 	if err = check(); err != nil {
-		return sizes, err
+		return 0, err
 	}
-	success = true
-	return sizes, nil
+	return copy(dst, wire), nil
 }
 
 func (p *LiveActivationPlan) Close() error {
@@ -422,8 +337,6 @@ func (p *LiveActivationPlan) Close() error {
 	if p.active {
 		return resourcev4.ErrCapacity
 	}
-	p.tunnel.close()
-	p.tunnel = nil
 	clear(p.unsigned)
 	clear(p.message)
 	p.unsigned, p.message, p.codec, p.signer, p.binding, p.authority = nil, nil, nil, nil, nil, nil

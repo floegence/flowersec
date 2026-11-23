@@ -407,12 +407,11 @@ impl fmt::Display for ResetToken {
     }
 }
 
-#[cfg(all(test, any(any(), all())))]
+#[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(all(any(), not(all())))]
+    #[cfg(any())]
     use aws_lc_rs::hkdf;
-    #[cfg(all())]
     use ring::hkdf;
 
     fn token_round_trip(payload: TokenPayload) -> TokenPayload {
@@ -486,9 +485,6 @@ mod test {
 
     #[test]
     fn invalid_token_returns_err() {
-        use super::*;
-        use rand::Rng;
-
         let rng = &mut rand::rng();
 
         let mut master_key = [0; 64];

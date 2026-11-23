@@ -2,20 +2,23 @@
 
 set -eu
 
-push_lines=$(mktemp)
-release_lines=$(mktemp)
-trap 'rm -f "$push_lines" "$release_lines"' EXIT HUP INT TERM
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/flowersec-pre-push.XXXXXX")
+push_lines=$scratch/push
+release_lines=$scratch/release
+trap 'rm -f "$push_lines" "$release_lines"; rmdir "$scratch"' EXIT HUP INT TERM
+: > "$push_lines"
+: > "$release_lines"
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   printf '%s %s %s %s\n' "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" >> "$push_lines"
   case "$remote_ref" in
-    refs/tags/flowersec-go/v*|refs/tags/flowersec-rust/v*|refs/tags/[0-9]*.[0-9]*.[0-9]*)
+    refs/tags/flowersec-go/v*|refs/tags/flowersec-go/adapters/sqlite/v*|refs/tags/flowersec-rust/v*|refs/tags/[0-9]*.[0-9]*.[0-9]*)
       printf '%s %s\n' "$remote_ref" "$local_sha" >> "$release_lines"
       ;;
   esac
 done
 
-main_line=$(awk '$3 == "refs/heads/main" && $2 !~ /^0+$/ { print; exit }' "$push_lines")
+main_line=$(awk '($3 == "refs/heads/main" || $3 == "refs/heads/release/5.x") && $2 !~ /^0+$/ { print; exit }' "$push_lines")
 if [ -n "$main_line" ]; then
   main_sha=$(printf '%s\n' "$main_line" | awk '{ print $2 }')
   repo_root=$(git rev-parse --show-toplevel)
@@ -35,7 +38,7 @@ if [ ! -s "$release_lines" ]; then
 fi
 
 if [ -z "${FLOWERSEC_RELEASE_PUSH_SHA:-}" ]; then
-  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh from synchronized main.' >&2
+  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh from a synchronized release branch.' >&2
   exit 1
 fi
 
@@ -48,11 +51,15 @@ fi
 expected_refs="refs/tags/flowersec-go/v$version
 refs/tags/$version
 refs/tags/flowersec-rust/v$version"
+if git cat-file -e "$FLOWERSEC_RELEASE_PUSH_SHA:flowersec-go/adapters/sqlite/go.mod" 2>/dev/null; then
+  expected_refs="$expected_refs
+refs/tags/flowersec-go/adapters/sqlite/v$version"
+fi
 
 actual_refs=$(cut -d ' ' -f 1 "$release_lines" | sort)
 expected_refs_sorted=$(printf '%s\n' "$expected_refs" | sort)
 if [ "$actual_refs" != "$expected_refs_sorted" ]; then
-  printf '%s\n' '[flowersec] Go, SwiftPM, and Rust release tags must be pushed together.' >&2
+  printf '%s\n' '[flowersec] All release tags for this commit must be pushed together.' >&2
   exit 1
 fi
 

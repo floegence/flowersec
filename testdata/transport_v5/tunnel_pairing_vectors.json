@@ -1,0 +1,106 @@
+{
+  "profile": "flowersec/5",
+  "listeners": {
+    "A": {
+      "candidate_id": "a",
+      "url": "wss://ingress-a.example/flowersec/v5/tunnel",
+      "tls": {
+        "mode": "ca"
+      }
+    },
+    "B": {
+      "candidate_id": "b",
+      "url": "wss://ingress-b.example/flowersec/v5/tunnel",
+      "tls": {
+        "mode": "ca"
+      }
+    }
+  },
+  "legs": {
+    "client": {
+      "artifact_json": "{\"correlation\":{\"tags\":[{\"key\":\"trace\",\"value\":\"transport-v3-vector\"}],\"v\":5},\"path\":{\"candidates\":[{\"carrier\":\"websocket\",\"id\":\"a\",\"tls\":{\"mode\":\"ca\"},\"url\":\"wss://ingress-a.example/flowersec/v5/tunnel\",\"wire_profile\":\"flowersec-tunnel/5\"}],\"expected_peer_endpoint_instance_id\":\"server\",\"kind\":\"tunnel\",\"listener_audience\":\"listener-3\",\"local_endpoint_instance_id\":\"client\",\"rendezvous_group_id\":\"group-3\",\"role\":1,\"token\":\"fixture-a-server\"},\"profile\":\"flowersec/5\",\"scoped\":[{\"critical\":true,\"payload\":{\"é\":\"decomposed-key\",\"é\":\"composed-key\",\"😀\":[-9007199254740991,9007199254740991,true,null,\"portable\"],\"\":{\"nested\":\"utf16-key-order\"}},\"scope\":\"security.context\",\"scope_version\":1}],\"session\":{\"allowed_suites\":[1,2],\"channel_id\":\"channel-3\",\"contract_hash_b64u\":\"P1zCoSFyl18J99X0lkqWfICywo15DWBtyOv27sdERU0\",\"default_suite\":1,\"e2ee_psk_b64u\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"init_expire_at_unix_s\":2000000000,\"max_inbound_streams\":64,\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0},\"v\":5}",
+      "candidate_id": "a",
+      "fsb5_hex": "4653423505020000000002127b226174746163685f746f6b656e223a22666978747572652d612d736572766572222c2263616e6469646174655f7365745f686173685f62363475223a223533495f58376476414c666f764c71644a69356a542d4a69476c5372336131617962536b624e626a744351222c2263616e64696461746573223a5b7b2263617272696572223a22776562736f636b6574222c226964223a2261222c226e6f726d616c697a65645f75726c223a227773733a2f2f696e67726573732d612e6578616d706c652f666c6f7765727365632f76352f74756e6e656c222c22746c73223a7b226d6f6465223a226361227d2c22776972655f70726f66696c65223a22666c6f7765727365632d74756e6e656c2f35227d5d2c226368616e6e656c5f6964223a226368616e6e656c2d33222c2263686f73656e5f63616e6469646174655f6964223a2261222c22656e64706f696e745f696e7374616e63655f6964223a22636c69656e74222c226c697374656e65725f61756469656e6365223a226c697374656e65722d33222c2270726f66696c65223a22666c6f7765727365632f35222c2272656e64657a766f75735f67726f75705f6964223a2267726f75702d33222c22726f6c65223a312c2273657373696f6e5f636f6e74726163745f686173685f62363475223a2250317a436f5346796c31384a393958306c6b715766494379776f313544574274794f763237736445525530227d",
+      "admission_binding_hex": "f9207a31014d2100af86b45539b2f068a04a4803edabf677627e52b98fa703e1",
+      "candidate_set_hash_b64u": "53I_X7dvALfovLqdJi5jT-JiGlSr3a1aybSkbNbjtCQ"
+    },
+    "server": {
+      "artifact_json": "{\"correlation\":{\"tags\":[{\"key\":\"trace\",\"value\":\"transport-v3-vector\"}],\"v\":5},\"path\":{\"candidates\":[{\"carrier\":\"websocket\",\"id\":\"b\",\"tls\":{\"mode\":\"ca\"},\"url\":\"wss://ingress-b.example/flowersec/v5/tunnel\",\"wire_profile\":\"flowersec-tunnel/5\"}],\"expected_peer_endpoint_instance_id\":\"client\",\"kind\":\"tunnel\",\"listener_audience\":\"listener-3\",\"local_endpoint_instance_id\":\"server\",\"rendezvous_group_id\":\"group-3\",\"role\":2,\"token\":\"fixture-b-client\"},\"profile\":\"flowersec/5\",\"scoped\":[{\"critical\":true,\"payload\":{\"é\":\"decomposed-key\",\"é\":\"composed-key\",\"😀\":[-9007199254740991,9007199254740991,true,null,\"portable\"],\"\":{\"nested\":\"utf16-key-order\"}},\"scope\":\"security.context\",\"scope_version\":1}],\"session\":{\"allowed_suites\":[1,2],\"channel_id\":\"channel-3\",\"contract_hash_b64u\":\"P1zCoSFyl18J99X0lkqWfICywo15DWBtyOv27sdERU0\",\"default_suite\":1,\"e2ee_psk_b64u\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"init_expire_at_unix_s\":2000000000,\"max_inbound_streams\":64,\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0},\"v\":5}",
+      "candidate_id": "b",
+      "fsb5_hex": "4653423505020000000002127b226174746163685f746f6b656e223a22666978747572652d622d636c69656e74222c2263616e6469646174655f7365745f686173685f62363475223a22634c627935794f31416e72346262484e30647a6b5f627164577072764373646838384d5550684e39715677222c2263616e64696461746573223a5b7b2263617272696572223a22776562736f636b6574222c226964223a2262222c226e6f726d616c697a65645f75726c223a227773733a2f2f696e67726573732d622e6578616d706c652f666c6f7765727365632f76352f74756e6e656c222c22746c73223a7b226d6f6465223a226361227d2c22776972655f70726f66696c65223a22666c6f7765727365632d74756e6e656c2f35227d5d2c226368616e6e656c5f6964223a226368616e6e656c2d33222c2263686f73656e5f63616e6469646174655f6964223a2262222c22656e64706f696e745f696e7374616e63655f6964223a22736572766572222c226c697374656e65725f61756469656e6365223a226c697374656e65722d33222c2270726f66696c65223a22666c6f7765727365632f35222c2272656e64657a766f75735f67726f75705f6964223a2267726f75702d33222c22726f6c65223a322c2273657373696f6e5f636f6e74726163745f686173685f62363475223a2250317a436f5346796c31384a393958306c6b715766494379776f313544574274794f763237736445525530227d",
+      "admission_binding_hex": "53b3ab42af9176dbd151c2469e52144784631c9cd3d532a07382a4e4dcf63afe",
+      "candidate_set_hash_b64u": "cLby5yO1Anr4bbHN0dzk_bqdWprvCsdh88MUPhN9qVw"
+    },
+    "wrongPeer": {
+      "artifact_json": "{\"correlation\":{\"tags\":[{\"key\":\"trace\",\"value\":\"transport-v3-vector\"}],\"v\":5},\"path\":{\"candidates\":[{\"carrier\":\"websocket\",\"id\":\"b\",\"tls\":{\"mode\":\"ca\"},\"url\":\"wss://ingress-b.example/flowersec/v5/tunnel\",\"wire_profile\":\"flowersec-tunnel/5\"}],\"expected_peer_endpoint_instance_id\":\"other-client\",\"kind\":\"tunnel\",\"listener_audience\":\"listener-3\",\"local_endpoint_instance_id\":\"server\",\"rendezvous_group_id\":\"group-3\",\"role\":2,\"token\":\"fixture-b-other-client\"},\"profile\":\"flowersec/5\",\"scoped\":[{\"critical\":true,\"payload\":{\"é\":\"decomposed-key\",\"é\":\"composed-key\",\"😀\":[-9007199254740991,9007199254740991,true,null,\"portable\"],\"\":{\"nested\":\"utf16-key-order\"}},\"scope\":\"security.context\",\"scope_version\":1}],\"session\":{\"allowed_suites\":[1,2],\"channel_id\":\"channel-3\",\"contract_hash_b64u\":\"P1zCoSFyl18J99X0lkqWfICywo15DWBtyOv27sdERU0\",\"default_suite\":1,\"e2ee_psk_b64u\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"init_expire_at_unix_s\":2000000000,\"max_inbound_streams\":64,\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0},\"v\":5}",
+      "candidate_id": "b",
+      "fsb5_hex": "4653423505020000000002187b226174746163685f746f6b656e223a22666978747572652d622d6f746865722d636c69656e74222c2263616e6469646174655f7365745f686173685f62363475223a22634c627935794f31416e72346262484e30647a6b5f627164577072764373646838384d5550684e39715677222c2263616e64696461746573223a5b7b2263617272696572223a22776562736f636b6574222c226964223a2262222c226e6f726d616c697a65645f75726c223a227773733a2f2f696e67726573732d622e6578616d706c652f666c6f7765727365632f76352f74756e6e656c222c22746c73223a7b226d6f6465223a226361227d2c22776972655f70726f66696c65223a22666c6f7765727365632d74756e6e656c2f35227d5d2c226368616e6e656c5f6964223a226368616e6e656c2d33222c2263686f73656e5f63616e6469646174655f6964223a2262222c22656e64706f696e745f696e7374616e63655f6964223a22736572766572222c226c697374656e65725f61756469656e6365223a226c697374656e65722d33222c2270726f66696c65223a22666c6f7765727365632f35222c2272656e64657a766f75735f67726f75705f6964223a2267726f75702d33222c22726f6c65223a322c2273657373696f6e5f636f6e74726163745f686173685f62363475223a2250317a436f5346796c31384a393958306c6b715766494379776f313544574274794f763237736445525530227d",
+      "admission_binding_hex": "74bb14c98dc939c918c7432956c99a57b35462feebc5c649f6d89ea5b93abf4d",
+      "candidate_set_hash_b64u": "cLby5yO1Anr4bbHN0dzk_bqdWprvCsdh88MUPhN9qVw"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "disjoint-candidates",
+      "steps": [
+        [
+          "client",
+          "A",
+          "pending"
+        ],
+        [
+          "server",
+          "B",
+          "paired"
+        ]
+      ]
+    },
+    {
+      "id": "wrong-listener",
+      "steps": [
+        [
+          "client",
+          "B",
+          "deny_admission"
+        ]
+      ]
+    },
+    {
+      "id": "unmirrored-identity",
+      "steps": [
+        [
+          "client",
+          "A",
+          "pending"
+        ],
+        [
+          "wrongPeer",
+          "B",
+          "must_not_pair"
+        ]
+      ]
+    },
+    {
+      "id": "replay-after-pair",
+      "steps": [
+        [
+          "client",
+          "A",
+          "pending"
+        ],
+        [
+          "server",
+          "B",
+          "paired"
+        ],
+        [
+          "client",
+          "A",
+          "deny_admission"
+        ]
+      ]
+    }
+  ],
+  "registry_sha256": "b65abb24d3d158b855edb56786e940bd2e8a4004fa10275dcbcd20378de92f7b",
+  "design_sha256": "cc3e3074ee8f14dccb51cff1186521baeda5812b16affe74420fe1a8b4e97ac1"
+}

@@ -1,6 +1,5 @@
-#[cfg(all(any(), not(all())))]
+#[cfg(any())]
 use aws_lc_rs::{aead, error, hkdf, hmac};
-#[cfg(all())]
 use ring::{aead, error, hkdf, hmac};
 
 use crate::quic_proto::crypto::{self, CryptoError};
