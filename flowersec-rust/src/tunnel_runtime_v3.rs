@@ -20,7 +20,7 @@ use std::{
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use flowersec_native_transport::PathProfile as NativePathProfile;
+use flowersec_native_transport::{PathProfile as NativePathProfile, RawQuicError};
 use futures_util::future::join_all;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -574,14 +574,22 @@ impl TunnelListener {
                     remote_address,
                 })
                 .map_err(|_| TunnelRuntimeError::Closed),
-            Self::RawQuic(listener) => listener
-                .accept()
-                .await
-                .map(|(carrier, remote_address)| AcceptedCarrier {
-                    carrier,
-                    remote_address,
-                })
-                .map_err(|_| TunnelRuntimeError::Closed),
+            Self::RawQuic(listener) => loop {
+                match listener.accept().await {
+                    Ok((carrier, remote_address)) => {
+                        break Ok(AcceptedCarrier {
+                            carrier,
+                            remote_address,
+                        });
+                    }
+                    Err(
+                        RawQuicError::Handshake
+                        | RawQuicError::Timeout
+                        | RawQuicError::InvalidNegotiatedAlpn,
+                    ) => continue,
+                    Err(_) => break Err(TunnelRuntimeError::Closed),
+                }
+            },
             Self::WebSocket(listener) => listener
                 .accept_with_peer()
                 .await
@@ -1050,7 +1058,7 @@ struct TunnelState {
     close_finished: AtomicBool,
     close_done: Notify,
     pending: Mutex<HashMap<AuthorityKey, PendingEntry<Leg>>>,
-    credentials: Mutex<HashMap<String, SystemTime>>,
+    credentials: Mutex<CredentialIndex>,
     active_pairs: Mutex<usize>,
     active_carriers: Mutex<HashMap<u64, ActivePair>>,
     admission_permits: Arc<Semaphore>,
@@ -1104,7 +1112,7 @@ impl TunnelState {
             close_finished: AtomicBool::new(false),
             close_done: Notify::new(),
             pending: Mutex::new(HashMap::new()),
-            credentials: Mutex::new(HashMap::new()),
+            credentials: Mutex::default(),
             active_pairs: Mutex::new(0),
             active_carriers: Mutex::new(HashMap::new()),
             admission_permits: Arc::new(Semaphore::new(max_concurrent_admissions)),
@@ -1151,6 +1159,32 @@ struct AuthorityKey {
 struct PendingEntry<T> {
     generation_id: u64,
     value: T,
+}
+
+#[derive(Default)]
+struct CredentialIndex {
+    reserved: HashSet<String>,
+    expirations: BTreeMap<SystemTime, Vec<String>>,
+}
+
+impl CredentialIndex {
+    fn reserve(&mut self, lookup: String, now: SystemTime) -> bool {
+        while self
+            .expirations
+            .first_key_value()
+            .is_some_and(|(expiry, _)| *expiry <= now)
+        {
+            for expired in self
+                .expirations
+                .pop_first()
+                .expect("nonempty expiry index")
+                .1
+            {
+                self.reserved.remove(&expired);
+            }
+        }
+        self.reserved.insert(lookup)
+    }
 }
 
 impl TaskRuntime {
@@ -1231,13 +1265,7 @@ impl TaskRuntime {
         let credential_replay = {
             let now = SystemTime::now();
             let mut credentials = self.state.credentials.lock().await;
-            credentials.retain(|_, expiry| *expiry > now);
-            if credentials.contains_key(&lookup) {
-                true
-            } else {
-                credentials.insert(lookup.clone(), now + self.options.pair_timeout);
-                false
-            }
+            !credentials.reserve(lookup.clone(), now)
         };
         if credential_replay {
             let _ = send_fsa3(
@@ -1257,7 +1285,7 @@ impl TaskRuntime {
         {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
-                self.state.credentials.lock().await.remove(&lookup);
+                self.state.credentials.lock().await.reserved.remove(&lookup);
                 let _ = send_fsa3(
                     admission.as_ref(),
                     FSA5_REJECT,
@@ -1270,7 +1298,7 @@ impl TaskRuntime {
                 return Err(TunnelRuntimeError::Rejected);
             }
             Err(error) => {
-                self.state.credentials.lock().await.remove(&lookup);
+                self.state.credentials.lock().await.reserved.remove(&lookup);
                 return Err(error);
             }
         };
@@ -1284,7 +1312,7 @@ impl TaskRuntime {
         ) {
             Ok(decision) => decision,
             Err(error) => {
-                self.state.credentials.lock().await.remove(&lookup);
+                self.state.credentials.lock().await.reserved.remove(&lookup);
                 if let Some(lease_id) = response_lease_id(&response) {
                     release_bounded(self.authorizer.as_ref(), lease_id, admission_deadline).await;
                 }
@@ -1302,7 +1330,7 @@ impl TaskRuntime {
         };
         let allowed = match decision {
             AuthorizationDecision::Deny { status, reason } => {
-                self.state.credentials.lock().await.remove(&lookup);
+                self.state.credentials.lock().await.reserved.remove(&lookup);
                 // An expired allow is represented as a retryable deny so the
                 // caller receives the correct artifact-expiry reason. It
                 // still carries the authorizer's lease and must be released
@@ -1329,7 +1357,10 @@ impl TaskRuntime {
             .credentials
             .lock()
             .await
-            .insert(lookup, allowed.expires_at);
+            .expirations
+            .entry(allowed.expires_at)
+            .or_default()
+            .push(lookup);
         let mut claims = request.claims;
         Arc::make_mut(&mut claims).authority_scope = allowed.authority_scope;
         let leg = Leg {
@@ -3403,7 +3434,7 @@ mod tests {
             ["lease-late"]
         );
         assert_eq!(runtime.state.admission_permits.available_permits(), 1);
-        assert!(runtime.state.credentials.lock().await.is_empty());
+        assert!(runtime.state.credentials.lock().await.reserved.is_empty());
         assert_eq!(runtime.state.active_tasks.load(Ordering::SeqCst), 0);
     }
 

@@ -303,15 +303,12 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   }).catch(() => undefined);
 
   const serviceWorker = globalThis.navigator?.serviceWorker;
-  serviceWorker?.addEventListener("controllerchange", register);
-  register();
   let serviceWorkerBridge: Readonly<{ dispose(): void }> | undefined;
   const terminate = () => {
     admission.close();
     for (const controller of active) controller.abort(new SessionError("closed"));
     lifetime.abort(new SessionError("closed"));
   };
-  void options.session.waitTermination({ signal: lifetime.signal }).then(terminate, () => { if (!disposed) terminate(); });
 
   // One transaction owns admission, framing, cancellation and response backpressure
   // for direct fetch and both browser bridges. It never reconnects a request.
@@ -553,7 +550,10 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   });
   if (serviceWorker !== undefined) {
     serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(runtime, serviceWorker);
+    serviceWorker.addEventListener("controllerchange", register);
+    register();
   }
+  void options.session.waitTermination({ signal: lifetime.signal }).then(terminate, () => { if (!disposed) terminate(); });
   return runtime;
 }
 

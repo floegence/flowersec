@@ -167,6 +167,31 @@ func (AuthorizationRecord) String() string               { return "Flowersec.Aut
 func (AuthorizationRecord) GoString() string             { return "controlplane.AuthorizationRecord" }
 func (AuthorizationRecord) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
+func formatOpaque(state fmt.State, verb rune, value interface {
+	fmt.Stringer
+	fmt.GoStringer
+}) {
+	if verb == 'v' && state.Flag('#') {
+		_, _ = io.WriteString(state, value.GoString())
+	} else {
+		_, _ = io.WriteString(state, value.String())
+	}
+}
+
+func (record AuthorizationRecord) Format(state fmt.State, verb rune) {
+	formatOpaque(state, verb, record)
+}
+func (response AuthorizationResponse) Format(state fmt.State, verb rune) {
+	formatOpaque(state, verb, response)
+}
+func (issued IssuedArtifact) Format(state fmt.State, verb rune) { formatOpaque(state, verb, issued) }
+func (issued IssuedHTTPDirectArtifact) Format(state fmt.State, verb rune) {
+	formatOpaque(state, verb, issued)
+}
+func (issued IssuedPrivateLoopbackArtifact) Format(state fmt.State, verb rune) {
+	formatOpaque(state, verb, issued)
+}
+
 // RuntimeAuthorizationRequest is a validated opaque request received from the
 // flowersec-runtime HTTP authorizer callback.
 type RuntimeAuthorizationRequest struct {

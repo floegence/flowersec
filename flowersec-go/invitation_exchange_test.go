@@ -37,6 +37,11 @@ func TestInvitationCodeCanonicalizationAndRedaction(t *testing.T) {
 			t.Fatal("ordinary representations expose the invitation secret")
 		}
 	}
+	for _, format := range []string{"%d", "%o", "%b", "%x", "%#v"} {
+		if fmt.Sprintf(format, code) != code.String() {
+			t.Fatalf("format %s was not redacted", format)
+		}
+	}
 	for _, invalid := range []string{"", strings.Repeat("Z", 26), strings.Repeat("I", 26), code.Text() + "A", code.Text()[:25]} {
 		if _, err := flowersec.ParseInvitationCode(invalid); err == nil {
 			t.Fatal("invalid code accepted")

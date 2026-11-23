@@ -460,11 +460,16 @@ func TestProxyServerHTTPStreamResetCancelsUpstream(t *testing.T) {
 	}
 }
 
-func TestProxyServerCloseInterruptsPartialHTTPFrames(t *testing.T) {
+func TestProxyServerCloseInterruptsPartialFrames(t *testing.T) {
 	for _, testCase := range []struct {
-		name  string
-		write func(net.Conn) error
+		name      string
+		websocket bool
+		write     func(net.Conn) error
 	}{
+		{name: "websocket metadata", websocket: true, write: func(client net.Conn) error {
+			_, err := client.Write([]byte{0, 0})
+			return err
+		}},
 		{name: "metadata", write: func(client net.Conn) error {
 			_, err := client.Write([]byte{0, 0})
 			return err
@@ -492,6 +497,9 @@ func TestProxyServerCloseInterruptsPartialHTTPFrames(t *testing.T) {
 			started := make(chan struct{})
 			handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
 				close(started)
+				if testCase.websocket {
+					return proxy.serveWebSocket(ctx, incoming)
+				}
 				proxy.serveHTTP(ctx, incoming)
 				return nil
 			})

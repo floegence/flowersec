@@ -123,7 +123,28 @@ func VerifySetupMAC(setupRoot, h3 [32]byte, preface SetupPreface) bool {
 	return hmac.Equal(want[:], preface.SetupMAC[:])
 }
 
+type RecordCipher struct {
+	aead        cipher.AEAD
+	noncePrefix [4]byte
+}
+
+func NewRecordCipher(suite Suite, key [32]byte, prefix [4]byte) (*RecordCipher, error) {
+	aead, err := newAEAD(suite, key)
+	if err != nil {
+		return nil, err
+	}
+	return &RecordCipher{aead: aead, noncePrefix: prefix}, nil
+}
+
 func SealRecord(suite Suite, key [32]byte, noncePrefix [4]byte, h3 [32]byte, logicalStreamID uint64, direction Direction, header RecordHeader, plaintext []byte) ([]byte, error) {
+	codec, err := NewRecordCipher(suite, key, noncePrefix)
+	if err != nil {
+		return nil, err
+	}
+	return codec.Seal(h3, logicalStreamID, direction, header, plaintext)
+}
+
+func (codec *RecordCipher) Seal(h3 [32]byte, logicalStreamID uint64, direction Direction, header RecordHeader, plaintext []byte) ([]byte, error) {
 	if err := direction.validate(); err != nil {
 		return nil, err
 	}
@@ -134,16 +155,20 @@ func SealRecord(suite Suite, key [32]byte, noncePrefix [4]byte, h3 [32]byte, log
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newAEAD(suite, key)
-	if err != nil {
-		return nil, err
-	}
-	nonce := recordNonce(noncePrefix, header.Sequence)
+	nonce := recordNonce(codec.noncePrefix, header.Sequence)
 	aad := recordAAD(h3, logicalStreamID, direction, rawHeader)
-	return aead.Seal(nil, nonce[:], plaintext, aad), nil
+	return codec.aead.Seal(nil, nonce[:], plaintext, aad), nil
 }
 
 func OpenRecord(suite Suite, key [32]byte, noncePrefix [4]byte, h3 [32]byte, logicalStreamID uint64, direction Direction, header RecordHeader, ciphertext []byte) ([]byte, error) {
+	codec, err := NewRecordCipher(suite, key, noncePrefix)
+	if err != nil {
+		return nil, err
+	}
+	return codec.Open(h3, logicalStreamID, direction, header, ciphertext)
+}
+
+func (codec *RecordCipher) Open(h3 [32]byte, logicalStreamID uint64, direction Direction, header RecordHeader, ciphertext []byte) ([]byte, error) {
 	if err := direction.validate(); err != nil {
 		return nil, err
 	}
@@ -154,13 +179,9 @@ func OpenRecord(suite Suite, key [32]byte, noncePrefix [4]byte, h3 [32]byte, log
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newAEAD(suite, key)
-	if err != nil {
-		return nil, err
-	}
-	nonce := recordNonce(noncePrefix, header.Sequence)
+	nonce := recordNonce(codec.noncePrefix, header.Sequence)
 	aad := recordAAD(h3, logicalStreamID, direction, rawHeader)
-	plaintext, err := aead.Open(nil, nonce[:], ciphertext, aad)
+	plaintext, err := codec.aead.Open(nil, nonce[:], ciphertext, aad)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrAuthentication, err)
 	}

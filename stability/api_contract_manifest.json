@@ -1406,6 +1406,11 @@
           },
           {
             "kind": "method",
+            "expr": "flowersec.InvitationCode.Format",
+            "doc_token": "`flowersec.InvitationCode.Format()`"
+          },
+          {
+            "kind": "method",
             "expr": "flowersec.InvitationCode.GoString",
             "doc_token": "`flowersec.InvitationCode`"
           },
@@ -1689,6 +1694,11 @@
           },
           {
             "kind": "method",
+            "expr": "controlplane.IssuedArtifact.Format",
+            "doc_token": "`controlplane.IssuedArtifact.Format()`"
+          },
+          {
+            "kind": "method",
             "expr": "controlplane.IssuedArtifact.GoString",
             "doc_token": "`controlplane.IssuedArtifact.GoString()`"
           },
@@ -1739,8 +1749,18 @@
           },
           {
             "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.Format",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.Format()`"
+          },
+          {
+            "kind": "method",
             "expr": "controlplane.IssuedPrivateLoopbackArtifact.GoString",
             "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.Format",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.Format()`"
           },
           {
             "kind": "method",
@@ -1781,6 +1801,11 @@
             "kind": "method",
             "expr": "controlplane.AuthorizationRecord.String",
             "doc_token": "`controlplane.AuthorizationRecord.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.Format",
+            "doc_token": "`controlplane.AuthorizationRecord.Format()`"
           },
           {
             "kind": "method",
@@ -1876,6 +1901,11 @@
             "kind": "method",
             "expr": "controlplane.AuthorizationResponse.String",
             "doc_token": "`controlplane.AuthorizationResponse.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationResponse.Format",
+            "doc_token": "`controlplane.AuthorizationResponse.Format()`"
           },
           {
             "kind": "method",

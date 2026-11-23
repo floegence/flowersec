@@ -21,8 +21,10 @@ type encryptedStream struct {
 	id      uint64
 	kind    string
 
-	stateMu sync.Mutex
-	state   *protocolv3.LogicalStreamState
+	stateMu    sync.Mutex
+	state      *protocolv3.LogicalStreamState
+	sendCipher streamCipherCache
+	recvCipher streamCipherCache
 
 	sendMu                  sync.Mutex
 	sendEpoch               uint32
@@ -65,9 +67,41 @@ type openResponse struct {
 	err      error
 }
 
+type streamCipherCache struct {
+	mu      sync.Mutex
+	epoch   uint32
+	codec   *protocolv3.RecordCipher
+	retired bool
+}
+
+func (cache *streamCipherCache) forEpoch(session *engineSession, root [32]byte, id uint64, direction protocolv3.Direction, epoch uint32) (*protocolv3.RecordCipher, error) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.codec != nil && cache.epoch == epoch {
+		return cache.codec, nil
+	}
+	material, err := protocolv3.DeriveStreamMaterial(root, session.h3, id, direction, epoch)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := protocolv3.NewRecordCipher(session.config.Suite, material.RecordKey, material.NoncePrefix)
+	if err == nil && !cache.retired {
+		cache.codec, cache.epoch = codec, epoch
+	}
+	return codec, err
+}
+
+func (cache *streamCipherCache) clear(retire bool) {
+	cache.mu.Lock()
+	cache.codec = nil
+	cache.retired = cache.retired || retire
+	cache.mu.Unlock()
+}
+
 const (
 	reservedRPCStreamKind      = "flowersec.rpc.v5"
 	maxCoalescedWriteBytes     = 4 * protocolv3.MaxDataBytes
+	maxBufferedStreamBytes     = 4 << 20
 	resetControlConfirmTimeout = 2 * time.Second
 )
 
@@ -491,7 +525,8 @@ func (s *engineSession) rejectInbound(carrierStream carrier.Stream, state *proto
 }
 
 func (s *engineSession) readStreamRecord(stream carrier.Stream, logicalID uint64, epoch uint32, sequence uint64) (protocolv3.InnerType, []byte, protocolv3.RecordHeader, error) {
-	typ, payload, header, err := s.readStreamRecordAny(stream, logicalID)
+	var temporary streamCipherCache
+	typ, payload, header, err := s.readStreamRecordAny(stream, logicalID, &temporary)
 	if err != nil {
 		return 0, nil, protocolv3.RecordHeader{}, err
 	}
@@ -501,7 +536,7 @@ func (s *engineSession) readStreamRecord(stream carrier.Stream, logicalID uint64
 	return typ, payload, header, nil
 }
 
-func (s *engineSession) readStreamRecordAny(stream carrier.Stream, logicalID uint64) (protocolv3.InnerType, []byte, protocolv3.RecordHeader, error) {
+func (s *engineSession) readStreamRecordAny(stream carrier.Stream, logicalID uint64, cache *streamCipherCache) (protocolv3.InnerType, []byte, protocolv3.RecordHeader, error) {
 	rawHeader := make([]byte, protocolv3.RecordHeaderSize)
 	if _, err := io.ReadFull(stream, rawHeader); err != nil {
 		return 0, nil, protocolv3.RecordHeader{}, err
@@ -520,11 +555,11 @@ func (s *engineSession) readStreamRecordAny(stream carrier.Stream, logicalID uin
 	if !ok {
 		return 0, nil, protocolv3.RecordHeader{}, ErrSessionProtocol
 	}
-	material, err := protocolv3.DeriveStreamMaterial(roots.StreamRoot, s.h3, logicalID, s.recvDir, header.Epoch)
+	codec, err := cache.forEpoch(s, roots.StreamRoot, logicalID, s.recvDir, header.Epoch)
 	if err != nil {
 		return 0, nil, protocolv3.RecordHeader{}, err
 	}
-	plaintext, err := protocolv3.OpenRecord(s.config.Suite, material.RecordKey, material.NoncePrefix, s.h3, logicalID, s.recvDir, header, ciphertext)
+	plaintext, err := codec.Open(s.h3, logicalID, s.recvDir, header, ciphertext)
 	if err != nil {
 		return 0, nil, protocolv3.RecordHeader{}, err
 	}
@@ -638,17 +673,18 @@ func (s *encryptedStream) Read(payload []byte) (int, error) {
 	if len(payload) == 0 {
 		return 0, nil
 	}
-	if err := s.acquireReadOwner(1); err != nil {
-		return 0, err
+	if count, err := s.drainOrAcquireReader(payload); count != 0 || err != nil {
+		return count, err
 	}
 	defer s.releaseReadOwner(1)
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	for {
-		if len(s.readBuf) != 0 {
-			n := copy(payload, s.readBuf)
-			s.readBuf = s.readBuf[n:]
-			return n, nil
+		s.readOwnerMu.Lock()
+		count := s.drainBufferedLocked(payload)
+		s.readOwnerMu.Unlock()
+		if count != 0 {
+			return count, nil
 		}
 		if s.remoteEOF {
 			return 0, io.EOF
@@ -668,7 +704,7 @@ func (s *encryptedStream) Read(payload []byte) (int, error) {
 }
 
 func (s *encryptedStream) readNextRecordLocked() error {
-	typ, data, header, err := s.session.readStreamRecordAny(s.carrier, s.id)
+	typ, data, header, err := s.session.readStreamRecordAny(s.carrier, s.id, &s.recvCipher)
 	if err != nil {
 		return err
 	}
@@ -701,7 +737,10 @@ func (s *encryptedStream) readNextRecordLocked() error {
 	}
 	switch typ {
 	case protocolv3.InnerData:
+		s.readOwnerMu.Lock()
 		s.readBuf = append(s.readBuf, data...)
+		s.notifyReadOwnerChangedLocked()
+		s.readOwnerMu.Unlock()
 	case protocolv3.InnerFIN:
 		if err := s.verifyCarrierEOF(); err != nil {
 			return err
@@ -734,19 +773,57 @@ func (s *encryptedStream) verifyCarrierEOF() error {
 	return err
 }
 
-func (s *encryptedStream) acquireReadOwner(owner uint8) error {
+func (s *encryptedStream) drainBufferedLocked(payload []byte) int {
+	count := copy(payload, s.readBuf)
+	if count != 0 {
+		s.readBuf = s.readBuf[count:]
+		if len(s.readBuf) == 0 {
+			s.readBuf = nil
+		}
+		s.notifyReadOwnerChangedLocked()
+	}
+	return count
+}
+
+func (s *encryptedStream) drainOrAcquireReader(payload []byte) (int, error) {
 	for {
 		s.readOwnerMu.Lock()
+		if count := s.drainBufferedLocked(payload); count != 0 {
+			s.readOwnerMu.Unlock()
+			return count, nil
+		}
 		if s.readOwner == 0 {
-			s.readOwner = owner
+			s.readOwner = 1
 			s.notifyReadOwnerChangedLocked()
 			s.readOwnerMu.Unlock()
-			return nil
+			return 0, nil
 		}
 		changed := s.readOwnerChanged
 		s.readOwnerMu.Unlock()
 		select {
 		case <-changed:
+		case <-s.session.ctx.Done():
+			return 0, s.session.sessionError()
+		}
+	}
+}
+
+func (s *encryptedStream) waitRekeyReadSpace(ctx context.Context) error {
+	for {
+		s.readOwnerMu.Lock()
+		ready := len(s.readBuf) <= maxBufferedStreamBytes-protocolv3.MaxDataBytes
+		changed := s.readOwnerChanged
+		s.readOwnerMu.Unlock()
+		if err := s.TerminalError(); err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-s.session.ctx.Done():
 			return s.session.sessionError()
 		}
@@ -802,6 +879,9 @@ func (s *encryptedStream) awaitReceiveRekey(ctx context.Context, transition uint
 				if pendingACK {
 					break
 				}
+				if err = s.waitRekeyReadSpace(ctx); err != nil {
+					break
+				}
 				if err = s.readNextRecordLocked(); err != nil {
 					s.localReset(err)
 					break
@@ -849,6 +929,9 @@ func (s *encryptedStream) awaitSendRekeyACK(ctx context.Context, pending *pendin
 					s.releaseReadOwner(3)
 					return nil
 				default:
+				}
+				if err = s.waitRekeyReadSpace(ctx); err != nil {
+					break
 				}
 				if err = s.readNextRecordLocked(); err != nil {
 					s.localReset(err)
@@ -1265,7 +1348,7 @@ func (s *encryptedStream) appendRecordLocked(destination []byte, typ protocolv3.
 	if !ok {
 		return nil, ErrSessionProtocol
 	}
-	material, err := protocolv3.DeriveStreamMaterial(roots.StreamRoot, s.session.h3, s.id, s.session.sendDir, s.sendEpoch)
+	codec, err := s.sendCipher.forEpoch(s.session, roots.StreamRoot, s.id, s.session.sendDir, s.sendEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -1273,7 +1356,7 @@ func (s *encryptedStream) appendRecordLocked(destination []byte, typ protocolv3.
 		Epoch: s.sendEpoch, Sequence: s.sendSeq,
 		CiphertextLength: uint32(len(inner) + protocolv3.AEADTagBytes),
 	}
-	ciphertext, err := protocolv3.SealRecord(s.session.config.Suite, material.RecordKey, material.NoncePrefix, s.session.h3, s.id, s.session.sendDir, header, inner)
+	ciphertext, err := codec.Seal(s.session.h3, s.id, s.session.sendDir, header, inner)
 	if err != nil {
 		return nil, err
 	}
@@ -1377,6 +1460,9 @@ func (s *encryptedStream) peerReset(cause error) {
 }
 
 func (s *encryptedStream) completeSendRekeyTerminal() {
+	s.readOwnerMu.Lock()
+	s.notifyReadOwnerChangedLocked()
+	s.readOwnerMu.Unlock()
 	s.sendRekeyMu.Lock()
 	pending := s.sendRekey
 	s.sendRekey = nil
@@ -1405,10 +1491,12 @@ func (s *encryptedStream) releaseIfClean() {
 }
 
 func (s *encryptedStream) setSendRootEpoch(epoch uint32) {
+	s.sendCipher.clear(false)
 	s.sendRootNeed.Store(uint64(epoch) + 1)
 }
 
 func (s *encryptedStream) clearSendRootEpoch() {
+	s.sendCipher.clear(true)
 	s.sendRootNeed.Store(0)
 }
 
@@ -1421,10 +1509,12 @@ func (s *encryptedStream) minimumSendRootEpoch() (uint32, bool) {
 }
 
 func (s *encryptedStream) setReceiveRootEpoch(epoch uint32) {
+	s.recvCipher.clear(false)
 	s.recvRootNeed.Store(uint64(epoch) + 1)
 }
 
 func (s *encryptedStream) clearReceiveRootEpoch() {
+	s.recvCipher.clear(true)
 	s.recvRootNeed.Store(0)
 }
 

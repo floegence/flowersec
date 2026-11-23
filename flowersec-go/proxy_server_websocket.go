@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -18,6 +19,21 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		return ErrInvalidProxyServer
 	}
 	stream := incoming.Stream
+	ctx, cancelOperation := context.WithCancel(ctx)
+	defer cancelOperation()
+	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
+	resetDone := make(chan struct{})
+	stopReset := context.AfterFunc(ctx, func() {
+		defer close(resetDone)
+		resetStream()
+	})
+	defer func() {
+		if !stopReset() {
+			<-resetDone
+		}
+	}()
+	intake := time.AfterFunc(server.config.maxTimeout, cancelOperation)
+	defer intake.Stop()
 	open := proxyWebSocketOpen{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &open); err != nil {
 		server.writeWebSocketError(stream, "unknown", "invalid_ws_open_meta")
@@ -65,11 +81,8 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		return err
 	}
 
-	operationContext := ctx
-	if operationContext == nil {
-		operationContext = context.Background()
-	}
-	operationContext, cancel := context.WithCancel(operationContext)
+	intake.Stop()
+	operationContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errorsCh := make(chan error, 2)
 	var closeOnce sync.Once
@@ -77,7 +90,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeOnce.Do(func() {
 			cancel()
 			_ = connection.Close()
-			_ = stream.Reset()
+			resetStream()
 		})
 	}
 	go func() {

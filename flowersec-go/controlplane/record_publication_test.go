@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,17 @@ func publicationFixture(t testing.TB, metadata ArtifactMetadata) IssuedArtifact 
 		t.Fatal(err)
 	}
 	return issued
+}
+
+func TestControlPlaneCredentialFormatting(t *testing.T) {
+	issued := publicationFixture(t, ArtifactMetadata{})
+	for _, value := range []fmt.Stringer{issued, issued.AuthorizationRecord(), AuthorizationResponse{encoded: []byte("private")}} {
+		for _, format := range []string{"%d", "%o", "%b", "%+v"} {
+			if fmt.Sprintf(format, value) != value.String() {
+				t.Fatalf("%T does not redact %s", value, format)
+			}
+		}
+	}
 }
 
 func TestDirectRecordPublication(t *testing.T) {

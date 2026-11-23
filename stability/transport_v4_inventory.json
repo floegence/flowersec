@@ -425,7 +425,7 @@
       "path": "flowersec-go/internal/sessionv3/stream.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 83
+      "matching_lines": 84
     },
     {
       "path": "flowersec-go/internal/sessionv3/unreliable.go",
@@ -851,7 +851,7 @@
       "path": "flowersec-swift/Sources/Flowersec/TransportV3Session.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 5,
-      "matching_lines": 375
+      "matching_lines": 378
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
@@ -995,7 +995,7 @@
       "path": "flowersec-ts/src/node/tunnelRuntimeV3.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 2,
-      "matching_lines": 125
+      "matching_lines": 126
     },
     {
       "path": "flowersec-ts/src/node/webSocketServerV3.ts",

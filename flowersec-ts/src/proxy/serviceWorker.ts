@@ -123,6 +123,31 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
   const worker = self as any;
   let runtimeClientId = "";
 
+  const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number): Promise<ArrayBuffer | null> => {
+    let buffer = new Uint8Array(0);
+    let used = 0;
+    if (body === null) return buffer.buffer;
+    const reader = body.getReader();
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) return used === buffer.length ? buffer.buffer : buffer.buffer.slice(0, used);
+        const required = used + next.value.byteLength;
+        if (required > limit) {
+          void reader.cancel().catch(() => undefined);
+          return null;
+        }
+        if (required > buffer.length) {
+          const grown = new Uint8Array(Math.min(limit, Math.max(required, buffer.length * 2)));
+          grown.set(buffer);
+          buffer = grown;
+        }
+        buffer.set(next.value, used);
+        used = required;
+      }
+    } finally { reader.releaseLock(); }
+  };
+
   const pathMatches = (path: string, values: readonly string[]) => values.some((value) => path.startsWith(value));
   const safeMessage = (error: unknown) => error instanceof Error && error.name === "AbortError"
     ? "proxy request canceled"
@@ -188,8 +213,8 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
       let body: ArrayBuffer | undefined;
       if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
       if (request.method !== "GET" && request.method !== "HEAD") {
-        const requestBody = await request.clone().arrayBuffer() as ArrayBuffer;
-        if (requestBody.byteLength > config.maxRequestBodyBytes) return new Response("proxy request too large", { status: 413 });
+        const requestBody = await boundedBody(request.body, config.maxRequestBodyBytes);
+        if (requestBody === null) return new Response("proxy request too large", { status: 413 });
         body = requestBody;
       }
       const channel = new MessageChannel();
@@ -240,11 +265,11 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           }).catch(() => finishError(503, "proxy runtime unavailable", true));
         }, 250);
         request.signal.addEventListener("abort", requestAborted, { once: true });
-        channel.port1.onmessage = (message) => {
+        const handleMessage = (message: MessageEvent) => {
           const value = message.data as Record<string, unknown> | null;
           if (value === null || typeof value !== "object" || finished) return;
           if (value.type === "flowersec-proxy:response_meta") {
-            if (!Number.isInteger(value.status) || metadata !== null) return finishError(502, "invalid proxy response");
+            if (typeof value.status !== "number" || !Number.isInteger(value.status) || value.status < 200 || value.status > 599 || metadata !== null) return finishError(502, "invalid proxy response");
             const headers = new Headers();
             if (Array.isArray(value.headers)) for (const entry of value.headers) {
               if (entry && typeof entry.name === "string" && typeof entry.value === "string") headers.append(entry.name, entry.value);
@@ -252,6 +277,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
             metadata = { status: value.status as number, headers };
             clearTimeout(metadataTimer);
             armBodyInactivityTimer();
+            if (request.method === "HEAD" || [204, 205, 304].includes(metadata.status)) return;
             const stream = new ReadableStream<Uint8Array>({
               start(valueController) {
                 controller = valueController;
@@ -275,6 +301,8 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
             return;
           }
           if (value.type === "flowersec-proxy:response_end") {
+            if (metadata === null) return finishError(502, "invalid proxy response");
+            if (controller === null) resolve(new Response(null, metadata));
             finished = true;
             controller?.close();
             cleanup();
@@ -283,6 +311,9 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           if (value.type === "flowersec-proxy:response_error") {
             finishError(Number.isInteger(value.status) ? value.status as number : 502, typeof value.message === "string" ? value.message : "proxy request failed");
           }
+        };
+        channel.port1.onmessage = (message) => {
+          try { handleMessage(message); } catch { finishError(502, "invalid proxy response", true); }
         };
         channel.port1.onmessageerror = () => finishError(502, "proxy request failed", true);
         const headers = Array.from(request.headers.entries() as Iterable<[string, string]>).map(([name, value]) => ({ name, value }));
@@ -305,10 +336,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
       });
 
       const injection = config.injectHTML;
-      if (injection === null || pathMatches(url.pathname, injection.excludePathPrefixes ?? [])) return response;
+      if (response.body === null || injection === null || pathMatches(url.pathname, injection.excludePathPrefixes ?? [])) return response;
       if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("text/html")) return response;
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength > config.maxInjectHTMLBytes) return new Response("proxy HTML response too large", { status: 502 });
+      const bytes = await boundedBody(response.body, config.maxInjectHTMLBytes);
+      if (bytes === null) return new Response("proxy HTML response too large", { status: 502 });
       const decoder = new TextDecoder();
       let html = decoder.decode(bytes);
       const runtimeGlobal = injection.runtimeGlobal ?? "__flowersecProxyRuntime";

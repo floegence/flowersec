@@ -40,7 +40,15 @@ export async function startNodeRawQuicListenerV3(
   }
   return Object.freeze({
     address: () => listener.address(),
-    accept: async (operation = {}) => adaptNativeCarrierSessionV3(await listener.accept(operation)),
+    accept: async (operation: Readonly<{ signal?: AbortSignal }> = {}) => {
+      while (true) {
+        operation.signal?.throwIfAborted();
+        try { return adaptNativeCarrierSessionV3(await listener.accept(operation)); }
+        catch (error) {
+          if (!(error instanceof Error) || !["handshake_failed", "handshake_timeout", "invalid_alpn"].includes(error.message)) throw error;
+        }
+      }
+    },
     close: async () => await listener.close(),
   });
 }

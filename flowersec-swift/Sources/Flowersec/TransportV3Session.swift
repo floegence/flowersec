@@ -76,7 +76,7 @@ actor TransportV3Session {
   private var inboundResponderWaiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
   private var inboundApplicationStreams = 0
   private var outboundApplicationStreams = 0
-  private var incoming: [IncomingStream] = []
+  private var incoming: [(id: UInt64, value: IncomingStream)] = []
   private var incomingWaiters: [UInt64: CheckedContinuation<IncomingStream, Error>] = [:]
   private var incomingWaiterOrder: [UInt64] = []
   private var nextIncomingWaiterID: UInt64 = 1
@@ -235,7 +235,7 @@ actor TransportV3Session {
   func acceptStream() async throws -> IncomingStream {
     try Task.checkCancellation()
     guard !closing, !closed else { throw TransportV3SessionError.closed }
-    if !incoming.isEmpty { return incoming.removeFirst() }
+    if !incoming.isEmpty { return incoming.removeFirst().value }
     let waiterID = nextIncomingWaiterID
     nextIncomingWaiterID &+= 1
     if nextIncomingWaiterID == 0 { nextIncomingWaiterID = 1 }
@@ -600,6 +600,7 @@ actor TransportV3Session {
   fileprivate func streamFinished(id: UInt64, inbound: Bool, internalRPC: Bool) {
     guard streams.removeValue(forKey: id) != nil, !internalRPC else { return }
     if inbound {
+      incoming.removeAll { $0.id == id }
       inboundApplicationStreams = max(0, inboundApplicationStreams - 1)
     } else {
       outboundApplicationStreams = max(0, outboundApplicationStreams - 1)
@@ -999,6 +1000,7 @@ actor TransportV3Session {
         await startRPCServer(stream)
       } else {
         await deliver(
+          id: preface.logicalStreamID,
           IncomingStream(
             kind: open.kind,
             metadata: metadata,
@@ -1057,7 +1059,8 @@ actor TransportV3Session {
     await carrierStream.close()
   }
 
-  private func deliver(_ value: IncomingStream) async {
+  private func deliver(id: UInt64, _ value: IncomingStream) async {
+    guard streams[id] != nil else { return }
     guard !closing, !closed else {
       try? await value.stream.reset()
       return
@@ -1069,7 +1072,7 @@ actor TransportV3Session {
         return
       }
     }
-    incoming.append(value)
+    incoming.append((id, value))
   }
 
   private func startRPCServer(_ stream: TransportV3ByteStream) async {
@@ -2177,6 +2180,8 @@ private actor TransportV3ByteStream: ByteStream {
   private var receivePriorSequence: UInt64 = 0
   private var receivePriorACK = false
   private var readBuffer = Data()
+  private static let receiveLimit = 4 * 1024 * 1024
+  private var capacityWaiters: [CheckedContinuation<Void, Never>] = []
   private var localFIN = false
   private var remoteFIN = false
   private var terminal: TransportV3SessionError?
@@ -2274,6 +2279,7 @@ private actor TransportV3ByteStream: ByteStream {
     let count = min(maxBytes, readBuffer.count)
     let output = Data(readBuffer.prefix(count))
     readBuffer.removeFirst(count)
+    if readBuffer.count <= Self.receiveLimit - TransportV3Crypto.maxDataBytes { wakeCapacityWaiters() }
     return output
   }
 
@@ -2290,9 +2296,9 @@ private actor TransportV3ByteStream: ByteStream {
     guard terminal == nil else { throw terminal! }
     guard !localFIN else { throw TransportV3SessionError.streamReset }
     guard !data.isEmpty else { return 0 }
-    var offset = 0
-    while offset < data.count {
-      let count = min(TransportV3Crypto.maxDataBytes, data.count - offset)
+    var offset = data.startIndex
+    while offset < data.endIndex {
+      let count = min(TransportV3Crypto.maxDataBytes, data.endIndex - offset)
       do {
         try Task.checkCancellation()
         try await writeRecord(.data, payload: Data(data[offset..<(offset + count)]))
@@ -2405,6 +2411,7 @@ private actor TransportV3ByteStream: ByteStream {
   private func recordTerminal(_ error: TransportV3SessionError) {
     guard terminal == nil else { return }
     terminal = error
+    wakeCapacityWaiters()
     let waiters = queuedWriters
     queuedWriters.removeAll()
     for waiter in waiters { waiter.resume(throwing: error) }
@@ -2491,6 +2498,14 @@ private actor TransportV3ByteStream: ByteStream {
     stopWhenApplicationReadable: Bool = false
   ) async throws -> Bool {
     await readPermit.acquire()
+    if !stopWhenApplicationReadable, terminal == nil, !remoteFIN,
+      readBuffer.count > Self.receiveLimit - TransportV3Crypto.maxDataBytes {
+      await readPermit.release()
+      if terminal == nil, !remoteFIN, readBuffer.count > Self.receiveLimit - TransportV3Crypto.maxDataBytes {
+        await withCheckedContinuation { capacityWaiters.append($0) }
+      }
+      return true
+    }
     if terminal != nil || remoteFIN {
       await readPermit.release()
       return false
@@ -2543,6 +2558,12 @@ private actor TransportV3ByteStream: ByteStream {
       await terminateLocally(.streamReset)
       throw terminal ?? TransportV3SessionError.streamReset
     }
+  }
+
+  private func wakeCapacityWaiters() {
+    let pending = capacityWaiters
+    capacityWaiters.removeAll()
+    for continuation in pending { continuation.resume() }
   }
 
   private func receiveStreamKeyUpdate(_ payload: Data) async throws {

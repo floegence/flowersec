@@ -3,6 +3,31 @@ import { describe, expect, it } from "vitest";
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
 
 describe("proxy service worker generator", () => {
+  it.each([204, 205, 304])("settles status %i without a response body", async (status) => {
+    const target = { id: "client", postMessage(_message: unknown, [port]: MessagePort[]) {
+      port!.postMessage({ type: "flowersec-proxy:response_meta", status, headers: [] });
+      port!.postMessage({ type: "flowersec-proxy:response_end" });
+      port!.close();
+    } };
+    const worker = generatedWorker(async () => target, {});
+    const response = await within(worker.fetch(new Request("https://app.example/status")));
+    expect(response.status).toBe(status);
+    expect(response.body).toBeNull();
+  });
+
+  it("stops reading an oversized streaming upload before dispatch", async () => {
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(Uint8Array.of(1, 2)); },
+      cancel() { canceled = true; },
+    });
+    const worker = generatedWorker(async () => ({ id: "client" }), { maxRequestBodyBytes: 1 });
+    const init = { method: "POST", body, duplex: "half" };
+    const response = await within(worker.fetch(new Request("https://app.example/upload", init)));
+    expect(response.status).toBe(413);
+    expect(canceled).toBe(true);
+  });
+
   it("emits a v2 registration and bounded response-credit bridge", () => {
     const script = createProxyServiceWorkerScript({
       passthrough: { paths: ["/proxy-sw.js"], prefixes: ["/assets/"] },

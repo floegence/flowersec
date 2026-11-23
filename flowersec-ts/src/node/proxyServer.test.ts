@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { createServer } from "node:http";
 import type { Session } from "../public/contract.js";
-import { expect, expectTypeOf, test } from "vitest";
+import { expect, expectTypeOf, test, vi } from "vitest";
 
 import {
   ProxyServer,
@@ -37,6 +37,26 @@ function proxyExchange(kind: string, meta: object, readBody: () => Promise<Uint8
   };
   return { incoming: { kind, stream, metadata: createStreamMetadata({}) }, replies };
 }
+
+test.each(["HEAD", "interrupted GET"])("preserves HTTP response framing for %s", async (scenario) => {
+  const head = scenario === "HEAD";
+  const origin = "http://[::1]:8080";
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBodyBytes: 8 });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const body = head ? null : new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error("upstream ended")); } });
+  vi.stubGlobal("fetch", async () => new Response(body, head ? { headers: { "content-length": "1000" } } : {}));
+  try {
+    let reads = 0;
+    const exchange = proxyExchange(kind, { method: head ? "HEAD" : "GET", path: "/", request_id: "test", headers: [] }, async () => ++reads === 1 ? u32be(0) : null);
+    const reset = vi.spyOn(exchange.incoming.stream, "reset");
+    await handle(exchange.incoming, {});
+    const wire = Buffer.concat(exchange.replies);
+    expect(wire.toString()).toContain('"ok":true');
+    expect(wire.toString()).not.toContain('"ok":false');
+    expect(reset.mock.calls.length).toBe(head ? 0 : 1);
+  } finally { vi.unstubAllGlobals(); await server.close(); }
+});
 
 test.each(["slots", "bytes"])("applies shared HTTP %s before reading body payloads and releases reservations", async (limit) => {
   const origin = "http://127.0.0.1:1";

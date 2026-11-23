@@ -118,6 +118,8 @@ export class TunnelRuntimeV3 {
       if (starting !== undefined) await Promise.allSettled([starting]);
       await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
       await drainTasks(state.tasks);
+      state.usedCredentials.clear();
+      state.expirations.length = 0;
     })();
     closes.set(state, closing);
     return await closing;
@@ -158,7 +160,8 @@ type TunnelRuntimeStateV3 = Readonly<{
   }>;
   abort: AbortController;
   generations: Map<string, Generation>;
-  usedCredentials: Map<string, number>;
+  usedCredentials: Set<string>;
+  expirations: { credential: string; expiry: number }[];
   legGenerations: WeakMap<TunnelLeg, Generation>;
   admissionSlots: AdmissionSlots;
   authorizerSlots: Slots;
@@ -188,7 +191,8 @@ export function createTunnelRuntimeV3(options: TunnelRuntimeOptionsV3): TunnelRu
     limits,
     abort: new AbortController(),
     generations: new Map(),
-    usedCredentials: new Map(),
+    usedCredentials: new Set(),
+    expirations: [],
     legGenerations: new WeakMap(),
     admissionSlots: new AdmissionSlots(limits.maxConcurrentAdmissions),
     authorizerSlots: new Slots(limits.maxConcurrentAdmissions),
@@ -395,7 +399,7 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
     ));
     return;
   }
-  state.usedCredentials.set(leg.authorization.credentialId, leg.authorization.expiresAtUnixSeconds);
+  rememberCredential(state, leg.authorization.credentialId, leg.authorization.expiresAtUnixSeconds);
   const key = pairKey(leg.request, leg.authorization.authorityScope);
   let generation = state.generations.get(key);
   if (generation !== undefined && !generation.finished &&
@@ -911,10 +915,35 @@ function boundedInteger(value: number, minimum: number, maximum: number): boolea
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
+function rememberCredential(state: TunnelRuntimeStateV3, credential: string, expiry: number): void {
+  state.usedCredentials.add(credential);
+  const heap = state.expirations;
+  let index = heap.length;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (heap[parent]!.expiry <= expiry) break;
+    heap[index] = heap[parent]!;
+    index = parent;
+  }
+  heap[index] = { credential, expiry };
+}
+
 function pruneCredentials(state: TunnelRuntimeStateV3): void {
   const now = Math.floor(Date.now() / 1_000);
-  for (const [credential, expiry] of state.usedCredentials) {
-    if (expiry <= now) state.usedCredentials.delete(credential);
+  const heap = state.expirations;
+  while (heap.length && heap[0]!.expiry <= now) {
+    state.usedCredentials.delete(heap[0]!.credential);
+    const last = heap.pop()!;
+    if (!heap.length) break;
+    let index = 0;
+    while (2 * index + 1 < heap.length) {
+      let child = 2 * index + 1;
+      if (child + 1 < heap.length && heap[child + 1]!.expiry < heap[child]!.expiry) child++;
+      if (last.expiry <= heap[child]!.expiry) break;
+      heap[index] = heap[child]!;
+      index = child;
+    }
+    heap[index] = last;
   }
 }
 

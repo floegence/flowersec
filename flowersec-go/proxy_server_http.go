@@ -190,7 +190,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	} else {
 		releaseEvent()
 	}
-	if !persistent && response.ContentLength > server.config.maxBody {
+	if request.Method != http.MethodHead && response.StatusCode != http.StatusNotModified && !persistent && response.ContentLength > server.config.maxBody {
 		server.writeHTTPError(stream, requestMeta.RequestID, "response_body_too_large")
 		server.report(ErrInvalidProxyServer)
 		return

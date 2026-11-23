@@ -78,6 +78,19 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("binds a service worker container to one runtime until disposal", async () => {
+    const container = new EventTarget() as ServiceWorkerContainer;
+    vi.stubGlobal("navigator", { serviceWorker: container });
+    try {
+      const first = createProxyRuntime({ session: new FakeSession([]) });
+      const next = new FakeSession([]);
+      try { expect(() => createProxyRuntime({ session: next })).toThrow(/dispose/); }
+      finally { first.dispose(); }
+      const replacement = createProxyRuntime({ session: next });
+      replacement.dispose();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("resets an unfinished upload when the server declines admission", async () => {
     let unblockUpload!: (error: Error) => void;
     class PendingUpload extends FakeStream {

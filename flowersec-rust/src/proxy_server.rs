@@ -365,20 +365,19 @@ fn compile_options(
     {
         return Err(ProxyServerError::InvalidOptions);
     }
-    let host = options
-        .upstream
-        .host_str()
-        .ok_or(ProxyServerError::InvalidOptions)?
-        .to_ascii_lowercase();
+    let host = connect_host(&options.upstream).ok_or(ProxyServerError::InvalidOptions)?;
     let allowed_hosts = if options.allowed_upstream_hosts.is_empty() {
         vec!["127.0.0.1".to_owned(), "::1".to_owned()]
     } else {
         options.allowed_upstream_hosts
     };
-    if !allowed_hosts
-        .iter()
-        .any(|candidate| candidate.trim().eq_ignore_ascii_case(&host))
-    {
+    if !allowed_hosts.iter().any(|candidate| {
+        let candidate = candidate.trim();
+        let literal = candidate
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'));
+        literal.unwrap_or(candidate).eq_ignore_ascii_case(&host)
+    }) {
         return Err(ProxyServerError::InvalidOptions);
     }
     let max_concurrent = fallback(options.max_concurrent_streams, DEFAULT_MAX_CONCURRENT)?;
@@ -783,15 +782,13 @@ async fn serve_http_request(
             target.path().to_owned()
         };
         let uri: Uri = uri.parse().map_err(|_| ProxyServerError::OperationFailed)?;
+        let is_head = method == Method::HEAD;
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
-            .body(Full::new(Bytes::from(body.clone())))
+            .body(Full::new(Bytes::from(body)))
             .map_err(|_| ProxyServerError::OperationFailed)?;
-        let connect_host = target
-            .host_str()
-            .ok_or(ProxyServerError::OperationFailed)?
-            .to_owned();
+        let connect_host = connect_host(&target).ok_or(ProxyServerError::OperationFailed)?;
         let port = target
             .port_or_known_default()
             .ok_or(ProxyServerError::OperationFailed)?;
@@ -852,12 +849,14 @@ async fn serve_http_request(
                 }
             };
         let (parts, mut body) = response.into_parts();
-        if parts
-            .headers
-            .get(header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .is_some_and(|length| length > inner.config.max_body as u64)
+        if !is_head
+            && parts.status.as_u16() != 304
+            && parts
+                .headers
+                .get(header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .is_some_and(|length| length > inner.config.max_body as u64)
         {
             connection_task.abort();
             write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
@@ -966,6 +965,13 @@ impl AsyncWrite for HttpIo {
             Self::Tls(stream) => Pin::new(stream.as_mut()).poll_shutdown(context),
         }
     }
+}
+
+fn connect_host(url: &url::Url) -> Option<String> {
+    url.host().map(|host| match host {
+        url::Host::Ipv6(address) => address.to_string(),
+        other => other.to_string(),
+    })
 }
 
 async fn send_http_request(
@@ -1145,10 +1151,7 @@ async fn serve_websocket_with_establishment_timeout(
     let websocket_config = tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(inner.config.max_websocket_frame))
         .max_frame_size(Some(inner.config.max_websocket_frame));
-    let host = target
-        .host_str()
-        .ok_or(ProxyServerError::OperationFailed)?
-        .to_owned();
+    let host = connect_host(&target).ok_or(ProxyServerError::OperationFailed)?;
     let port = target
         .port_or_known_default()
         .ok_or(ProxyServerError::OperationFailed)?;
@@ -1773,6 +1776,16 @@ mod tests {
             assert!(result.is_err(), "incomplete {stage} was accepted");
             server.close().await;
         }
+    }
+
+    #[test]
+    fn ipv6_upstream_uses_address_for_dial_and_authority_for_headers() {
+        let url = url::Url::parse("http://[::1]:8080").unwrap();
+        assert_eq!(connect_host(&url).as_deref(), Some("::1"));
+        assert_eq!(
+            &url[url::Position::BeforeHost..url::Position::AfterPort],
+            "[::1]:8080"
+        );
     }
 
     #[test]

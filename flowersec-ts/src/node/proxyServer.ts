@@ -286,6 +286,7 @@ export class ProxyServer {
         method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
         ...(body.byteLength === 0 ? {} : { body, duplex: "half" }),
       };
+      let responseStarted = false;
       try {
         const response = await fetch(target, requestInit);
         const persistent = eventRequested && isEventStream(response.headers.get("content-type") ?? "");
@@ -296,9 +297,10 @@ export class ProxyServer {
         };
         if (persistent) activity(); else releaseEvent();
         const contentLength = response.headers.get("content-length");
-        if (!persistent && contentLength !== null && Number(contentLength) > this.#config.maxBody) {
+        if (response.body !== null && !persistent && contentLength !== null && Number(contentLength) > this.#config.maxBody) {
           await writeHTTPError(stream, requestID, "response_body_too_large"); return;
         }
+        responseStarted = true;
         await writeFrame(stream, {
           v: WIRE_VERSION, request_id: requestID, ok: true, status: response.status,
           headers: filterHeaders(responseHeaderList(response.headers), RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders),
@@ -320,7 +322,7 @@ export class ProxyServer {
         }
         await writeChunk(stream, new Uint8Array(), signal);
       } catch (error) {
-        if (signal.aborted) throw error;
+        if (responseStarted || signal.aborted) throw error;
         const code = timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
         await writeHTTPError(stream, requestID, code);
         this.#report(error);
@@ -330,9 +332,9 @@ export class ProxyServer {
       this.#bufferedBodyBytes -= reservedBytes;
       releaseEvent();
       if (httpPermit) this.#httpCount--;
-      linked.dispose();
       signal.removeEventListener("abort", abort);
       timeoutController.abort();
+      linked.dispose();
       await responseReader?.cancel().catch(() => undefined);
       responseReader?.releaseLock();
       await peerWatch;
@@ -384,8 +386,9 @@ function compileConfig(options: ProxyServerOptions): Config {
   try { upstream = new URL(options.upstream); origin = new URL(options.upstreamOrigin); } catch { throw new ProxyServerError("invalid_options"); }
   if ((upstream.protocol !== "http:" && upstream.protocol !== "https:") || upstream.pathname !== "/" || upstream.search || upstream.hash || upstream.username || upstream.hostname === "") throw new ProxyServerError("invalid_options");
   if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.pathname !== "/" || origin.search || origin.hash || origin.username || origin.origin !== origin.toString().replace(/\/$/u, "")) throw new ProxyServerError("invalid_options");
-  const allowedHosts = new Set((options.allowedUpstreamHosts ?? ["127.0.0.1", "::1"]).map((value) => value.trim().toLowerCase()));
-  if (!allowedHosts.has(upstream.hostname.toLowerCase())) throw new ProxyServerError("invalid_options");
+  const hostKey = (host: string) => host.toLowerCase().replace(/^\[([^\]]+)\]$/u, "$1");
+  const allowedHosts = new Set((options.allowedUpstreamHosts ?? ["127.0.0.1", "::1"]).map((value) => hostKey(value.trim())));
+  if (!allowedHosts.has(hostKey(upstream.hostname))) throw new ProxyServerError("invalid_options");
   const allowedOrigins = new Set(options.allowedOrigins ?? [origin.origin]);
   for (const allowed of allowedOrigins) { try { if (new URL(allowed).origin !== allowed) throw new Error(); } catch { throw new ProxyServerError("invalid_options"); } }
   const positive = (value: number | undefined, fallback: number) => value === undefined ? fallback : value;

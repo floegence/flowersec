@@ -24,6 +24,31 @@ extension TransportV3CarrierStream {
 }
 
 final class TransportV3SessionTests: XCTestCase {
+  func testPublicWritePreservesSlicedDataAndDropsResetIncomingStream() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession = OpaqueSessionV3(clientSession)
+    let abandoned = try await publicSession.openStream(kind: "abandoned")
+    try await abandoned.reset()
+    _ = try await clientSession.probeLiveness()
+    let outgoing = try await publicSession.openStream(kind: "sliced")
+    let incoming = try await serverSession.acceptStream()
+    XCTAssertEqual(incoming.kind, "sliced")
+    let bytes = Data((0...TransportV3Crypto.maxDataBytes + 29).map { UInt8(truncatingIfNeeded: $0) })
+    let slice = bytes.dropFirst(3)
+    let written = try await outgoing.write(slice)
+    XCTAssertEqual(written, slice.count)
+    try await outgoing.closeWrite()
+    var received = Data()
+    while let part = try await incoming.stream.read(maxBytes: 1024) { received.append(part) }
+    XCTAssertEqual(received, Data(slice))
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testEstablishedSessionsReleaseHandshakeInputStorage() async throws {
     let inputs = ["PSK", "contract hash", "client binding", "server binding"].map {
       XCTestExpectation(description: "released \($0)")

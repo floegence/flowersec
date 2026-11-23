@@ -24,6 +24,11 @@ export function enableResponseFlowControl(request: ProxyFetchRequest): ProxyFetc
 
 type ProxyRuntimeServiceWorkerBridgeHandle = Readonly<{ dispose(): void }>;
 
+type BridgeOwner = { runtime: ProxyRuntime; releaseListener: () => void; handles: number };
+const ownershipKey = Symbol.for("flowersec.proxy.serviceWorkerBridgeOwners.v2");
+const registryHost = globalThis as typeof globalThis & { [ownershipKey]?: WeakMap<ServiceWorkerContainer, BridgeOwner> };
+const bridgeOwners = registryHost[ownershipKey] ??= new WeakMap();
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -73,6 +78,10 @@ export function registerProxyRuntimeServiceWorkerBridge(
   serviceWorker: ServiceWorkerContainer,
 ): ProxyRuntimeServiceWorkerBridgeHandle {
   let disposed = false;
+  const owner = bridgeOwners.get(serviceWorker);
+  if (owner !== undefined && owner.runtime !== runtime) {
+    throw new Error("dispose the current proxy service worker runtime before registering another");
+  }
   const onMessage = (event: MessageEvent<unknown>): void => {
     const message = record(event.data) as RuntimeFetchMessage | undefined;
     if (message?.type !== "flowersec-proxy:fetch") return;
@@ -90,12 +99,20 @@ export function registerProxyRuntimeServiceWorkerBridge(
       port.close();
     }
   };
-  serviceWorker.addEventListener("message", onMessage);
+  const entry = owner ?? { runtime, handles: 0, releaseListener: () => serviceWorker.removeEventListener("message", onMessage) };
+  if (owner === undefined) {
+    serviceWorker.addEventListener("message", onMessage);
+    bridgeOwners.set(serviceWorker, entry);
+  }
+  entry.handles++;
   return Object.freeze({
     dispose: () => {
       if (disposed) return;
       disposed = true;
-      serviceWorker.removeEventListener("message", onMessage);
+      if (--entry.handles === 0) {
+        entry.releaseListener();
+        bridgeOwners.delete(serviceWorker);
+      }
     },
   });
 }

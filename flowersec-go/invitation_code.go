@@ -7,6 +7,8 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 )
 
@@ -22,6 +24,10 @@ type InvitationCode struct{ secret [16]byte }
 func (InvitationCode) String() string               { return "Flowersec.InvitationCode" }
 func (InvitationCode) GoString() string             { return "Flowersec.InvitationCode" }
 func (InvitationCode) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+
+func (code InvitationCode) Format(state fmt.State, verb rune) {
+	_, _ = io.WriteString(state, code.String())
+}
 
 // NewInvitationCode generates a fresh cryptographically random credential.
 func NewInvitationCode() (InvitationCode, error) {
