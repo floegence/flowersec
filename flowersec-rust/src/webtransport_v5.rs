@@ -17,8 +17,8 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+pub use native::WebTransportListenerPolicy;
 pub(crate) use native::{DIRECT, TUNNEL, valid_origin};
-pub use native::{WebTransportListenerPolicy, WebTransportProfile};
 
 #[derive(Debug)]
 pub(crate) struct Listener(native::Listener);
@@ -63,7 +63,6 @@ impl Listener {
 pub(crate) async fn dial(
     url: &str,
     origin: &str,
-    profile: WebTransportProfile,
     policy: NativeTlsPolicyV3,
     capacity: u32,
 ) -> Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3> {
@@ -78,7 +77,7 @@ pub(crate) async fn dial(
             native::ClientTrust::Pin(active_leaf_hashes)
         }
     };
-    let inner = native::dial_profile(url, origin, trust, capacity, profile)
+    let inner = native::dial(url, origin, trust, capacity)
         .await
         .map_err(|error| match error {
             native::DialFailure::InvalidArtifact => CandidateFailureV3::InvalidArtifact,
@@ -98,6 +97,13 @@ struct Carrier {
     inner: Arc<native::Carrier>,
     admission: Mutex<Option<Arc<native::Stream>>>,
 }
+#[cfg(test)]
+pub(crate) fn session_test_carrier(inner: Arc<native::Carrier>) -> Arc<dyn CarrierSessionV3> {
+    Arc::new(Carrier {
+        inner,
+        admission: Mutex::new(None),
+    })
+}
 impl fmt::Debug for Carrier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("WebTransportCarrier { <opaque> }")
@@ -107,9 +113,6 @@ impl fmt::Debug for Carrier {
 impl CarrierSessionV3 for Carrier {
     fn kind(&self) -> CarrierKind {
         CarrierKind::WebTransport
-    }
-    fn uses_native_h3(&self) -> bool {
-        self.inner.profile() == WebTransportProfile::NativeH3
     }
     fn inbound_bidirectional_stream_capacity(&self) -> u32 {
         self.inner.inbound_bidirectional_stream_capacity()

@@ -22,6 +22,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Current direct and tunnel matrix support | The parameterized release gate exercises all 10 direct cells and 14 tunnel topologies containing Go; the remaining 8 direct and 4 tunnel declarations stay explicitly unverified |
 | Scoped carrier, server, and cross-runtime behavior | Capability and product tests use their own stable IDs and remain support evidence for exactly the behavior they execute; they do not promote a complete matrix declaration to supported |
 | Go WebTransport H4 | Go production conformance covers encrypted DATAGRAM round trips through direct endpoint/listener and WebTransport-to-raw-QUIC tunnel-runtime paths |
+| Rust and Node draft02 | Rust and Node dial the Go listener using WebTransport. Each native SDK also exercises its own direct listener and relay. Go-initiated sessions to Rust or Node listeners and relay ingress use explicit raw QUIC candidates; these cases do not qualify WebTransport. |
 | Dedicated Node WSS listener lifecycle | `server/typescript-acceptor` and `carrier/typescript-websocket-tunnel` send an ordinary HTTPS keep-alive request, observe rejection and server EOF without a client disconnect, then establish a real WSS session on the same port. A separate shutdown test in `flowersec-ts/src/node/serverRuntimeV3.integration.test.ts` verifies cleanup of a TLS peer that never upgraded. Host-owned HTTP routes are outside these checks. |
 | Node raw-QUIC-only no-origin and Rust rootless loopback profiles | Node native connector one-shot and Controller generations; Rust direct WebSocket plus spend-before-roots validation |
 | Swift WSS production connector | The Swift connector suite validates the production adapter; direct and tunneled Swift-to-Go client profiles are separate release-gating units outside the native 18-cell matrix |
@@ -51,6 +52,17 @@ Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before
 admission, while WebKit currently lacks the outgoing DATAGRAM surface. Those
 explicit unsupported contracts do not substitute for Chromium smoke.
+
+To test pinned Chromium connections directly to Rust and Node draft02 listeners,
+install the pinned toolchains and OpenSSL, then build the matching Node native addon.
+For a locally built `.node` file, export `FLOWERSEC_SERVER_PARITY_PEER=1` and set
+`FLOWERSEC_SERVER_PARITY_NATIVE_ADDON` to the file's absolute path in the test environment.
+From `flowersec-ts`, run
+`npm ci`, `npm run ensure:browser`, `npm run build`, then
+`FLOWERSEC_BROWSER_DRAFT02=1 npx --no-install playwright test --project=chromium native-draft02.spec.ts`.
+Playwright starts the Rust listener via Cargo. Both cases establish a real
+Flowersec session and verify an encrypted DATAGRAM echo. These pin cases do
+not exercise public-CA trust.
 
 `make precommit` is the feature-commit gate. It isolates native admission and timed
 TypeScript tests from the Go, Swift and Rust compiler workloads. `scripts/push-main.sh` runs bounded single-host

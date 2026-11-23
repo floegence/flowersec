@@ -1033,28 +1033,24 @@ test("the independent Noise reference is traceable in source and absent from the
   assert.equal(sdk.components.some((entry) => entry.purl === noise), false);
 });
 
-test("native Rust and Node SBOMs identify the modified Quinn sources and reproduce their upstream licenses", async () => {
-  const { generateSourceArtifacts } = await loadGenerator();
-  const artifacts = generateSourceArtifacts(sourceRoot);
-  const inventory = JSON.parse(artifacts.get("sbom/source-inventory.json"));
+test("native Rust and Node SBOMs identify upstream Quinn releases and reproduce their licenses", () => {
+  const readArtifact = (relativePath) => fs.readFileSync(path.join(sourceRoot, relativePath), "utf8");
+  const inventory = JSON.parse(readArtifact("sbom/source-inventory.json"));
   for (const name of ["quinn-udp", "rustls", "napi", "napi-derive", "napi-build"]) {
     assert.ok(inventory.components.some((component) => component.name === name), `missing native dependency ${name}`);
   }
-  const licenses = ["MIT", "APACHE"].map((name) => fs.readFileSync(
-    path.join(sourceRoot, `flowersec-native-transport/src/QUINN_LICENSE-${name}`), "utf8",
-  ).trimEnd());
-  for (const [name, version, module, digest] of [
-    ["quinn", "0.11.11", "quic_provider", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"],
-    ["quinn-proto", "0.11.17", "quic_proto", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"],
+  for (const [name, version, digest] of [
+    ["quinn", "0.11.11", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"],
+    ["quinn-proto", "0.11.19", "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"],
   ]) {
     const purl = `pkg:cargo/${name}@${version}`;
     const matches = inventory.components.filter((component) => component.purl === purl);
     assert.equal(matches.length, 1, `${purl} unique source inventory component`);
     const [component] = matches;
-    assert.equal(component.review.sourceEvidenceKind, "modified-vendored-cargo-source");
-    assert.equal(component.vendored.directory, `flowersec-native-transport/src/${module}`);
-    assert.equal(component.vendored.upstreamArchiveSha256, digest);
-    assert.match(component.vendored.sourceTreeSha256, /^[a-f0-9]{64}$/);
+    assert.equal(component.review.sourceEvidenceKind, "cargo-lock-checksum");
+    assert.equal(component.review.sourceEvidenceValue, digest);
+    assert.equal(component.vendored, undefined);
+    assert.deepEqual(component.licenseFiles.map(file => file.path), ["LICENSE-MIT", "LICENSE-APACHE"]);
     for (const contextId of ["rust:flowersec-native-transport", "rust:flowersec-node-native", "rust:flowersec-rust"]) {
       const context = inventory.contexts.find((entry) => entry.id === contextId);
       assert.ok(context.edges.some((edge) => edge.from === context.root.purl && edge.to === purl && edge.kind === "runtime"), contextId);
@@ -1064,30 +1060,30 @@ test("native Rust and Node SBOMs identify the modified Quinn sources and reprodu
       ...["flowersec-rust", "flowersec-node-native", ...nativePlatforms.map((platform) => `flowersec-node-native/npm/${platform}`)]
         .map((prefix) => [`${prefix}/sbom/spdx.json`, `${prefix}/sbom/cyclonedx.json`, `${prefix}/THIRD_PARTY_NOTICES.md`]),
     ]) {
-      const packages = JSON.parse(artifacts.get(spdxPath)).packages.filter((entry) => entry.name === name);
+      const packages = JSON.parse(readArtifact(spdxPath)).packages.filter((entry) => entry.name === name);
       assert.equal(packages.length, 1, spdxPath);
       assert.equal(packages[0].versionInfo, version);
       assert.equal(packages[0].licenseDeclared, "MIT OR Apache-2.0");
       assert.equal(packages[0].licenseConcluded, "MIT");
-      assert.ok(packages[0].sourceInfo.includes(component.vendored.sourceTreeSha256), spdxPath);
-      assert.ok(packages[0].sourceInfo.includes(digest), spdxPath);
-      const cdx = JSON.parse(artifacts.get(cdxPath));
+      assert.equal(packages[0].sourceInfo, undefined, spdxPath);
+      assert.deepEqual(packages[0].checksums, [{ algorithm: "SHA256", checksumValue: digest }]);
+      const cdx = JSON.parse(readArtifact(cdxPath));
       const cdxEntries = cdx.components.filter((entry) => entry.purl === purl);
       assert.equal(cdxEntries.length, 1, cdxPath);
       assert.deepEqual(cdxEntries[0].licenses, [{ expression: "MIT" }]);
-      assert.ok(cdxEntries[0].description.includes(`modified upstream source in ${component.vendored.directory}`));
+      assert.equal(cdxEntries[0].description, undefined);
       assert.equal(cdxEntries[0].externalReferences[0].url, `https://static.crates.io/crates/${name}/${name}-${version}.crate`);
       assert.deepEqual(cdxEntries[0].externalReferences[0].hashes, [{ alg: "SHA-256", content: digest }]);
-      assert.ok(cdx.dependencies.find((entry) => entry.ref === "pkg:cargo/quinn@0.11.11").dependsOn.includes("pkg:cargo/quinn-proto@0.11.17"));
-      const sections = artifacts.get(noticePath).split(`\n### ${name} ${version}\n`);
+      assert.ok(cdx.dependencies.find((entry) => entry.ref === "pkg:cargo/quinn@0.11.11").dependsOn.includes("pkg:cargo/quinn-proto@0.11.19"));
+      const sections = readArtifact(noticePath).split(`\n### ${name} ${version}\n`);
       assert.equal(sections.length, 2, noticePath);
       const section = sections[1].split("\n### ")[0];
-      assert.ok(section.includes("modified upstream source"), noticePath);
-      for (const license of licenses) assert.ok(section.includes(license), noticePath);
+      assert.ok(!section.includes("modified upstream source"), noticePath);
+      for (const license of component.licenseFiles) assert.ok(section.includes(license.contents.trimEnd()), noticePath);
     }
     for (const file of ["flowersec-go/sbom/cyclonedx.json", "flowersec-ts/sbom/cyclonedx.json", "sbom/swift/cyclonedx.json",
       "release-compliance/runtime/sbom/cyclonedx.json", "release-compliance/runtime-image/sbom/cyclonedx.json"]) {
-      assert.ok(!JSON.parse(artifacts.get(file)).components.some((entry) => entry.purl === purl), file);
+      assert.ok(!JSON.parse(readArtifact(file)).components.some((entry) => entry.purl === purl), file);
     }
   }
 });

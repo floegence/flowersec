@@ -13,17 +13,22 @@ const bind = { ...common, host: "127.0.0.1", port: 0, certificateChainDer, priva
 const dial = { ...common, tlsMode: "ca", trustRootsDer: certificateChainDer };
 const origin = "https://client.example";
 
+test("rejects removed native_h3 options before native dial or bind", async () => {
+  assert.throws(() => addon.connectWebTransport({ ...dial, profile: "native_h3", origin, url: "https://127.0.0.1/flowersec/webtransport/v5/tunnel" }), /profile was removed/);
+  await assert.rejects(addon.bindWebTransport({ ...bind, profile: "native_h3", authorityHost: bind.host, allowedOrigins: [origin] }), /profile was removed/);
+});
+
 async function withPeers(profile, inspect) {
   const raw = profile === "raw_quic";
   const listener = raw ? await addon.bindRawQuic(bind) : await addon.bindWebTransport({
-    ...bind, profile, authorityHost: bind.host, allowedOrigins: [origin],
+    ...bind, authorityHost: bind.host, allowedOrigins: [origin],
   });
   let client, server;
   try {
     const { host, port } = listener.address();
     const accepting = listener.accept();
     const dialing = raw ? addon.connectRawQuic({ ...dial, host, port, serverName: "localhost" }) :
-      addon.connectWebTransport({ ...dial, profile, origin, url: `https://${host}:${port}/flowersec/webtransport/v5/tunnel` });
+      addon.connectWebTransport({ ...dial, origin, url: `https://${host}:${port}/flowersec/webtransport/v5/tunnel` });
     [client, server] = await Promise.all([dialing.result(), accepting.result()]);
     await inspect(client, server);
   } finally {
@@ -33,7 +38,7 @@ async function withPeers(profile, inspect) {
   }
 }
 
-for (const profile of ["raw_quic", "draft02", "native_h3"]) {
+for (const profile of ["raw_quic", "draft02"]) {
   for (const [code, reason, expected] of [[1, "session closed", true], [7, "session closed", false], [1, "session closed\0", false]]) {
     test(`${profile} remote close ${code}/${JSON.stringify(reason)} returns ${expected}`, { timeout: 10_000 }, async () => {
       await withPeers(profile, async (client, server) => {
@@ -48,7 +53,7 @@ for (const profile of ["raw_quic", "draft02", "native_h3"]) {
   }
 }
 
-for (const profile of ["draft02", "native_h3"]) {
+for (const profile of ["draft02"]) {
   test(`${profile} local shutdown and default peer close are not relay confirmation`, { timeout: 10_000 }, async () => {
     await withPeers(profile, async (client, server) => {
       const remoteClose = client.waitRemoteSessionClose();

@@ -29,7 +29,7 @@ import {
 } from "./nativeTransportAddon.js";
 import {
   startNodeRawQuicListenerV3,
-  startNodeWebTransportListener, type NodeWebTransportListenerConfig,
+  startNodeWebTransportListener, validateWebTransportListeners, type NodeWebTransportListenerConfig,
   type NodeRawQuicListenerV3,
 } from "./rawQuicServerV3.js";
 import {
@@ -378,6 +378,7 @@ async function listen(state: AcceptorStateV3, listener: ListenerV3, ingress: str
 }
 
 function validateOptions(options: AcceptorOptionsV3): void {
+  validateWebTransportListeners(options.listeners);
   if (options.listeners.length === 0 ||
       (options.maxPendingSessions !== undefined && (!Number.isSafeInteger(options.maxPendingSessions) || options.maxPendingSessions < 1 || options.maxPendingSessions > 65536)) ||
       !Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 ||

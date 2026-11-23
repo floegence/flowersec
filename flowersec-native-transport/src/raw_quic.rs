@@ -11,8 +11,8 @@ use std::{
     time::Duration,
 };
 
-use crate::quic_provider::{self as quinn, Endpoint, VarInt};
 use bytes::Bytes;
+use quinn::{Endpoint, VarInt};
 use rustls::{
     CertificateError, DigitallySignedStruct, Error as RustlsError, SignatureScheme,
     client::{

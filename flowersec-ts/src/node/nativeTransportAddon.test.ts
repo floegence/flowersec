@@ -31,8 +31,7 @@ describe("native transport addon v5 ABI", () => {
     const binding = { ...addon, bindWebTransport: addon.bindRawQuic, connectWebTransport: () => ({
       cancel: () => { canceled++; }, result: () => new Promise(resolve => { finish = () => resolve(native); }),
     }) } as unknown as NativeTransportAddonBinding;
-    expect(createNativeWebTransportDriver(binding, "native_h3")).toBeUndefined();
-    expect(createNativeWebTransportDriver({ ...binding, supportsNativeH3: () => true }, "native_h3")).toBeDefined();
+    expect(createNativeWebTransportDriver(binding)).toBeDefined();
     const connecting = createNativeWebTransportDriver(binding)!.connect({ ...rawQuicConnectOptions(), url: "https://localhost/flowersec/webtransport/v5/direct", origin: "https://app.example" }, stop.signal);
     stop.abort();
     await expect(connecting).rejects.toMatchObject({ code: "aborted" });

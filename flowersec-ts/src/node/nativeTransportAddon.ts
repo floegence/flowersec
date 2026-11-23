@@ -57,9 +57,8 @@ export type NativeRawQuicDriver = Readonly<{
   bindRawQuic(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListener>;
 }>;
 
-type WebTransportProfile = "draft02" | "native_h3";
-export type NativeWebTransportConnectOptions = NativeRawQuicConnectOptions & Readonly<{ url: string; origin: string; profile?: WebTransportProfile }>;
-export type NativeWebTransportBindOptions = NativeRawQuicBindOptions & Readonly<{ authorityHost: string; allowedOrigins: readonly string[]; profile?: WebTransportProfile }>;
+export type NativeWebTransportConnectOptions = NativeRawQuicConnectOptions & Readonly<{ url: string; origin: string }>;
+export type NativeWebTransportBindOptions = NativeRawQuicBindOptions & Readonly<{ authorityHost: string; allowedOrigins: readonly string[] }>;
 
 type NativeOperation<T> = Readonly<{
   result(): Promise<T>;
@@ -104,7 +103,6 @@ type NativeRawQuicListenerBinding = Readonly<{
 
 export type NativeTransportAddonBinding = Readonly<{
   contractVersion(): number;
-  supportsNativeH3?(): boolean;
   connectRawQuic(options: NativeRawQuicConnectOptions): NativeOperation<NativeRawQuicSessionBinding>;
   bindRawQuic(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListenerBinding>;
   connectWebTransport?(options: NativeWebTransportConnectOptions): NativeOperation<NativeRawQuicSessionBinding>;
@@ -196,16 +194,15 @@ function isNativeTransportAddon(value: unknown): value is NativeTransportAddonBi
     typeof candidate.bindRawQuic === "function";
 }
 
-export function createNativeWebTransportDriver(addon: NativeTransportAddonBinding, profile: WebTransportProfile = "draft02") {
+export function createNativeWebTransportDriver(addon: NativeTransportAddonBinding) {
   const { connectWebTransport, bindWebTransport } = addon;
   if (typeof connectWebTransport !== "function" || typeof bindWebTransport !== "function") return undefined;
-  if (profile === "native_h3" && addon.supportsNativeH3?.() !== true) return undefined;
   return Object.freeze({
     async connect(options: NativeWebTransportConnectOptions, signal?: AbortSignal) {
-      return wrapSession(await settle(connectWebTransport({ ...options, profile }), signal, value => value.abort()), "webtransport", options.path);
+      return wrapSession(await settle(connectWebTransport(options), signal, value => value.abort()), "webtransport", options.path);
     },
     async bind(options: NativeWebTransportBindOptions): Promise<NativeRawQuicListener> {
-      const native = await bindWebTransport({ ...options, profile });
+      const native = await bindWebTransport(options);
       return Object.freeze({ address: () => native.address(), close: () => native.close(),
         accept: async (operation = {}) => wrapSession(await settle(native.accept(), operation.signal, value => value.abort()), "webtransport", options.path) });
     },

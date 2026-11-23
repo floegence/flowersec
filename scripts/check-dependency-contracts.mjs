@@ -17,14 +17,12 @@ const ENTRY_KEYS = [
   "upgradeGroup",
 ];
 const ECOSYSTEMS = new Set(["cargo", "gomod", "npm", "swiftpm", "vendored-cargo"]);
-const QUINN_SOURCES = new Map([
-  ["quinn", ["quic_provider", "0.11.11", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"]],
-  ["quinn-proto", ["quic_proto", "0.11.17", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"]],
+const QUINN_RELEASES = new Map([
+  ["quinn", ["0.11.11", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"]],
+  ["quinn-proto", ["0.11.19", "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"]],
 ]);
 const SQLITE_DRIVER = "modernc.org/sqlite";
 const VENDORED_SOURCES = new Map([
-  ...Array.from(QUINN_SOURCES, ([name, [module, version, digest]]) =>
-    [name, [`flowersec-native-transport/src/${module}`, version, digest, "mod.rs"]]),
   ["snow", ["test-support/snow", "0.10.0", "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82", "src/lib.rs"]],
 ]);
 const SQLITE_BOUNDARIES = new Map([
@@ -60,7 +58,7 @@ const HIGH_IMPACT = {
     "@floegence/flowersec-node-native", "@noble/ciphers", "@noble/curves", "@noble/hashes", "tr46", "ws",
   ]),
   swiftpm: new Set(["async-http-client", "swift-crypto", "swift-nio", "swift-nio-ssl", "swift-sodium"]),
-  "vendored-cargo": new Set(QUINN_SOURCES.keys()),
+  "vendored-cargo": new Set(),
 };
 
 function fail(message) {
@@ -213,6 +211,18 @@ function parseCargoLockPackages(source) {
   return packages;
 }
 
+function checkQuinnLock(root, lockfile, errors) {
+  const packages = read(root, lockfile).split("[[package]]").slice(1);
+  for (const [name, [version, checksum]] of QUINN_RELEASES) {
+    const matches = packages.filter((block) => block.split("\n").includes(`name = "${name}"`));
+    const fields = matches[0]?.split("\n") ?? [];
+    if (matches.length !== 1 || !fields.includes(`version = "${version}"`) || !fields.includes(`checksum = "${checksum}"`)
+      || !fields.includes('source = "registry+https://github.com/rust-lang/crates.io-index"')) {
+      errors.push(`${lockfile} must lock the reviewed crates.io release of ${name}@${version}`);
+    }
+  }
+}
+
 function vendoredCargo(root) {
   const result = new Map();
   const inventoryPath = "sbom/source-inventory.json";
@@ -347,6 +357,14 @@ function check(root) {
     ...Object.entries(npmManifest.optionalDependencies ?? {}),
   ]);
   const cargoSources = cargoContexts(root);
+  if (fs.existsSync(path.join(root, "flowersec-native-transport/Cargo.toml"))) {
+    for (const lockfile of [...cargoSources.map(({ lockfile }) => lockfile), "flowersec-rust/fuzz/Cargo.lock", "examples/rust/Cargo.lock"]) {
+      if (fs.existsSync(path.join(root, lockfile))) checkQuinnLock(root, lockfile, errors);
+    }
+    for (const directory of ["quic_proto", "quic_provider"]) {
+      if (fs.existsSync(path.join(root, "flowersec-native-transport/src", directory))) errors.push(`embedded Quinn source is forbidden: ${directory}`);
+    }
+  }
   const cargoDependencies = new Map();
   for (const context of cargoSources) {
     const manifest = read(root, context.manifest);

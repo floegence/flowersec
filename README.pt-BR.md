@@ -109,9 +109,9 @@ O perfil native-server-core legível por máquina contém 18 tuplas agregadas de
 
 Consulte os guias dos SDKs para ver as combinações exatas de plataforma e conexão disponíveis.
 
-WebTransport é opcional. O Go oferece o perfil H4 webtransport-server completo; o perfil Browser usa H3 quando a API WebTransport do navegador está disponível. Node.js e Rust oferecem `draft02` e `native_h3` para clientes, servidores diretos e relés de túneis opacos. Para usar raw QUIC ou WebTransport no Node.js, instale `@floegence/flowersec-node-native` junto com `@floegence/flowersec-core`.
+WebTransport é opcional. O Go oferece o perfil H4 webtransport-server completo; o perfil Browser usa H3 quando a API WebTransport do navegador está disponível. Node.js e Rust oferecem `draft02` para clientes, servidores diretos e relés de túneis opacos. Para usar raw QUIC ou WebTransport no Node.js, instale `@floegence/flowersec-node-native` junto com `@floegence/flowersec-core`.
 
-No macOS arm64, tanto Rust quanto Node.js iniciaram e aceitaram conexões diretas native_h3 com Go sobre UDP real, com troca de DATAGRAMs criptografados nos dois sentidos. Cada SDK também testou relés entre pares da mesma linguagem. Os relés entre linguagens e as demais plataformas ainda não foram verificados para native_h3; esses testes não acrescentam entradas à matriz H4. WebSocket e raw QUIC são obrigatórios para Go, Rust e Node.js.
+Clientes Rust e Node.js podem se conectar ao Go por WebTransport. No sentido inverso, um cliente Go precisa de uma rota QUIC nativa explícita para Rust ou Node.js, inclusive na entrada de um túnel. Essa conexão não usa WebTransport.
 
 `flowersec-private-loopback/1` é um perfil privado do produto, fora do deployment capability registry público. Suas APIs dedicadas de servidor Go e navegador TypeScript se limitam a um bridge HTTP de loopback numérico autenticado pelo aplicativo.
 

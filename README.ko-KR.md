@@ -109,9 +109,9 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
 
-WebTransport는 선택 사항입니다. Go는 완전한 H4 webtransport-server 프로필을 지원하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 H3를 사용합니다. Node.js와 Rust의 클라이언트, 직접 연결 리스너, 불투명 터널 리스너에서는 `draft02`와 `native_h3`를 선택할 수 있습니다. Node.js에서 raw QUIC 또는 WebTransport를 사용하려면 `@floegence/flowersec-node-native`와 `@floegence/flowersec-core`를 함께 설치하세요.
+WebTransport는 선택 사항입니다. Go는 완전한 H4 webtransport-server 프로필을 지원하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 H3를 사용합니다. Node.js와 Rust의 클라이언트, 직접 연결 리스너, 불투명 터널 리스너에서는 `draft02`를 사용합니다. Node.js에서 raw QUIC 또는 WebTransport를 사용하려면 `@floegence/flowersec-node-native`와 `@floegence/flowersec-core`를 함께 설치하세요.
 
-macOS arm64에서 Rust와 Node.js는 각각 실제 UDP로 Go와 native_h3 직접 연결을 검증했습니다. 어느 쪽에서 연결을 시작하든 암호화된 DATAGRAM이 왕복했습니다. 각 SDK는 같은 언어로 구성한 릴레이도 검증했습니다. native_h3의 언어 간 릴레이와 다른 플랫폼은 아직 검증되지 않았으며 H4 행렬에 추가된 항목은 없습니다. Go, Rust, Node.js에서 필수인 전송 방식은 WebSocket과 raw QUIC입니다.
+Rust와 Node.js 클라이언트는 WebTransport로 Go 리스너에 연결할 수 있습니다. 반대로 Go에서 Rust 또는 Node.js로 연결할 때는 터널 입구를 포함해 raw QUIC 경로를 명시해야 합니다. 이는 WebTransport 상호 운용에 해당하지 않습니다.
 
 `flowersec-private-loopback/1`은 공개 deployment capability registry 외부의 제품 전용 profile입니다. 전용 Go server 및 TypeScript browser API는 application 인증 numeric-loopback HTTP bridge로만 제한됩니다.
 

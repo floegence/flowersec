@@ -61,9 +61,6 @@ pub(crate) trait CarrierStreamV3: fmt::Debug + Send + Sync + 'static {
 #[async_trait]
 pub(crate) trait CarrierSessionV3: fmt::Debug + Send + Sync + 'static {
     fn kind(&self) -> CarrierKind;
-    fn uses_native_h3(&self) -> bool {
-        false
-    }
     fn set_multiplexer_client(&self, _client: bool) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

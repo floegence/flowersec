@@ -7,13 +7,8 @@ repository SBOM.
 - `bytes` (MIT)
 - `http` (MIT OR Apache-2.0)
 - `qpack` (MIT)
-- Quinn 0.11.11 and quinn-proto 0.11.17 (MIT OR Apache-2.0) are incorporated
-  as private source with negotiated reliable stream reset, prefix retransmission
-  and checked offsets. The original licenses are packaged in
-  `src/QUINN_LICENSE-MIT` and `src/QUINN_LICENSE-APACHE`.
-- `quinn-udp`, `rand`, `rand_pcg`, `rustc-hash`, `socket2` and `pin-project-lite`
-  (MIT OR Apache-2.0); `tinyvec` and `lru-slab` (MIT OR Apache-2.0 OR Zlib);
-  `slab` and `tracing` (MIT); `ring` (Apache-2.0 AND ISC).
+- `quinn` and `quinn-proto` (MIT OR Apache-2.0) are unmodified crates.io releases.
+- `sha2` and `x509-parser` (MIT OR Apache-2.0); `subtle` (BSD-3-Clause).
 - `rustls` (Apache-2.0 OR ISC OR MIT)
 - `thiserror` (MIT OR Apache-2.0)
 - `tokio` (MIT)

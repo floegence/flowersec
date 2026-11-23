@@ -39,7 +39,7 @@ import {
 export type NodeTLSRootsV3 = string | Uint8Array | readonly (string | Uint8Array)[];
 
 export type SessionOptionsV3 = Readonly<{
-  webTransportProfile?: "draft02" | "native_h3";
+  webTransport?: boolean;
   origin?: string;
   roots?: NodeTLSRootsV3;
   connectionPath?: NodeConnectionPath;
@@ -53,7 +53,7 @@ export type SessionOptionsV3 = Readonly<{
 }>;
 
 export type ConnectionControllerOptionsV3 = Readonly<{
-  webTransportProfile?: "draft02" | "native_h3";
+  webTransport?: boolean;
   origin?: string;
   roots?: NodeTLSRootsV3;
   connectionPath?: NodeConnectionPath;
@@ -66,6 +66,7 @@ export type ConnectionControllerOptionsV3 = Readonly<{
 }>;
 
 export async function connectV3(lease: ArtifactLeaseV3, options: SessionOptionsV3): Promise<Session> {
+  validateWebTransportOptIn(options);
   return await connectArtifactLeaseWithRuntimeV3(
     lease, options, () => nodeRuntime(options),
   );
@@ -75,6 +76,7 @@ export function createConnectionControllerV3(
   source: ArtifactSourceV3,
   options: ConnectionControllerOptionsV3,
 ): ConnectionControllerV3<Session> {
+  validateWebTransportOptIn(options);
   if (options.rpcHandlers !== undefined && !(options.rpcHandlers instanceof RPCHandlers)) {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
@@ -92,8 +94,13 @@ export function createConnectionControllerV3(
   );
 }
 
+function validateWebTransportOptIn(options: { readonly webTransport?: boolean }): void {
+  if ("webTransportProfile" in options) throw new TypeError("webTransportProfile was removed; use webTransport: true for draft02, or use a raw_quic candidate for Go-initiated connections");
+  if (options.webTransport !== undefined && typeof options.webTransport !== "boolean") throw new TypeError("webTransport must be a boolean");
+}
+
 function nodeRuntime(options: Readonly<{
-  webTransportProfile?: "draft02" | "native_h3";
+  webTransport?: boolean;
   origin?: string;
   roots?: NodeTLSRootsV3;
   connectionPath?: NodeConnectionPath;
@@ -112,8 +119,7 @@ function nodeRuntime(options: Readonly<{
   }
   const addon = options.connectionPath === undefined ? tryLoadNativeTransportAddon() : undefined;
   const rawQuic = addon === undefined ? undefined : createNativeRawQuicDriver(addon);
-  if (options.webTransportProfile !== undefined && options.webTransportProfile !== "draft02" && options.webTransportProfile !== "native_h3") throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
-  const webTransport = addon !== undefined && options.webTransportProfile !== undefined ? createNativeWebTransportDriver(addon, options.webTransportProfile) : undefined;
+  const webTransport = addon !== undefined && options.webTransport === true ? createNativeWebTransportDriver(addon) : undefined;
   const capability = detectNodeRuntimeCapabilityV3(rawQuic !== undefined, options.origin !== undefined, webTransport !== undefined);
   let rpcSnapshot: FrozenRPCHandlers | undefined;
   try {

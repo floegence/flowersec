@@ -6,10 +6,6 @@
 //! The public boundary intentionally exposes only Flowersec types. Transport
 //! implementation types remain private to their carrier modules.
 
-#[allow(dead_code, unused_imports, missing_debug_implementations)]
-mod quic_proto;
-#[allow(dead_code, unused_imports, missing_debug_implementations)]
-mod quic_provider;
 mod raw_quic;
 pub mod webtransport;
 

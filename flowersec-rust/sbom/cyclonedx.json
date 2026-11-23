@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:1ef1e97e-c69b-5cba-8d30-460c68e10a22",
+  "serialNumber": "urn:uuid:8171a1d6-44fa-55c7-89ef-3c4209bd7e2a",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec",
-      "version": "7.0.1",
-      "purl": "pkg:cargo/flowersec@7.0.1",
-      "bom-ref": "pkg:cargo/flowersec@7.0.1"
+      "version": "7.1.0",
+      "purl": "pkg:cargo/flowersec@7.1.0",
+      "bom-ref": "pkg:cargo/flowersec@7.1.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
+        "value": "bb41dbded2330d2ef6c6081eccb4393584ba13c61899ccf36d005a67ecbee3d0"
       }
     ]
   },
@@ -3250,13 +3250,10 @@
           "expression": "MIT"
         }
       ],
-      "description": "Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_provider. Upstream crate SHA-256: 0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8. Modified source tree SHA-256: 8dee7b897e1a68c456dea7d92fddb06752515443096aff67f645f2e171030fcd.",
-      "copyright": "Copyright (c) 2018 The quinn Developers",
       "externalReferences": [
         {
           "type": "distribution",
           "url": "https://static.crates.io/crates/quinn/quinn-0.11.11.crate",
-          "comment": "Upstream crate before Flowersec modifications",
           "hashes": [
             {
               "alg": "SHA-256",
@@ -3279,25 +3276,22 @@
     {
       "type": "library",
       "name": "quinn-proto",
-      "version": "0.11.17",
-      "purl": "pkg:cargo/quinn-proto@0.11.17",
-      "bom-ref": "pkg:cargo/quinn-proto@0.11.17",
+      "version": "0.11.19",
+      "purl": "pkg:cargo/quinn-proto@0.11.19",
+      "bom-ref": "pkg:cargo/quinn-proto@0.11.19",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "description": "Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_proto. Upstream crate SHA-256: 04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83. Modified source tree SHA-256: 4b7e2ee5152d340706750caa7a85a875b42d6b0c60820677a7fa0e69dabe7ce5.",
-      "copyright": "Copyright (c) 2018 The quinn Developers",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.17.crate",
-          "comment": "Upstream crate before Flowersec modifications",
+          "url": "https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.19.crate",
           "hashes": [
             {
               "alg": "SHA-256",
-              "content": "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
+              "content": "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
             }
           ]
         }
@@ -4911,34 +4905,6 @@
     },
     {
       "type": "library",
-      "name": "tracing-attributes",
-      "version": "0.1.31",
-      "purl": "pkg:cargo/tracing-attributes@0.1.31",
-      "bom-ref": "pkg:cargo/tracing-attributes@0.1.31",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tokio-rs/tracing"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "tracing-core",
       "version": "0.1.36",
       "purl": "pkg:cargo/tracing-core@0.1.36",
@@ -6200,7 +6166,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:cargo/flowersec@7.0.1",
+      "ref": "pkg:cargo/flowersec@7.1.0",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.1",
         "pkg:cargo/async-trait@0.1.92",
@@ -6217,33 +6183,24 @@
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.2.2",
         "pkg:cargo/idna_mapping@1.1.0",
-        "pkg:cargo/lru-slab@0.1.2",
         "pkg:cargo/p256@0.14.0",
-        "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/qpack@0.1.0",
-        "pkg:cargo/quinn-proto@0.11.17",
-        "pkg:cargo/quinn-udp@0.5.16",
+        "pkg:cargo/quinn-proto@0.11.19",
         "pkg:cargo/quinn@0.11.11",
         "pkg:cargo/rand@0.10.4",
-        "pkg:cargo/rand_pcg@0.10.2",
         "pkg:cargo/ring@0.17.14",
-        "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls-native-certs@0.8.4",
         "pkg:cargo/rustls@0.23.46",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.154",
         "pkg:cargo/sha2@0.11.1",
-        "pkg:cargo/slab@0.4.12",
-        "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/time@0.3.55",
-        "pkg:cargo/tinyvec@1.12.0",
         "pkg:cargo/tokio-rustls@0.26.4",
         "pkg:cargo/tokio-tungstenite@0.30.0",
         "pkg:cargo/tokio-util@0.7.20",
         "pkg:cargo/tokio@1.54.1",
-        "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/unicode-normalization@0.1.25",
         "pkg:cargo/url@2.5.9",
         "pkg:cargo/x25519-dalek@3.0.0",
@@ -6547,7 +6504,7 @@
       "ref": "pkg:cargo/errno@0.3.14",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/windows-sys@0.52.0"
+        "pkg:cargo/windows-sys@0.61.2"
       ]
     },
     {
@@ -6640,17 +6597,21 @@
       "ref": "pkg:cargo/getrandom@0.2.17",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/js-sys@0.3.104",
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1"
+        "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
+        "pkg:cargo/wasm-bindgen@0.2.127"
       ]
     },
     {
       "ref": "pkg:cargo/getrandom@0.4.3",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/js-sys@0.3.104",
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/r-efi@6.0.0",
-        "pkg:cargo/rand_core@0.10.1"
+        "pkg:cargo/rand_core@0.10.1",
+        "pkg:cargo/wasm-bindgen@0.2.127"
       ]
     },
     {
@@ -7052,12 +7013,38 @@
     {
       "ref": "pkg:cargo/quinn@0.11.11",
       "dependsOn": [
-        "pkg:cargo/quinn-proto@0.11.17"
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/cfg_aliases@0.2.2",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/quinn-proto@0.11.19",
+        "pkg:cargo/quinn-udp@0.5.16",
+        "pkg:cargo/rustc-hash@2.1.3",
+        "pkg:cargo/rustls@0.23.46",
+        "pkg:cargo/socket2@0.6.5",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/tokio@1.54.1",
+        "pkg:cargo/tracing@0.1.44",
+        "pkg:cargo/web-time@1.1.0"
       ]
     },
     {
-      "ref": "pkg:cargo/quinn-proto@0.11.17",
-      "dependsOn": []
+      "ref": "pkg:cargo/quinn-proto@0.11.19",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/lru-slab@0.1.2",
+        "pkg:cargo/rand@0.10.4",
+        "pkg:cargo/rand_pcg@0.10.2",
+        "pkg:cargo/ring@0.17.14",
+        "pkg:cargo/rustc-hash@2.1.3",
+        "pkg:cargo/rustls-pki-types@1.15.1",
+        "pkg:cargo/rustls@0.23.46",
+        "pkg:cargo/slab@0.4.12",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/tinyvec@1.12.0",
+        "pkg:cargo/tracing@0.1.44",
+        "pkg:cargo/web-time@1.1.0"
+      ]
     },
     {
       "ref": "pkg:cargo/quinn-udp@0.5.16",
@@ -7066,7 +7053,8 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/windows-sys@0.52.0"
+        "pkg:cargo/tracing@0.1.44",
+        "pkg:cargo/windows-sys@0.61.2"
       ]
     },
     {
@@ -7160,6 +7148,7 @@
     {
       "ref": "pkg:cargo/rustls-pki-types@1.15.1",
       "dependsOn": [
+        "pkg:cargo/web-time@1.1.0",
         "pkg:cargo/zeroize@1.9.2"
       ]
     },
@@ -7453,16 +7442,7 @@
       "ref": "pkg:cargo/tracing@0.1.44",
       "dependsOn": [
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tracing-attributes@0.1.31",
         "pkg:cargo/tracing-core@0.1.36"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tracing-attributes@0.1.31",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
       ]
     },
     {

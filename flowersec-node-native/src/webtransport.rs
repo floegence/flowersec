@@ -3,7 +3,7 @@ use flowersec_native_transport::{
     Cancellation,
     webtransport::{
         self as wt, Carrier, ClientTrust, DialFailure, Listener, MessageError, Stream,
-        WebTransportListenerPolicy, WebTransportProfile,
+        WebTransportListenerPolicy,
     },
 };
 use napi::{
@@ -27,17 +27,6 @@ fn wire_path(path: &str) -> Result<&'static str> {
         "direct" => Ok(wt::DIRECT),
         "tunnel" => Ok(wt::TUNNEL),
         _ => Err(failure("invalid_path")),
-    }
-}
-#[napi(js_name = "supportsNativeH3")]
-pub fn supports_native_h3() -> bool {
-    true
-}
-fn profile(profile: Option<&str>) -> Result<WebTransportProfile> {
-    match profile {
-        None | Some("draft02") => Ok(WebTransportProfile::Draft02),
-        Some("native_h3") => Ok(WebTransportProfile::NativeH3),
-        _ => Err(failure("invalid_webtransport_profile")),
     }
 }
 struct Operation<T> {
@@ -76,6 +65,7 @@ impl<T> Drop for Operation<T> {
 
 #[napi(object)]
 pub struct WebTransportConnectOptions {
+    #[napi(skip_typescript)]
     pub profile: Option<String>,
     pub url: String,
     pub path: String,
@@ -88,8 +78,8 @@ pub struct WebTransportConnectOptions {
 }
 #[napi(js_name = "connectWebTransport")]
 pub fn connect(options: WebTransportConnectOptions) -> Result<WebTransportSessionOperation> {
+    reject_profile(options.profile.as_deref())?;
     let path = wire_path(&options.path)?;
-    let selected = profile(options.profile.as_deref())?;
     if !options.url.ends_with(path) || !(1..=120_000).contains(&options.handshake_timeout_ms) {
         return Err(failure("invalid_limits"));
     }
@@ -116,12 +106,11 @@ pub fn connect(options: WebTransportConnectOptions) -> Result<WebTransportSessio
     Ok(WebTransportSessionOperation(Operation::new(async move {
         let carrier = tokio::time::timeout(
             Duration::from_millis(options.handshake_timeout_ms.into()),
-            wt::dial_profile(
+            wt::dial(
                 &options.url,
                 &options.origin,
                 trust,
                 options.inbound_bidirectional_stream_capacity,
-                selected,
             ),
         )
         .await
@@ -141,6 +130,7 @@ pub fn connect(options: WebTransportConnectOptions) -> Result<WebTransportSessio
 }
 #[napi(object)]
 pub struct WebTransportBindOptions {
+    #[napi(skip_typescript)]
     pub profile: Option<String>,
     pub host: String,
     pub port: u16,
@@ -154,6 +144,7 @@ pub struct WebTransportBindOptions {
 }
 #[napi(js_name = "bindWebTransport")]
 pub async fn bind(options: WebTransportBindOptions) -> Result<WebTransportListener> {
+    reject_profile(options.profile.as_deref())?;
     let bind = SocketAddr::new(
         options
             .host
@@ -163,8 +154,7 @@ pub async fn bind(options: WebTransportBindOptions) -> Result<WebTransportListen
     );
     let path = wire_path(&options.path)?;
     let policy = WebTransportListenerPolicy::new(options.authority_host, options.allowed_origins)
-        .map_err(|_| failure("invalid_origin_policy"))?
-        .with_profile(profile(options.profile.as_deref())?);
+        .map_err(|_| failure("invalid_origin_policy"))?;
     let timeout = options.handshake_timeout_ms.unwrap_or(10_000);
     if !(1..=120_000).contains(&timeout) {
         return Err(failure("invalid_limits"));
@@ -192,6 +182,14 @@ pub async fn bind(options: WebTransportBindOptions) -> Result<WebTransportListen
         listener: Arc::new(listener),
         path: options.path,
     })
+}
+fn reject_profile(profile: Option<&str>) -> Result<()> {
+    if profile.is_some() {
+        return Err(failure(
+            "WebTransport profile was removed; omit profile for draft02 or use raw QUIC",
+        ));
+    }
+    Ok(())
 }
 #[napi]
 pub struct WebTransportListener {

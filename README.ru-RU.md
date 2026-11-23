@@ -109,9 +109,9 @@ Flowersec отделяет сеанс приложения от сетевого
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 
-WebTransport необязателен. Go поддерживает полный профиль H4 webtransport-server; профиль Browser использует H3, если доступен API WebTransport браузера. В Node.js и Rust профили `draft02` и `native_h3` доступны клиентам, серверам прямых соединений и ретрансляторам непрозрачных туннелей. Для работы с raw QUIC или WebTransport в Node.js установите `@floegence/flowersec-node-native` вместе с `@floegence/flowersec-core`.
+WebTransport необязателен. Go поддерживает полный профиль H4 webtransport-server; профиль Browser использует H3, если доступен API WebTransport браузера. В Node.js и Rust профиль `draft02` доступен клиентам, серверам прямых соединений и ретрансляторам непрозрачных туннелей. Для работы с raw QUIC или WebTransport в Node.js установите `@floegence/flowersec-node-native` вместе с `@floegence/flowersec-core`.
 
-На macOS arm64 и Rust, и Node.js устанавливали и принимали прямые соединения native_h3 с Go по реальному UDP и обменивались зашифрованными DATAGRAM в обоих направлениях. Для каждого SDK проверена и ретрансляция между узлами на одном языке. Ретрансляция между языками и работа на других платформах для native_h3 пока не проверены; эти тесты не добавляют записей в матрицу H4. Для Go, Rust и Node.js обязательны WebSocket и raw QUIC.
+Клиенты Rust и Node.js могут подключаться к Go по WebTransport. В обратном направлении клиенту Go нужен явно заданный маршрут raw QUIC к Rust или Node.js, в том числе для входа в туннель. Такое соединение не использует WebTransport.
 
 `flowersec-private-loopback/1` — приватный профиль продукта вне публичного deployment capability registry. Его специализированные API для Go server и TypeScript browser ограничены аутентифицированным приложением numeric-loopback HTTP bridge.
 

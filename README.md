@@ -135,15 +135,14 @@ by each package.
 WebTransport is optional rather than part of the required native-server carrier
 contract. Go claims the separate complete H4 webtransport-server profile;
 the Browser profile uses the H3 WebTransport API when present. Node.js and Rust
-support `draft02` and `native_h3` for clients, direct listeners, and opaque
+support `draft02` for clients, direct listeners, and opaque
 tunnel listeners. For raw QUIC or WebTransport in Node.js, install
 `@floegence/flowersec-node-native` alongside `@floegence/flowersec-core`.
 
-On macOS arm64, Rust and Node.js each dialed and accepted direct connections
-with Go over real UDP using native_h3 and exchanged encrypted DATAGRAMs. Rust
-and Node.js also tested relays within their own SDKs. Cross-language relays
-and other platforms remain unverified for native_h3; these checks add no H4
-matrix entries. The required native-server carrier surface is WebSocket and
+Rust and Node.js clients can dial Go WebTransport listeners. In the opposite
+direction, issue a raw QUIC route for Go clients dialing Rust or Node.js,
+including tunnel ingress. These are distinct carriers, not a fallback.
+The required native-server carrier surface is WebSocket and
 raw QUIC for Go, Rust, and Node.js.
 
 `flowersec-private-loopback/1` is a product-private profile outside the public

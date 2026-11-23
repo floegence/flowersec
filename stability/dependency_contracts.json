@@ -130,7 +130,7 @@
       "upgradeGroup": null
     },
     {
-      "ecosystem": "vendored-cargo",
+      "ecosystem": "cargo",
       "package": "quinn",
       "boundary": "rust-raw-quic",
       "scope": "production",
@@ -142,23 +142,11 @@
       "upgradeGroup": "rust-quic-tls-stack"
     },
     {
-      "ecosystem": "vendored-cargo",
+      "ecosystem": "cargo",
       "package": "quinn-proto",
       "boundary": "native-quic-protocol",
       "scope": "production",
       "requiredCapabilities": ["stream-state", "datagrams", "connection-close"],
-      "protocol": "quic-rfc-9000-rfc-9221",
-      "publicApiOnly": true,
-      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel"],
-      "upgradeGroup": "rust-quic-tls-stack"
-    },
-    {
-      "ecosystem": "cargo",
-      "package": "quinn-udp",
-      "boundary": "native-quic-udp",
-      "scope": "production",
-      "requiredCapabilities": ["udp-transmit", "udp-receive"],
       "protocol": "quic-rfc-9000-rfc-9221",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],

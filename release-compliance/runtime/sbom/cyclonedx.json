@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:a6adf460-c87c-5834-8518-cebaeb115006",
+  "serialNumber": "urn:uuid:14bb11f0-0bd2-59b5-8ce1-ed6b89022b09",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-runtime",
-      "version": "7.0.1",
-      "purl": "pkg:generic/flowersec-runtime@7.0.1",
-      "bom-ref": "pkg:generic/flowersec-runtime@7.0.1"
+      "version": "7.1.0",
+      "purl": "pkg:generic/flowersec-runtime@7.1.0",
+      "bom-ref": "pkg:generic/flowersec-runtime@7.1.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
+        "value": "bb41dbded2330d2ef6c6081eccb4393584ba13c61899ccf36d005a67ecbee3d0"
       }
     ]
   },
@@ -358,7 +358,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-runtime@7.0.1",
+      "ref": "pkg:generic/flowersec-runtime@7.1.0",
       "dependsOn": [
         "pkg:golang/github.com/flynn/noise@v1.1.0",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",

@@ -109,9 +109,9 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 
 請參閱各 SDK 指南，了解每個套件支援的平台與連線組合。
 
-WebTransport 是選用功能。Go 支援完整的 H4 webtransport-server profile；Browser profile 會在瀏覽器 WebTransport API 可用時使用 H3。Node.js 與 Rust 的用戶端、直連監聽器及不透明隧道監聽器支援 `draft02` 和 `native_h3`。在 Node.js 中使用 raw QUIC 或 WebTransport，須同時安裝 `@floegence/flowersec-node-native` 和 `@floegence/flowersec-core`。
+WebTransport 是選用功能。Go 支援完整的 H4 webtransport-server profile；Browser profile 會在瀏覽器 WebTransport API 可用時使用 H3。Node.js 與 Rust 的用戶端、直連監聽器及不透明隧道監聽器支援 `draft02`。在 Node.js 中使用 raw QUIC 或 WebTransport，須同時安裝 `@floegence/flowersec-node-native` 和 `@floegence/flowersec-core`。
 
-在 macOS arm64 上，Rust 和 Node.js 各自與 Go 透過真實 UDP 驗證了 native_h3 直連：雙方都曾發起及接受連線，並完成加密 DATAGRAM 往返。兩個 SDK 也分別驗證了同語言中繼。native_h3 的跨語言中繼與其他平台仍未驗證；這些測試未新增 H4 矩陣項目。Go、Rust 與 Node.js 必須支援的傳輸方式是 WebSocket 與 raw QUIC。
+Rust 與 Node.js 用戶端可透過 WebTransport 連線至 Go 監聽器。反向連線時，Go 用戶端必須使用明確指定的原生 QUIC 路由連線至 Rust 或 Node.js，隧道入口亦同。這不屬於 WebTransport 互通。
 
 `flowersec-private-loopback/1` 是公開 deployment capability registry 之外的產品私有 profile。它的專用 Go server 與 TypeScript browser API 僅限應用程式已驗證的數字回環 HTTP bridge。
 

@@ -137,41 +137,22 @@ test("Cargo protocol patches and vendored transport stacks are rejected", (t) =>
   }, /local Cargo protocol patch|vendored transport\/protocol stack/);
 });
 
-test("only reviewed embedded Quinn source can satisfy a vendored contract", (t) => {
+test("Quinn must resolve from the reviewed registry archives in every native lock", (t) => {
   const root = createFixture(t);
-  const contract = baselineContract();
-  const quinn = contract.dependencies.find((entry) => entry.package === "quinn");
-  quinn.ecosystem = "vendored-cargo";
-  write(root, "stability/dependency_contracts.json", JSON.stringify(contract));
-  write(root, "flowersec-rust/Cargo.toml", '[dependencies]\nrustls = "0.23"\n');
-  write(root, "flowersec-rust/Cargo.lock", 'version = 4\n[[package]]\nname = "rustls"\nversion = "0.23.0"\n');
-  const inventory = "sbom/source-inventory.json";
-  const component = JSON.parse(fs.readFileSync(path.join(repositoryRoot, inventory))).components.find((entry) => entry.name === "quinn");
-  const directory = component.vendored.directory;
-  fs.cpSync(path.join(repositoryRoot, directory), path.join(root, directory), { recursive: true });
-  const expectInvalid = (pattern) => {
-    const result = runChecker(root);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, pattern);
-  };
-  expectInvalid(/missing vendored Cargo provenance for quinn/);
-  write(root, inventory, JSON.stringify({ components: [component] }));
+  const lockfile = "flowersec-native-transport/Cargo.lock";
+  const locked = fs.readFileSync(path.join(repositoryRoot, lockfile), "utf8");
+  write(root, "flowersec-native-transport/Cargo.toml", '[dependencies]\nquinn = "=0.11.11"\n');
+  write(root, "flowersec-rust/Cargo.lock", locked);
+  write(root, lockfile, locked);
   const valid = runChecker(root);
   assert.equal(valid.status, 0, valid.stderr);
-  write(root, inventory, JSON.stringify({ components: [component, { ...component, name: "another-quic" }] }));
-  expectInvalid(/unexpected vendored Cargo component another-quic/);
-  const forged = structuredClone(component);
-  forged.vendored.upstreamArchiveSha256 = "0".repeat(64);
-  forged.review.sourceEvidenceValue = `${JSON.stringify(forged.vendored, null, 2)}\n`;
-  write(root, inventory, JSON.stringify({ components: [forged] }));
-  expectInvalid(/invalid vendored Cargo provenance for quinn/);
-  write(root, inventory, JSON.stringify({ components: [component] }));
-  const link = path.join(root, directory, "substitute");
-  fs.symlinkSync(root, link, "dir");
-  expectInvalid(/unexpected vendored Cargo source/);
-  fs.unlinkSync(link);
-  write(root, `${directory}/mod.rs`, "pub struct Changed;\n");
-  expectInvalid(/source tree differs from reviewed quinn provenance/);
+  for (const [pattern, replacement] of [[/0c1a41e437b6bbd4/, "bad0bad0bad0bad0"], [/registry\+https:/g, "git+https:"], [/0\.11\.19/g, "0.11.0"]]) {
+    write(root, lockfile, locked.replace(pattern, replacement));
+    assert.match(runChecker(root).stderr, /must lock the reviewed crates.io release/);
+  }
+  write(root, lockfile, locked);
+  write(root, "flowersec-native-transport/src/quic_provider/mod.rs", "");
+  assert.match(runChecker(root).stderr, /embedded Quinn source is forbidden/);
 });
 
 test("a Cargo alias requires a contract for the actual package and its owning lock", (t) => {

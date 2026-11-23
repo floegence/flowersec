@@ -3,7 +3,7 @@ module github.com/floegence/flowersec/flowersec-go/adapters/sqlite/v7
 go 1.27.1
 
 require (
-	github.com/floegence/flowersec/flowersec-go/v7 v7.0.1
+	github.com/floegence/flowersec/flowersec-go/v7 v7.1.0
 	modernc.org/sqlite v1.60.1
 )
 

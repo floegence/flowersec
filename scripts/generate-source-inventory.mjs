@@ -1170,38 +1170,14 @@ function parseCargoLockChecksums(lockfile) {
   return checksums;
 }
 
-function vendoredQuinnComponents(repoRoot, policy) {
-  const base = "flowersec-native-transport/src";
-  const licenseFiles = [
+function quinnLicenses(manifest) {
+  return [
     ["LICENSE-MIT", "4b2d0aca6789fa39e03d6738e869ea0988cceba210ca34ebb59c15c463e93a04"],
     ["LICENSE-APACHE", "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"],
   ].map(([name, digest]) => {
-    const contents = readRegularFile(path.join(repoRoot, base, `QUINN_${name}`), "missing Quinn license");
-    if (sha256(contents) !== digest) throw new Error(`vendored Quinn ${name} differs from upstream`);
+    const contents = readRegularFile(path.join(path.dirname(manifest), name), "missing Quinn license");
+    if (sha256(contents) !== digest) throw new Error(`Quinn ${name} differs from reviewed upstream license`);
     return { path: name, sha256: digest, contents };
-  });
-  return [
-    ["quinn", "0.11.11", "quic_provider", "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"],
-    ["quinn-proto", "0.11.17", "quic_proto", "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"],
-  ].map(([name, version, module, upstreamArchiveSha256]) => {
-    const directory = `${base}/${module}`;
-    const tree = path.join(repoRoot, directory);
-    const files = walkFiles(tree).sort();
-    if (!files.includes("mod.rs")) throw new Error(`vendored ${name} source is missing: ${directory}/mod.rs`);
-    const sourceTreeSha256 = sha256(stableJson(files.map((file) => [
-      file, sha256(readRegularFile(path.join(tree, file), "invalid vendored Quinn source file", null)),
-    ])));
-    const vendored = { directory, sourceTreeSha256, upstreamArchiveSha256 };
-    return {
-      ...makeComponent({
-        ecosystem: "cargo", name, version, purl: `pkg:cargo/${name}@${version}`,
-        source: `https://static.crates.io/crates/${name}/${name}-${version}.crate`,
-        sourceEvidence: { kind: "modified-vendored-cargo-source", value: stableJson(vendored) },
-        license: "MIT OR Apache-2.0", licenseFiles, policy,
-      }),
-      vendored,
-      copyrightText: licenseFiles[0].contents.split("\n")[0],
-    };
   });
 }
 
@@ -1233,7 +1209,7 @@ function vendoredNoiseReference(repoRoot, policy) {
   };
 }
 
-function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored, noiseManifest, noise) {
+function collectRustContext(metadata, policy, lockfile, noiseManifest, noise) {
   const rootPackage = metadata.packages.find((pkg) => pkg.id === metadata.resolve.root);
   if (!rootPackage) throw new Error("Cargo metadata has no root package details");
   const root = rootComponent(
@@ -1243,7 +1219,6 @@ function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored
     `pkg:cargo/${rootPackage.name}@${rootPackage.version}`,
   );
   const checksums = parseCargoLockChecksums(lockfile);
-  const nativeId = metadata.packages.find((pkg) => pkg.source === null && pkg.manifest_path === nativeManifest)?.id;
   const byId = new Map();
   for (const pkg of metadata.packages) {
     if (pkg.manifest_path === noiseManifest) {
@@ -1256,15 +1231,18 @@ function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored
     if (pkg.source === null) continue;
     const checksum = checksums.get(`${pkg.name}\0${pkg.version}`);
     if (!checksum) throw new Error(`Cargo package ${pkg.name}@${pkg.version} has no lock checksum`);
+    const quinn = ["quinn", "quinn-proto"].includes(pkg.name);
+    const archive = `https://static.crates.io/crates/${pkg.name}/${pkg.name}-${pkg.version}.crate`;
     byId.set(pkg.id, makeComponent({
       ecosystem: "cargo",
       name: pkg.name,
       version: pkg.version,
       license: pkg.license,
-      source: pkg.repository ?? pkg.source,
+      source: quinn ? archive : pkg.repository ?? pkg.source,
       purl: `pkg:cargo/${pkg.name}@${pkg.version}`,
       policy,
       sourceEvidence: { kind: "cargo-lock-checksum", value: checksum },
+      ...(quinn ? { licenseFiles: quinnLicenses(pkg.manifest_path) } : {}),
     }));
   }
   const sourceReachable = rustReachablePackageIds(metadata, false);
@@ -1272,7 +1250,6 @@ function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored
   function collectComponents(reachable) {
     return mergeComponents([
       [...byId].flatMap(([id, component]) => reachable.has(id) ? [component] : []),
-      reachable.has(nativeId) ? vendored : [],
     ]);
   }
   const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
@@ -1289,17 +1266,11 @@ function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored
   }
   function collectEdges(reachable, publishedOnly) {
     const edges = [];
-    function addVendoredEdges(anchor, kind) {
-      const [provider, proto] = vendored;
-      edges.push({ from: anchor.purl, to: provider.purl, kind }, { from: anchor.purl, to: proto.purl, kind },
-        { from: provider.purl, to: proto.purl, kind: "runtime" });
-    }
     const anchors = [metadata.resolve.root, ...[...byId.keys()].filter((id) => reachable.has(id))];
     for (const anchorId of anchors) {
       const anchor = anchorId === metadata.resolve.root ? root : byId.get(anchorId);
       const anchorNode = nodes.get(anchorId);
       if (!anchor || !anchorNode) throw new Error(`Cargo metadata is missing graph anchor ${anchorId}`);
-      if (anchorId === nativeId) addVendoredEdges(anchor, "runtime");
       function visit(dependencyId, inheritedKind, localPath) {
         if (!reachable.has(dependencyId)) return;
         const external = byId.get(dependencyId);
@@ -1310,7 +1281,6 @@ function collectRustContext(metadata, policy, lockfile, nativeManifest, vendored
         if (localPath.has(dependencyId)) throw new Error(`Cargo path dependency cycle at ${dependencyId}`);
         const localNode = nodes.get(dependencyId);
         if (!localNode) throw new Error(`Cargo metadata is missing local dependency ${dependencyId}`);
-        if (dependencyId === nativeId) addVendoredEdges(anchor, inheritedKind);
         const nextPath = new Set(localPath).add(dependencyId);
         for (const dependency of localNode.deps ?? []) {
           const kind = dependencyKind(dependency);
@@ -1478,6 +1448,7 @@ export function renderSpdx(name, graph, inventoryDigest, createdAtUtc) {
       licenseDeclared: component.declaredLicense,
       copyrightText: component.copyrightText ?? "NOASSERTION",
       ...(component.vendored ? { sourceInfo: vendoredSourceDescription(component) } : {}),
+      ...(registryArchiveHash(component) ? { checksums: [{ algorithm: "SHA256", checksumValue: registryArchiveHash(component) }] } : {}),
       externalRefs: [{
         referenceCategory: "PACKAGE-MANAGER",
         referenceType: "purl",
@@ -1521,6 +1492,11 @@ function deterministicUuid(seed) {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 }
 
+function registryArchiveHash(component) {
+  return component.review?.sourceEvidenceKind === "cargo-lock-checksum" && component.source.startsWith("https://static.crates.io/crates/")
+    ? component.review.sourceEvidenceValue : undefined;
+}
+
 export function renderCycloneDx(name, graph, inventoryDigest) {
   validateDependencyGraph(graph);
   const dependencies = dependencyMap(graph);
@@ -1550,7 +1526,7 @@ export function renderCycloneDx(name, graph, inventoryDigest) {
       externalReferences: [{ type: "distribution", url: component.source, ...(component.vendored ? {
         comment: "Upstream crate before Flowersec modifications",
         hashes: [{ alg: "SHA-256", content: component.vendored.upstreamArchiveSha256 }],
-      } : {}) }],
+      } : registryArchiveHash(component) ? { hashes: [{ alg: "SHA-256", content: registryArchiveHash(component) }] } : {}) }],
       properties: [
         { name: "flowersec:declared-license", value: component.declaredLicense },
         { name: "flowersec:source-offer-required", value: String(component.sourceOfferRequired) },
@@ -1892,12 +1868,10 @@ export function generateSourceArtifacts(repoRoot) {
     ["rust:flowersec-rust/fuzz", "flowersec-rust/fuzz/Cargo.toml", "flowersec-rust/fuzz/Cargo.lock"],
     ["rust:examples/rust", "examples/rust/Cargo.toml", "examples/rust/Cargo.lock"],
   ];
-  const vendored = vendoredQuinnComponents(repoRoot, policy);
-  const nativeManifest = fs.realpathSync(path.join(repoRoot, "flowersec-native-transport/Cargo.toml"));
   const noise = vendoredNoiseReference(repoRoot, policy);
   const noiseManifest = fs.realpathSync(path.join(repoRoot, noise.vendored.directory, "Cargo.toml"));
   const rustGraphs = new Map(rustDefinitions.map(([id, manifest, lockfile]) => [id, collectRustContext(
-    cargoMetadata(repoRoot, manifest), policy, path.join(repoRoot, lockfile), nativeManifest, vendored, noiseManifest, noise,
+    cargoMetadata(repoRoot, manifest), policy, path.join(repoRoot, lockfile), noiseManifest, noise,
   )]));
   const rustContexts = rustDefinitions.map(([id]) => ({
     id,

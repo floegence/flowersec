@@ -92,14 +92,14 @@ WSS, raw QUIC, and WebTransport for clients, direct listeners, and
 opaque tunnel listeners. Raw QUIC and WebTransport require the Flowersec native
 package for macOS or glibc Linux on arm64/x64. Node does not issue artifacts.
 
-For WebTransport, pass `webTransportProfile: "native_h3"` or `"draft02"`
+For WebTransport, pass `webTransport: true`
 and a canonical HTTP(S) `origin` to `connect` or `createConnectionController`.
-Use `carrier: "webtransport"`, the matching `profile`, and a nonempty
+Use `carrier: "webtransport"` and a nonempty
 `allowedOrigins` list on the corresponding listener. An absent Origin is
 rejected. With a wildcard bind address, supply the public HTTPS URL with the
 same port and the exact `/flowersec/webtransport/v5/direct` or
-`/flowersec/webtransport/v5/tunnel` path. `native_h3` requires negotiated QUIC
-reliable stream reset and `webtransport-h3` Extended CONNECT.
+`/flowersec/webtransport/v5/tunnel` path. Node speaks draft02. Configure an
+explicit raw QUIC route for a Go client dialing a Node listener.
 
 CA candidates use platform or configured private roots. Pin candidates verify
 only the complete artifact-bound active pin set and never fall back to CA.

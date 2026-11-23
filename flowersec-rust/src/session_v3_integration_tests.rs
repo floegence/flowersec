@@ -4231,6 +4231,90 @@ fn regression_config(
 }
 
 #[tokio::test]
+async fn draft02_header_reset_isolated_from_live_session_streams_and_rpc() {
+    use flowersec_native_transport::webtransport::{self, ClientTrust, WebTransportListenerPolicy};
+    let identity =
+        cert_test_builder::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+    let root = identity.cert.der().to_vec();
+    let origin = "https://app.example";
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let address = socket.local_addr().unwrap();
+    let listener = webtransport::Listener::new(
+        socket,
+        address,
+        vec![root.clone()],
+        identity.signing_key.serialize_der(),
+        WebTransportListenerPolicy::new("127.0.0.1", vec![origin.into()]).unwrap(),
+        webtransport::DIRECT,
+        6,
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let url = listener.ingress_url();
+        let (client, server) = tokio::join!(
+            webtransport::dial(&url, origin, ClientTrust::Ca(vec![root]), 6),
+            listener.accept()
+        );
+        let carriers = [client.unwrap(), server.unwrap().0];
+        let establish = |index: usize, role| {
+            establish_session_v3(
+                crate::webtransport_v5::session_test_carrier(carriers[index].clone()),
+                regression_config(role, "cancel-isolation", 4, Some(Arc::new(EchoRpc))),
+            )
+        };
+        let (client, server) = tokio::join!(
+            establish(0, SessionRole::Client),
+            establish(1, SessionRole::Server)
+        );
+        let sessions = [client.unwrap(), server.unwrap()];
+        for sender in 0..2 {
+            let (local, remote) = (&sessions[sender], &sessions[1 - sender]);
+            let (outgoing, incoming) = tokio::join!(
+                local.open_stream("active", StreamMetadata::empty()),
+                remote.accept_stream()
+            );
+            let (outgoing, incoming) = (outgoing.unwrap(), incoming.unwrap());
+            outgoing.write(Bytes::from_static(b"before")).await.unwrap();
+            carriers[sender]
+                .reset_during_stream_header_for_test()
+                .await
+                .unwrap();
+            outgoing.write(Bytes::from_static(b"after")).await.unwrap();
+            outgoing.close_write().await.unwrap();
+            let mut payload = Vec::new();
+            while let Some(bytes) = incoming.stream().read().await.unwrap() {
+                payload.extend(bytes);
+            }
+            assert_eq!(payload, b"beforeafter");
+            incoming.stream().close_write().await.unwrap();
+            let (next, accepted) = tokio::join!(
+                local.open_stream("next", StreamMetadata::empty()),
+                remote.accept_stream()
+            );
+            let (next, accepted) = (next.unwrap(), accepted.unwrap());
+            next.write(Bytes::from_static(b"next")).await.unwrap();
+            assert_eq!(
+                accepted.stream().read().await.unwrap().unwrap(),
+                &b"next"[..]
+            );
+            next.close_write().await.unwrap();
+            accepted.stream().close_write().await.unwrap();
+            let reply = local
+                .rpc()
+                .call(42, serde_json::json!(sender))
+                .await
+                .unwrap();
+            assert_eq!(reply["request"], sender);
+        }
+        let _ = tokio::join!(sessions[0].close(), sessions[1].close());
+        listener.close().await;
+    })
+    .await
+    .expect("session did not recover from a canceled stream");
+}
+
+#[tokio::test]
 async fn direct_and_tunnel_endpoint_identity_shapes_fail_before_carrier_io() {
     let (direct_carrier, _direct_peer) = memory_carrier_pair_v3();
     let mut direct = regression_config(SessionRole::Client, "invalid-direct-endpoint", 1, None);

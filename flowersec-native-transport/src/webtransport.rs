@@ -1,9 +1,8 @@
 //! One explicitly negotiated WebTransport session per dedicated HTTP/3 connection.
-use crate::{
-    ApplicationClose,
-    quic_provider::{self as quinn, Connection, Endpoint, RecvStream, SendStream, VarInt},
-};
+use crate::ApplicationClose;
 use bytes::{Buf, Bytes};
+use quinn::{Connection, Endpoint, ReadError, ReadExactError, RecvStream, SendStream, VarInt};
+use quinn_proto::coding::Codec;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -48,26 +47,6 @@ pub enum MessageError {
 pub const DIRECT: &str = "/flowersec/webtransport/v5/direct";
 pub const TUNNEL: &str = "/flowersec/webtransport/v5/tunnel";
 const DRAFT: u64 = 0x2b603742;
-const NATIVE: u64 = 0x2c7cf000;
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WebTransportProfile {
-    Draft02,
-    NativeH3,
-}
-impl WebTransportProfile {
-    fn setting(self) -> u64 {
-        match self {
-            Self::Draft02 => DRAFT,
-            Self::NativeH3 => NATIVE,
-        }
-    }
-    fn protocol(self) -> &'static str {
-        match self {
-            Self::Draft02 => "webtransport",
-            Self::NativeH3 => "webtransport-h3",
-        }
-    }
-}
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_SETTINGS: usize = 512;
 const RESET: u64 = 0x52e4a40fa8db + 0xf502 + 0xf502 / 0x1e;
@@ -93,7 +72,6 @@ pub fn valid_origin(origin: &str) -> bool {
 pub struct WebTransportListenerPolicy {
     host: String,
     origins: Vec<String>,
-    profile: WebTransportProfile,
 }
 impl fmt::Debug for WebTransportListenerPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -112,29 +90,16 @@ impl WebTransportListenerPolicy {
         {
             return Err(invalid());
         }
-        Ok(Self {
-            host,
-            origins,
-            profile: WebTransportProfile::Draft02,
-        })
-    }
-    pub fn with_profile(mut self, profile: WebTransportProfile) -> Self {
-        self.profile = profile;
-        self
+        Ok(Self { host, origins })
     }
 }
 
-fn transport(
-    capacity: u32,
-    listener: bool,
-    profile: WebTransportProfile,
-) -> io::Result<Arc<quinn::TransportConfig>> {
+fn transport(capacity: u32, listener: bool) -> io::Result<Arc<quinn::TransportConfig>> {
     if !(3..=130).contains(&capacity) {
         return Err(invalid());
     }
     let mut transport = quinn::TransportConfig::default();
     transport
-        .reliable_stream_reset(profile == WebTransportProfile::NativeH3)
         .max_concurrent_bidi_streams((capacity + u32::from(listener)).into())
         .max_concurrent_uni_streams(3u32.into())
         .receive_window((1u32 << 20).into())
@@ -198,7 +163,7 @@ impl Listener {
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(tls).map_err(io_error)?,
         ));
-        config.transport_config(transport(capacity, true, policy.profile)?);
+        config.transport_config(transport(capacity, true)?);
         config
             .max_incoming(128)
             .incoming_buffer_size(64 << 10)
@@ -248,8 +213,7 @@ impl Listener {
                 let conn = connecting.await.map_err(io_error)?;
                 let remote = conn.remote_address();
                 let mut guard = Pending::new(conn.clone());
-                let profile = self.policy.profile;
-                let controls = controls(&conn, false, profile).await?;
+                let controls = controls(&conn, false).await?;
                 let (mut send, mut recv) = conn.accept_bi().await.map_err(io_error)?;
                 if u64::from(VarInt::from(send.id())) != 0 {
                     return Err(invalid());
@@ -259,18 +223,10 @@ impl Listener {
                     |key: &str, value: &str| headers.get(key).is_some_and(|actual| actual == value);
                 if !valid(":method", "CONNECT")
                     || !valid(":scheme", "https")
-                    || !valid(":protocol", profile.protocol())
+                    || !valid(":protocol", "webtransport")
                     || !valid(":path", self.path)
                     || !valid(":authority", &self.authority)
-                    || match profile {
-                        WebTransportProfile::Draft02 => {
-                            !valid("sec-webtransport-http3-draft02", "1")
-                        }
-                        WebTransportProfile::NativeH3 => {
-                            headers.contains_key("sec-webtransport-http3-draft02")
-                                || headers.contains_key("sec-webtransport-http3-draft")
-                        }
-                    }
+                    || !valid("sec-webtransport-http3-draft02", "1")
                     || !headers
                         .get("origin")
                         .is_some_and(|origin| self.policy.origins.contains(origin))
@@ -286,14 +242,10 @@ impl Listener {
                 }
                 write_headers(
                     &mut send,
-                    if profile == WebTransportProfile::Draft02 {
-                        &[
-                            (":status", "200"),
-                            ("sec-webtransport-http3-draft", "draft02"),
-                        ]
-                    } else {
-                        &[(":status", "200")]
-                    },
+                    &[
+                        (":status", "200"),
+                        ("sec-webtransport-http3-draft", "draft02"),
+                    ],
                 )
                 .await?;
                 let session = Carrier::new(
@@ -339,15 +291,6 @@ pub async fn dial(
     trust: ClientTrust,
     capacity: u32,
 ) -> Result<Arc<Carrier>, DialFailure> {
-    dial_profile(raw, origin, trust, capacity, WebTransportProfile::Draft02).await
-}
-pub async fn dial_profile(
-    raw: &str,
-    origin: &str,
-    trust: ClientTrust,
-    capacity: u32,
-    profile: WebTransportProfile,
-) -> Result<Arc<Carrier>, DialFailure> {
     use DialFailure as Failure;
     let url = Url::parse(raw).map_err(|_| Failure::InvalidArtifact)?;
     if url.scheme() != "https"
@@ -379,9 +322,7 @@ pub async fn dial_profile(
     let mut config = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(tls).map_err(|_| Failure::Security)?,
     ));
-    config.transport_config(
-        transport(capacity, false, profile).map_err(|_| Failure::InvalidArtifact)?,
-    );
+    config.transport_config(transport(capacity, false).map_err(|_| Failure::InvalidArtifact)?);
     let addresses = tokio::net::lookup_host((host, port))
         .await
         .map_err(|_| Failure::Connection)?;
@@ -411,21 +352,19 @@ pub async fn dial_profile(
             Err(_) => continue,
         };
         let mut guard = Pending::new(conn.clone());
-        let controls = controls(&conn, true, profile)
+        let controls = controls(&conn, true)
             .await
             .map_err(|_| Failure::Connection)?;
         let (mut send, mut recv) = conn.open_bi().await.map_err(|_| Failure::Connection)?;
-        let mut request = vec![
+        let request = [
             (":method", "CONNECT"),
             (":scheme", "https"),
             (":authority", authority),
             (":path", url.path()),
-            (":protocol", profile.protocol()),
+            (":protocol", "webtransport"),
             ("origin", origin),
+            ("sec-webtransport-http3-draft02", "1"),
         ];
-        if profile == WebTransportProfile::Draft02 {
-            request.push(("sec-webtransport-http3-draft02", "1"));
-        }
         write_headers(&mut send, &request)
             .await
             .map_err(|_| Failure::Connection)?;
@@ -438,9 +377,7 @@ pub async fn dial_profile(
                 .any(|name| name.starts_with(':') && name != ":status")
             || headers
                 .get("sec-webtransport-http3-draft")
-                .is_some_and(|v| profile != WebTransportProfile::Draft02 || v != "draft02")
-            || profile == WebTransportProfile::NativeH3
-                && headers.contains_key("sec-webtransport-http3-draft02")
+                .is_some_and(|value| value != "draft02")
         {
             return Err(Failure::Connection);
         }
@@ -456,18 +393,17 @@ fn put(bytes: &mut Vec<u8>, value: u64) {
     value.encode(bytes);
 }
 async fn read_int(stream: &mut RecvStream) -> io::Result<u64> {
-    let mut bytes = [0; 8];
-    stream.read_exact(&mut bytes[..1]).await.map_err(io_error)?;
-    let length = 1usize << (bytes[0] >> 6);
-    stream
-        .read_exact(&mut bytes[1..length])
-        .await
-        .map_err(io_error)?;
-    VarInt::decode(&mut &bytes[..length])
-        .map(VarInt::into_inner)
-        .map_err(|_| invalid())
+    read_varint(stream).await.map_err(io_error)
 }
-use crate::quic_proto::coding::Codec;
+async fn read_varint(stream: &mut RecvStream) -> Result<u64, ReadExactError> {
+    let mut bytes = [0; 8];
+    stream.read_exact(&mut bytes[..1]).await?;
+    let length = 1usize << (bytes[0] >> 6);
+    stream.read_exact(&mut bytes[1..length]).await?;
+    Ok(VarInt::decode(&mut &bytes[..length])
+        .expect("complete QUIC varint")
+        .into_inner())
+}
 async fn write_headers(send: &mut SendStream, headers: &[(&str, &str)]) -> io::Result<()> {
     let fields: Vec<_> = headers
         .iter()
@@ -531,22 +467,14 @@ async fn read_headers(recv: &mut RecvStream) -> io::Result<BTreeMap<String, Stri
 }
 
 struct Controls {
-    profile: WebTransportProfile,
     outgoing: SendStream,
     incoming: RecvStream,
     qpack: Vec<(u64, RecvStream)>,
 }
-async fn controls(
-    conn: &Connection,
-    client: bool,
-    profile: WebTransportProfile,
-) -> io::Result<Controls> {
-    if profile == WebTransportProfile::NativeH3 && !conn.supports_reliable_reset() {
-        return Err(invalid());
-    }
+async fn controls(conn: &Connection, client: bool) -> io::Result<Controls> {
     let mut outgoing = conn.open_uni().await.map_err(io_error)?;
     let mut settings = Vec::new();
-    for (key, value) in [(0x33, 1), (profile.setting(), 1)] {
+    for (key, value) in [(0x33, 1), (DRAFT, 1)] {
         put(&mut settings, key);
         put(&mut settings, value);
     }
@@ -589,26 +517,33 @@ async fn controls(
             .into_inner();
         if matches!(key, 2..=5)
             || values.len() >= 64
-            || matches!(key, 0x33 | 8 | DRAFT | NATIVE) && value > 1
-            || profile == WebTransportProfile::NativeH3 && matches!(key, 0x2b64 | 0x2b65 | 0x2b61)
+            || matches!(key, 0x33 | 8 | DRAFT) && value > 1
             || values.insert(key, value).is_some()
         {
             return Err(invalid());
         }
     }
     if values.get(&0x33) != Some(&1)
-        || values.get(&profile.setting()) != Some(&1)
+        || values.get(&DRAFT) != Some(&1)
         || client && values.get(&8) != Some(&1)
         || conn.max_datagram_size().is_none()
     {
         return Err(invalid());
     }
     Ok(Controls {
-        profile,
         outgoing,
         incoming,
         qpack,
     })
+}
+
+async fn bounded_frame_size(recv: &mut RecvStream, remaining: &mut usize) -> io::Result<usize> {
+    let size = usize::try_from(read_int(recv).await?).map_err(|_| invalid())?;
+    *remaining = remaining
+        .checked_sub(16)
+        .and_then(|n| n.checked_sub(size))
+        .ok_or_else(invalid)?;
+    Ok(size)
 }
 
 async fn read_capsules(recv: &mut RecvStream) -> io::Result<ApplicationClose> {
@@ -618,11 +553,7 @@ async fn read_capsules(recv: &mut RecvStream) -> io::Result<ApplicationClose> {
         if read_int(recv).await? != 0 {
             return Err(invalid());
         }
-        let size = usize::try_from(read_int(recv).await?).map_err(|_| invalid())?;
-        remaining = remaining
-            .checked_sub(16)
-            .and_then(|n| n.checked_sub(size))
-            .ok_or_else(invalid)?;
+        let size = bounded_frame_size(recv, &mut remaining).await?;
         let start = pending.len();
         pending.resize(start + size, 0);
         recv.read_exact(&mut pending[start..])
@@ -654,6 +585,7 @@ async fn read_capsules(recv: &mut RecvStream) -> io::Result<ApplicationClose> {
                     });
                 }
                 (0x78ae, 0) => {}
+                (reserved, _) if reserved % 0x29 == 0x17 => {} // RFC 9297 reserved capsule type
                 _ => return Err(invalid()),
             }
             bytes = &next[length..];
@@ -662,8 +594,27 @@ async fn read_capsules(recv: &mut RecvStream) -> io::Result<ApplicationClose> {
     }
 }
 
+async fn monitor_control(recv: &mut RecvStream) -> io::Result<()> {
+    let mut remaining = MAX_HEADERS;
+    let mut scratch = [0; 512];
+    loop {
+        let kind = read_int(recv).await?;
+        // RFC 9114 reserved frames can follow SETTINGS on the critical control stream.
+        if kind < 0x21 || !(kind - 0x21).is_multiple_of(0x1f) {
+            return Err(invalid());
+        }
+        let mut size = bounded_frame_size(recv, &mut remaining).await?;
+        while size > 0 {
+            let count = size.min(scratch.len());
+            recv.read_exact(&mut scratch[..count])
+                .await
+                .map_err(io_error)?;
+            size -= count;
+        }
+    }
+}
+
 pub struct Carrier {
-    profile: WebTransportProfile,
     connect_send: Mutex<CloseSend>,
     conn: Connection,
     endpoint: Endpoint,
@@ -693,7 +644,6 @@ impl Carrier {
         mut recv: RecvStream,
     ) -> Arc<Self> {
         let tasks = TaskTracker::new();
-        let profile = controls.profile;
         let monitor = conn.clone();
         let peer_close = Arc::new(OnceLock::new());
         let reported = peer_close.clone();
@@ -707,17 +657,15 @@ impl Carrier {
                     _ => return Err::<(),_>(invalid()),
                 }}
             };
-            let mut other = [0];
             tokio::select! {
                 biased;
                 result = read_capsules(&mut recv) => { if let Ok(close) = result { let _ = reported.set(close); } },
-                _ = monitor.closed() => {}, _ = incoming.read(&mut other) => {}, _ = monitor_uni => {}
+                _ = monitor.closed() => {}, _ = monitor_control(&mut incoming) => {}, _ = monitor_uni => {}
             }
             monitor.close(0x100u32.into(),b"");
         });
         tasks.close();
         Arc::new(Self {
-            profile,
             connect_send: Mutex::new(CloseSend {
                 stream: send,
                 result: None,
@@ -738,29 +686,42 @@ impl Drop for Carrier {
     }
 }
 impl Carrier {
-    pub fn profile(&self) -> WebTransportProfile {
-        self.profile
-    }
     pub fn inbound_bidirectional_stream_capacity(&self) -> u32 {
         self.capacity
+    }
+    #[cfg(feature = "__flowersec_internal_test_support")]
+    #[doc(hidden)]
+    pub async fn reset_during_stream_header_for_test(&self) -> io::Result<()> {
+        let (mut send, _recv) = self.conn.open_bi().await.map_err(io_error)?;
+        send.write_all(&[0x40, 0x41]).await.map_err(io_error)?;
+        send.reset(VarInt::from_u64(RESET).unwrap())
+            .map_err(io_error)
     }
     pub async fn open_stream(&self) -> io::Result<Arc<Stream>> {
         let (mut send, recv) = self.conn.open_bi().await.map_err(io_error)?;
         let prefix = &[0x40, 0x41, 0];
-        match self.profile {
-            WebTransportProfile::NativeH3 => send.write_reliable_prefix(prefix).await,
-            WebTransportProfile::Draft02 => send.write_all(prefix).await,
-        }
-        .map_err(io_error)?;
+        send.write_all(prefix).await.map_err(io_error)?;
         Ok(Stream::new(send, recv))
     }
     pub async fn accept_stream(&self) -> io::Result<Arc<Stream>> {
-        let (send, mut recv) = self.conn.accept_bi().await.map_err(io_error)?;
-        if read_int(&mut recv).await? != 0x41 || read_int(&mut recv).await? != 0 {
-            self.abort();
-            return Err(invalid());
+        loop {
+            let (mut send, mut recv) = self.conn.accept_bi().await.map_err(io_error)?;
+            let prefix = async {
+                Ok(read_varint(&mut recv).await? == 0x41 && read_varint(&mut recv).await? == 0)
+            }
+            .await;
+            match prefix {
+                Ok(true) => return Ok(Stream::new(send, recv)),
+                Ok(false) => {
+                    self.abort();
+                    return Err(invalid());
+                }
+                Err(ReadExactError::ReadError(ReadError::Reset(_))) => {
+                    let _ = send.reset(VarInt::from_u64(RESET).unwrap());
+                }
+                Err(error) => return Err(io_error(error)),
+            }
         }
-        Ok(Stream::new(send, recv))
     }
     pub fn unreliable_message_max_size(&self) -> Option<usize> {
         self.conn.max_datagram_size()?.checked_sub(1)
@@ -804,10 +765,6 @@ impl Carrier {
         }
     }
     pub async fn close(&self) -> io::Result<()> {
-        if self.profile == WebTransportProfile::NativeH3 {
-            let _ = self.close_with_reason(0, "").await;
-            return Ok(());
-        }
         self.abort();
         self.wait_shutdown().await;
         Ok(())
@@ -935,8 +892,8 @@ impl Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn native_profile_requires_peer_reset_and_retains_stream_association_after_reset() {
+
+    async fn draft02_pair() -> (Arc<Listener>, Arc<Carrier>, Arc<Carrier>) {
         let identity =
             cert_test_builder::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
         let root = identity.cert.der().to_vec();
@@ -949,9 +906,7 @@ mod tests {
                 address,
                 vec![root.clone()],
                 identity.signing_key.serialize_der(),
-                WebTransportListenerPolicy::new("127.0.0.1", vec![origin.into()])
-                    .unwrap()
-                    .with_profile(WebTransportProfile::NativeH3),
+                WebTransportListenerPolicy::new("127.0.0.1", vec![origin.into()]).unwrap(),
                 DIRECT,
                 3,
                 Duration::from_secs(2),
@@ -963,38 +918,29 @@ mod tests {
             async move { listener.accept().await.unwrap().0 }
         });
         let url = listener.ingress_url();
-        let run = async {
-            let endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-            let mut config = quinn::ClientConfig::new(Arc::new(
-                quinn::crypto::rustls::QuicClientConfig::try_from(
-                    crate::RawQuicClientConfig::ca_tls(vec![root.clone()], b"h3").unwrap(),
-                )
-                .unwrap(),
-            ));
-            config.transport_config(transport(3, false, WebTransportProfile::Draft02).unwrap());
-            let unsupported = endpoint
-                .connect_with(config, address, "127.0.0.1")
-                .unwrap()
-                .await
-                .unwrap();
-            assert!(!unsupported.supports_reliable_reset());
-            unsupported.closed().await;
-            assert!(!server.is_finished());
-            let client = dial_profile(
-                &url,
-                origin,
-                ClientTrust::Ca(vec![root]),
-                3,
-                WebTransportProfile::NativeH3,
-            )
+        let client = dial(&url, origin, ClientTrust::Ca(vec![root]), 3)
             .await
             .unwrap();
-            let server = server.await.unwrap();
+        (listener, client, server.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn draft02_stream_cancellation_isolated_in_both_directions() {
+        let run = async {
+            let (listener, client, server) = draft02_pair().await;
             for (sender, receiver) in [(&client, &server), (&server, &client)] {
-                let first = sender.open_stream().await.unwrap();
-                first.reset().await.unwrap();
-                let received = receiver.accept_stream().await.unwrap();
-                assert!(received.read(&mut [0; 1]).await.is_err());
+                let active = sender.open_stream().await.unwrap();
+                let reading = receiver.accept_stream().await.unwrap();
+                assert_eq!(active.write(b"a").await.unwrap(), 1);
+                sender.open_stream().await.unwrap().reset().await.unwrap();
+                assert_eq!(active.write(b"b").await.unwrap(), 1);
+                active.close_write().await.unwrap();
+                let mut byte = [0];
+                for expected in b"ab" {
+                    assert_eq!(reading.read(&mut byte).await.unwrap(), 1);
+                    assert_eq!(byte[0], *expected);
+                }
+                assert_eq!(reading.read(&mut byte).await.unwrap(), 0);
                 let next = sender.open_stream().await.unwrap();
                 assert_eq!(next.write(b"x").await.unwrap(), 1);
                 next.close_write().await.unwrap();
@@ -1015,6 +961,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn draft02_fragmented_grease_preserves_close_capsules() {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            let (listener, client, server) = draft02_pair().await;
+            let mut grease = Vec::new();
+            put(&mut grease, 0x17 + 0x29 * 100);
+            grease.extend_from_slice(&[2, 0xab, 0xcd]);
+            let mut frames = vec![0, 1, grease[0], 0, (grease.len() - 1) as u8];
+            frames.extend_from_slice(&grease[1..]);
+            client
+                .connect_send
+                .lock()
+                .await
+                .stream
+                .write_all(&frames)
+                .await
+                .unwrap();
+            let _ = client.close_with_reason(17, "done").await;
+            server.wait_termination().await;
+            let close = server.peer_application_close().unwrap();
+            assert_eq!((close.code, close.reason.as_str()), (17, "done"));
+            listener.close().await;
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn draft02_rejects_unexpected_frames_and_oversized_grease() {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            let (listener, client, server) = draft02_pair().await;
+            for (control, fields, trailing) in [
+                (true, vec![0x40, 1, 42, 4, 0], 0),
+                (true, vec![0x21, MAX_HEADERS as u64, 55], 55),
+                (false, vec![4, 0], 0),
+                (false, vec![0, 3, 0x17, 1029, 55], 55),
+            ] {
+                let mut payload = Vec::new();
+                for field in fields {
+                    put(&mut payload, field);
+                }
+                let (mut send, _recv) = client.conn.open_bi().await.unwrap();
+                send.write_all(&payload).await.unwrap();
+                send.finish().unwrap();
+                let (_send, mut recv) = server.conn.accept_bi().await.unwrap();
+                let error = if control {
+                    monitor_control(&mut recv).await.unwrap_err()
+                } else {
+                    read_capsules(&mut recv).await.unwrap_err()
+                };
+                assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+                assert_eq!(read_int(&mut recv).await.unwrap(), trailing);
+            }
+            client.abort();
+            listener.close().await;
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn explicit_close_preserves_capsule_write_failure_after_local_abort() {
         let identity =
             cert_test_builder::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
@@ -1022,9 +1028,7 @@ mod tests {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let address = socket.local_addr().unwrap();
         let origin = "https://app.example";
-        let policy = WebTransportListenerPolicy::new("127.0.0.1", vec![origin.into()])
-            .unwrap()
-            .with_profile(WebTransportProfile::NativeH3);
+        let policy = WebTransportListenerPolicy::new("127.0.0.1", vec![origin.into()]).unwrap();
         let listener = Listener::new(
             socket,
             address,
@@ -1038,13 +1042,7 @@ mod tests {
         .unwrap();
         let url = listener.ingress_url();
         let (client, server) = tokio::join!(
-            dial_profile(
-                &url,
-                origin,
-                ClientTrust::Ca(vec![root]),
-                3,
-                WebTransportProfile::NativeH3
-            ),
+            dial(&url, origin, ClientTrust::Ca(vec![root]), 3,),
             listener.accept()
         );
         let client = client.unwrap();
@@ -1108,16 +1106,14 @@ mod tests {
                 )
                 .unwrap(),
             ));
-            config.transport_config(transport(3, false, WebTransportProfile::Draft02).unwrap());
+            config.transport_config(transport(3, false).unwrap());
             let endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
             let conn = endpoint
                 .connect_with(config, address, "localhost")
                 .unwrap()
                 .await
                 .unwrap();
-            let _controls = controls(&conn, true, WebTransportProfile::Draft02)
-                .await
-                .unwrap();
+            let _controls = controls(&conn, true).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             let mut headers = vec![
                 (":method", "CONNECT"),

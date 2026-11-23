@@ -79,7 +79,7 @@ test("each root README distinguishes native profiles from verified H4 coverage",
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const { locales } = JSON.parse(fs.readFileSync(path.join(repoRoot, "assets/readme/locales.json"), "utf8"));
   for (const { file } of locales) {
-    for (const contract of ["native_h3_profiles", "native_h3_scope"]) {
+    for (const contract of ["draft02_scope", "go_client_direction"]) {
       assert.ok(transportSemanticReadmeContracts[file]?.[contract], `${file}: ${contract}`);
       removeSemanticContract(root, file, contract);
     }
@@ -130,7 +130,7 @@ test("README support claims state WebTransport and native package boundaries", (
   const typescriptReadme = fs.readFileSync(path.join(repoRoot, "flowersec-ts/README.md"), "utf8");
   const nativeReadme = fs.readFileSync(path.join(repoRoot, "flowersec-node-native/README.md"), "utf8");
   assert.match(rootReadme, /Browser profile uses the H3 WebTransport API when present/u);
-  assert.match(rootReadme, /Rust and Node\.js each dialed and accepted direct connections\s+with Go over real UDP using native_h3 and exchanged encrypted DATAGRAMs/u);
+  assert.match(rootReadme, /issue a raw QUIC route for Go clients dialing Rust or Node\.js/u);
   assert.match(rootReadme, /native-server carrier surface is\s+WebSocket and\s+raw QUIC for Go, Rust, and Node\.js/u);
   assert.match(rootReadme, /install\s+`@floegence\/flowersec-node-native` alongside `@floegence\/flowersec-core`/u);
   assert.match(goReadme, /supports WebSocket, raw QUIC, and WebTransport across H4/u);
@@ -139,7 +139,7 @@ test("README support claims state WebTransport and native package boundaries", (
   assert.doesNotMatch(goReadme, /WebTransport is selected only\s+for direct invitations/u);
   assert.match(typescriptReadme, /Browsers support WSS and optional browser-owned WebTransport/u);
   assert.match(typescriptReadme, /Node\.js supports\s+WSS, raw QUIC, and WebTransport for clients, direct listeners, and\s+opaque tunnel listeners/u);
-  assert.match(nativeReadme, /addon exposes raw QUIC and both `draft02` and `native_h3` WebTransport/u);
+  assert.match(nativeReadme, /addon exposes raw QUIC and `draft02` WebTransport/u);
   assert.match(nativeReadme, /macOS\s+arm64, macOS x64, Linux arm64 glibc, and Linux x64 glibc/u);
   assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
 });

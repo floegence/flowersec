@@ -4,6 +4,58 @@ use std::time::SystemTime;
 
 const ORIGIN: &str = "https://app.example";
 
+#[tokio::test]
+#[ignore = "started by the Chromium draft02 listener compatibility suite"]
+async fn browser_draft02_listener_peer() {
+    use std::io::Write;
+    let origin = std::env::var("FLOWERSEC_BROWSER_DRAFT02_ORIGIN").unwrap();
+    let (_, identity) = private_ca_identity();
+    let pin = URL_SAFE_NO_PAD.encode(Sha256::digest(&identity.chain[0]));
+    let acceptor = Acceptor::bind_webtransport(
+        AcceptorOptions {
+            bind_address: (Ipv4Addr::LOCALHOST, 0).into(),
+            certificate_chain_der: identity.chain,
+            private_key_der: identity.key,
+            max_inbound_streams: 1,
+            accept_timeout: Duration::from_secs(10),
+        },
+        WebTransportListenerPolicy::new("127.0.0.1", vec![origin]).unwrap(),
+    )
+    .unwrap();
+    let address = acceptor.local_address().unwrap();
+    let artifact = direct(
+        &format!("https://{address}{}", crate::webtransport_v5::DIRECT),
+        json!({"mode":"pin","pins":[{"algorithm":"sha-256","value_b64u":pin,"not_after_unix_s":unix_seconds()+600}]}),
+    );
+    println!(
+        "{}",
+        String::from_utf8(artifact.encode().into_vec()).unwrap()
+    );
+    std::io::stdout().flush().unwrap();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let session = acceptor
+            .accept(
+                &ArtifactLease::new(artifact, || async { Ok(()) }),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let channel = session.unreliable_messages().unwrap();
+        let message = channel.receive().await.unwrap();
+        assert_eq!(message.as_ref(), b"browser");
+        assert_eq!(
+            channel
+                .send(message, SystemTime::now() + Duration::from_secs(3))
+                .await
+                .unwrap(),
+            UnreliableSendOutcome::Accepted
+        );
+        session.wait_termination().await;
+    })
+    .await
+    .unwrap();
+}
+
 fn direct(url: &str, tls: Value) -> Artifact {
     artifact_with_candidates(vec![
         json!({"carrier":"webtransport","id":"wt","url":url,"tls":tls,"wire_profile":"flowersec-direct/5"}),
@@ -156,19 +208,15 @@ async fn webtransport_direct_authority_origin_tls_spend_and_recovery() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn webtransport_tunnel_both_roles_pin_forward_stream_and_datagram() {
-    tunnel_roundtrip(false, crate::WebTransportProfile::Draft02).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn webtransport_native_h3_tunnel_both_roles_forward_stream_and_datagram() {
-    tunnel_roundtrip(false, crate::WebTransportProfile::NativeH3).await;
+    tunnel_roundtrip(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn webtransport_prebound_tunnel_to_wss_forwards_only_reliable_streams() {
-    tunnel_roundtrip(true, crate::WebTransportProfile::Draft02).await;
+    tunnel_roundtrip(true).await;
 }
 
-async fn tunnel_roundtrip(mixed: bool, profile: crate::WebTransportProfile) {
+async fn tunnel_roundtrip(mixed: bool) {
     let (_, identity) = private_ca_identity();
     let pin = URL_SAFE_NO_PAD.encode(Sha256::digest(&identity.chain[0]));
     let authorizer = Arc::new(TestTunnelAuthorizer::default());
@@ -183,9 +231,7 @@ async fn tunnel_roundtrip(mixed: bool, profile: crate::WebTransportProfile) {
         max_pending_legs: 8,
         max_active_pairs: 4,
     };
-    let policy = WebTransportListenerPolicy::new("127.0.0.1", vec![ORIGIN.into()])
-        .unwrap()
-        .with_profile(profile);
+    let policy = WebTransportListenerPolicy::new("127.0.0.1", vec![ORIGIN.into()]).unwrap();
     let (runtime, address) = if mixed {
         let mut runtime = TunnelRuntime::bind_websocket(options, authorizer.clone()).unwrap();
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -238,7 +284,7 @@ async fn tunnel_roundtrip(mixed: bool, profile: crate::WebTransportProfile) {
     });
     let options = || {
         ConnectorOptions::new()
-            .with_webtransport_profile(profile, ORIGIN)
+            .with_webtransport_origin(ORIGIN)
             .unwrap()
             .with_websocket_origin(ORIGIN)
             .unwrap()
@@ -270,35 +316,27 @@ async fn tunnel_roundtrip(mixed: bool, profile: crate::WebTransportProfile) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn webtransport_native_h3_accepts_public_go_client_stream_and_datagram() {
+async fn raw_quic_accepts_public_go_client_stream_and_datagram() {
     use tokio::io::AsyncWriteExt;
     let (root, identity) = private_ca_identity();
-    let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let address = socket.local_addr().unwrap();
-    let acceptor = Acceptor::bind_webtransport_on_socket(
-        socket,
-        AcceptorOptions {
-            bind_address: address,
-            certificate_chain_der: identity.chain,
-            private_key_der: identity.key,
-            max_inbound_streams: 1,
-            accept_timeout: Duration::from_secs(10),
-        },
-        WebTransportListenerPolicy::new("127.0.0.1", vec![ORIGIN.into()])
-            .unwrap()
-            .with_profile(crate::WebTransportProfile::NativeH3),
-    )
+    let acceptor = Acceptor::bind(AcceptorOptions {
+        bind_address: (Ipv4Addr::LOCALHOST, 0).into(),
+        certificate_chain_der: identity.chain,
+        private_key_der: identity.key,
+        max_inbound_streams: 1,
+        accept_timeout: Duration::from_secs(10),
+    })
     .unwrap();
-    let artifact = direct(
-        &format!("https://{address}{}", crate::webtransport_v5::DIRECT),
-        json!({"mode":"ca"}),
-    );
+    let address = acceptor.local_address().unwrap();
+    let artifact = artifact_with_candidates(vec![
+        json!({"carrier":"raw_quic","id":"quic","url":format!("quic://{address}/"),"tls":{"mode":"ca"},"wire_profile":"flowersec-direct/5"}),
+    ]);
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut child = tokio::process::Command::new("go")
         .current_dir(dir.join("../flowersec-go"))
         .env("GOWORK", "off")
         .args(["run", "-mod=readonly"])
-        .arg(dir.join("tests/support/native_h3_client.go"))
+        .arg(dir.join("tests/support/raw_quic_client.go"))
         .stdin(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -349,13 +387,6 @@ async fn webtransport_native_h3_accepts_public_go_client_stream_and_datagram() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn webtransport_draft02_dials_independent_go_server_and_exchanges_datagrams() {
-    dial_go(crate::WebTransportProfile::Draft02).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn webtransport_native_h3_dials_independent_go_server_and_exchanges_datagrams() {
-    dial_go(crate::WebTransportProfile::NativeH3).await;
-}
-async fn dial_go(profile: crate::WebTransportProfile) {
     let origin = "https://127.0.0.1:4443";
     let mut command = tokio::process::Command::new("go");
     command.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../flowersec-go"));
@@ -386,7 +417,7 @@ async fn dial_go(profile: crate::WebTransportProfile) {
     let client = connect_v3(
         ArtifactLease::new(artifact, || async { Ok(()) }),
         ConnectorOptions::new()
-            .with_webtransport_profile(profile, origin)
+            .with_webtransport_origin(origin)
             .unwrap(),
     )
     .await

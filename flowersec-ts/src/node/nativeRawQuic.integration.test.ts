@@ -479,9 +479,9 @@ type NativePair = Readonly<{
   cleanup(): Promise<void>;
 }>;
 
-test("native H3 relay delivers the client control tail before closing its carrier", async () => {
+test("draft02 relay delivers the client control tail before closing its carrier", async () => {
   const addon = createRequire(import.meta.url)(process.env.FLOWERSEC_NATIVE_ADDON_PATH!) as NativeTransportAddonBinding;
-  const driver = createNativeWebTransportDriver(addon, "native_h3")!;
+  const driver = createNativeWebTransportDriver(addon)!;
   const origin = "https://app.example";
   const common = { host: "127.0.0.1", path: "tunnel", inboundBidirectionalStreamCapacity: 4, handshakeTimeoutMs: 2_000 } as const;
   const listener = await driver.bind({ ...common, port: 0, authorityHost: common.host, allowedOrigins: [origin],
@@ -529,14 +529,35 @@ test("native H3 relay delivers the client control tail before closing its carrie
   }
 }, 10_000);
 
-describe.each(["draft02", "native_h3"] as const)("Node native WebTransport %s", (profile) => {
+describe("Node draft02 WebTransport", () => {
   const origin = "https://app.example";
-  const config = { carrier: "webtransport", profile, host: "127.0.0.1", port: 0,
+  const config = { carrier: "webtransport", host: "127.0.0.1", port: 0,
     tls: { certificate: CERTIFICATE_PEM, privateKey: PRIVATE_KEY_PEM }, allowedOrigins: [origin] } as const;
-  const clientOptions = { webTransportProfile: profile, origin, roots: CERTIFICATE_DER, connectTimeoutMs: 4_000 } as const;
+  const clientOptions = { webTransport: true, origin, roots: CERTIFICATE_DER, connectTimeoutMs: 4_000 } as const;
   function candidate(port: number, path: "direct" | "tunnel"): ArtifactCandidateV3 {
     return { carrier: "webtransport", id: "wt-ca", url: `https://127.0.0.1:${port}/flowersec/webtransport/v5/${path}`, tls: { mode: "ca" }, wire_profile: `flowersec-${path}/5` };
   }
+
+  test("initiates a draft02 session to the Go server and exchanges encrypted datagrams", async () => {
+    const origin = "https://127.0.0.1:4443";
+    const child = spawn("go", ["run", "./internal/cmd/browser-webtransport-peer", "--v3-product-direct", "--v3-datagram", "--origin", origin], {
+      cwd: new URL("../../../flowersec-go/", import.meta.url), stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stderr: string[] = [];
+    child.stderr.on("data", chunk => stderr.push(String(chunk)));
+    const exited = new Promise<number | null>(resolve => child.once("close", resolve));
+    try {
+      const { artifact_json } = JSON.parse(await firstJSONLine(child, stderr)) as { artifact_json: string };
+      const artifact = decodeArtifactV3JSON(artifact_json);
+      expect(artifact.path.candidates.map(route => route.carrier)).toEqual(["webtransport"]);
+      const client = await connectV3(v3Lease(artifact), { webTransport: true, origin });
+      try {
+        expect(await client.unreliableMessages!.send(Buffer.from("browser-webtransport-datagram-request"), { expiresAtUnixMs: Date.now() + 5000 })).toBe("accepted");
+        expect(Buffer.from(await client.unreliableMessages!.receive({ signal: AbortSignal.timeout(5000) })).toString()).toBe("browser-webtransport-datagram-response");
+      } finally { await client.close(); }
+      expect(await exited, stderr.join("")).toBe(0);
+    } finally { child.kill(); }
+  }, 30_000);
 
   test("establishes an authorized direct session, exchanges encrypted DATAGRAMs and rejects untrusted origins before spend", async () => {
     let artifact: ArtifactV3;
@@ -545,6 +566,8 @@ describe.each(["draft02", "native_h3"] as const)("Node native WebTransport %s", 
       authorize: async () => { authorizations++; return { accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) }; } });
     artifact = { ...V3_DIRECT_BASE, path: { ...V3_DIRECT_BASE.path, candidates: [candidate(acceptor.addresses()[0]!.port, "direct")] } };
     try {
+      await expect(connectV3(v3Lease(artifact), { origin, roots: CERTIFICATE_DER })).rejects.toThrow();
+      await expect(connectV3(v3Lease(artifact), { ...clientOptions, webTransportProfile: "native_h3" } as typeof clientOptions)).rejects.toThrow(/webTransportProfile was removed/);
       await expect(connectV3(createArtifactLeaseV3Internal(artifact, async () => { spends++; }), { ...clientOptions, origin: "https://denied.example" })).rejects.toThrow();
       expect([authorizations, spends]).toEqual([0, 0]);
       const [client, accepted] = await Promise.all([connectV3(v3Lease(artifact), clientOptions), acceptor.accept({ signal: AbortSignal.timeout(5_000) })]);
@@ -753,7 +776,7 @@ async function firstJSONLine(child: ChildProcessWithoutNullStreams, stderr: stri
     };
     child.once("error", fail);
     child.once("exit", (code) => {
-      if (!settled) fail(new Error(`invalid-proof peer exited ${String(code)}: ${stderr.join("")}`));
+      if (!settled) fail(new Error(`Go peer exited ${String(code)}: ${stderr.join("")}`));
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {

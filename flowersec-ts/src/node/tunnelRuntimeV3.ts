@@ -20,7 +20,7 @@ import type { OperationOptions } from "../public/contract.js";
 import { boundIngressURL } from "./listenerIngress.js";
 import { startNodeWebSocketListenerV3, type NodeWebSocketListenerV3 } from "./webSocketServerV3.js";
 import { createNativeRawQuicDriver } from "./nativeTransportAddon.js";
-import { startNodeRawQuicListenerV3, startNodeWebTransportListener, type NodeWebTransportListenerConfig, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
+import { startNodeRawQuicListenerV3, startNodeWebTransportListener, validateWebTransportListeners, type NodeWebTransportListenerConfig, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
 import {
   consumeTunnelAuthorizationGrantV3,
   inspectTunnelAuthorizationGrantV3,
@@ -882,6 +882,7 @@ async function reject(
 }
 
 function validateOptions(options: TunnelRuntimeOptionsV3): TunnelRuntimeStateV3["limits"] {
+  validateWebTransportListeners(options.listeners);
   const limits = {
     maxPendingLegs: options.maxPendingLegs ?? DEFAULT_MAX_PENDING_LEGS,
     maxActivePairs: options.maxActivePairs ?? DEFAULT_MAX_ACTIVE_PAIRS,

@@ -167,7 +167,7 @@ assert.deepEqual(apiManifest.native_abi, {
   package: "@floegence/flowersec-node-native",
   contract_version: 5,
   wire_version: 5,
-  runtime_exports: ["bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "supportsNativeH3"],
+  runtime_exports: ["bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion"],
 });
 assert.equal(apiManifest.rust.compile_entries.some((entry) => /flowersec::v[23]::/u.test(entry)), false);
 assert.equal(apiManifest.swift.symbols.some(({ name }) => /V2|V3/u.test(name)), false);

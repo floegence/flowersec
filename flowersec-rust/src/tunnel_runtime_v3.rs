@@ -2117,12 +2117,9 @@ async fn bridge(
         result = tokio::time::timeout_at(activation_deadline, server.open_stream()) => result,
     }??;
     let closed = CancellationToken::new();
-    let native_h3_pair = client.uses_native_h3() && server.uses_native_h3();
     let wait = |carrier: Arc<dyn CarrierSessionV3>| async move {
-        if native_h3_pair {
+        if carrier.kind() == CarrierKind::WebTransport {
             carrier.wait_termination().await;
-        } else if carrier.kind() == CarrierKind::WebTransport {
-            carrier.wait_shutdown().await;
         }
     };
     let forwarding = bridge_control_pair_with_grace(
@@ -2131,7 +2128,6 @@ async fn bridge(
         closed.clone(),
         CONTROL_HALF_CLOSE_GRACE,
         [wait(client.clone()), wait(server.clone())],
-        native_h3_pair,
         Some((client.as_ref(), server.as_ref())),
     );
     tokio::pin!(forwarding);
@@ -2163,7 +2159,6 @@ async fn bridge_control_pair_with_grace(
     traffic_ended: CancellationToken,
     half_close_grace: Duration,
     [client_shutdown, server_shutdown]: [impl Future<Output = ()>; 2],
-    wait_for_initiator_only: bool,
     release: Option<(&dyn CarrierSessionV3, &dyn CarrierSessionV3)>,
 ) -> io::Result<()> {
     let eof = CancellationToken::new();
@@ -2209,7 +2204,7 @@ async fn bridge_control_pair_with_grace(
             }
             return;
         }
-        match first_fin.get().filter(|_| wait_for_initiator_only) {
+        match first_fin.get() {
             Some(SessionRole::Client) => client_shutdown.await,
             Some(SessionRole::Server) => server_shutdown.await,
             None => {
@@ -4655,7 +4650,6 @@ mod tests {
                 CancellationToken::new(),
                 Duration::from_millis(10),
                 [pending(), pending()],
-                true,
                 None,
             ),
         )
@@ -4666,7 +4660,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn control_fin_on_both_legs_leaves_time_for_endpoint_shutdown() {
+    async fn control_fin_on_both_legs_leaves_time_for_initiator_shutdown() {
         let first = Arc::new(ControlEofStream::default());
         let second = Arc::new(ControlEofStream::default());
         let client = CancellationToken::new();
@@ -4677,7 +4671,6 @@ mod tests {
             CancellationToken::new(),
             Duration::from_secs(1),
             [client.cancelled(), server.cancelled()],
-            false,
             None,
         );
         tokio::pin!(forwarding);
@@ -4687,13 +4680,12 @@ mod tests {
             _ = async { tokio::join!(first.fin.cancelled(), second.fin.cancelled()); } => {},
         }
         client.cancel();
-        assert!(futures_util::poll!(&mut forwarding).is_pending());
         server.cancel();
         forwarding.await.unwrap();
     }
 
     #[tokio::test]
-    async fn native_h3_waits_for_the_first_control_fin_sender_to_consume_the_reply() {
+    async fn waits_for_the_first_control_fin_sender_to_consume_the_reply() {
         for initiator in [0, 1] {
             for responder_exits in [false, true] {
                 let reply = CancellationToken::new();
@@ -4716,7 +4708,6 @@ mod tests {
                     CancellationToken::new(),
                     Duration::from_secs(1),
                     [shutdown[0].cancelled(), shutdown[1].cancelled()],
-                    true,
                     None,
                 );
                 tokio::pin!(forwarding);
@@ -4740,7 +4731,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_h3_reply_fin_error_retires_responder_when_initiator_exits() {
+    async fn reply_fin_error_retires_responder_when_initiator_exits() {
         let reply = CancellationToken::new();
         let sender = Arc::new(ControlEofStream {
             fin_error: Some(io::ErrorKind::BrokenPipe),
@@ -4758,7 +4749,6 @@ mod tests {
             CancellationToken::new(),
             Duration::from_secs(1),
             [initiator_exit.cancelled(), responder_exit.cancelled()],
-            true,
             None,
         );
         tokio::pin!(forwarding);
@@ -4790,7 +4780,6 @@ mod tests {
             CancellationToken::new(),
             Duration::from_millis(30),
             [pending(), pending()],
-            true,
             None,
         );
         tokio::pin!(forwarding);

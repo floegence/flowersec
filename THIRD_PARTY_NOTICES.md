@@ -7,12 +7,10 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - aead 0.6.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - aes 0.9.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/block-ciphers)
 - aes-gcm 0.11.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/AEADs)
-- aho-corasick 1.1.5 (Declared: Unlicense OR MIT; selected: MIT; source: https://github.com/BurntSushi/aho-corasick)
 - arbitrary 1.4.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-fuzz/arbitrary/)
 - asn1-rs 0.7.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)
 - asn1-rs-derive 0.6.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)
 - asn1-rs-impl 0.2.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)
-- assert_matches 1.5.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/murarth/assert_matches)
 - async-trait 0.1.92 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/async-trait)
 - atomic-waker 1.1.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/smol-rs/atomic-waker)
 - autocfg 1.5.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/cuviper/autocfg)
@@ -29,6 +27,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - borsh 1.8.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/near/borsh-rs)
 - borsh-derive 1.8.1 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/near/borsh-rs)
 - bumpalo 3.20.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/fitzgen/bumpalo)
+- bumpalo 3.20.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/fitzgen/bumpalo)
 - bytes 1.12.1 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/bytes)
 - cc 1.4.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/cc-rs)
 - cfg_aliases 0.2.2 (Declared: MIT; selected: MIT; source: https://github.com/katharostech/cfg_aliases)
@@ -90,7 +89,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - ghash 0.6.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/universal-hashes)
 - group 0.14.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/zkcrypto/group)
 - hashbrown 0.17.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/hashbrown)
-- hex-literal 1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - hkdf 0.13.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/KDFs/)
 - hmac 0.13.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/MACs)
 - http 1.5.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/hyperium/http)
@@ -124,6 +122,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - itoa 1.0.19 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/itoa)
 - jobserver 0.1.35 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/jobserver-rs)
 - js-sys 0.3.104 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys)
+- js-sys 0.3.107 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys)
 - lazy_static 1.5.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang-nursery/lazy-static.rs)
 - libc 0.2.189 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/libc)
 - libfuzzer-sys 0.4.13 (Declared: (MIT OR Apache-2.0) AND NCSA; selected: MIT AND NCSA; source: https://github.com/rust-fuzz/libfuzzer)
@@ -132,9 +131,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - litemap 0.8.3 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - lock_api 0.4.14 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Amanieu/parking_lot)
 - log 0.4.34 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/log)
-- log 0.4.35 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/log)
 - lru-slab 0.1.2 (Declared: MIT OR Apache-2.0 OR Zlib; selected: MIT; source: https://github.com/Ralith/lru-slab)
-- matchers 0.2.0 (Declared: MIT; selected: MIT; source: https://github.com/hawkw/matchers)
 - memchr 2.8.3 (Declared: Unlicense OR MIT; selected: MIT; source: https://github.com/BurntSushi/memchr)
 - minimal-lexical 0.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Alexhuszagh/minimal-lexical)
 - mio 1.2.2 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/mio)
@@ -145,7 +142,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - napi-sys 3.4.1 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
 - nohash-hasher 0.2.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/paritytech/nohash-hasher)
 - nom 7.1.3 (Declared: MIT; selected: MIT; source: https://github.com/Geal/nom)
-- nu-ansi-term 0.50.3 (Declared: MIT; selected: MIT; source: https://github.com/nushell/nu-ansi-term)
 - num-bigint 0.4.8 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-num/num-bigint)
 - num-conv 0.2.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/jhpratt/num-conv)
 - num-integer 0.1.47 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-num/num-integer)
@@ -176,7 +172,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - qpack 0.1.0 (Declared: MIT; selected: MIT; source: https://codeberg.org/gnunicorn/qpack-rs)
 - quick-error 1.2.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: http://github.com/tailhook/quick-error)
 - quinn 0.11.11 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn/quinn-0.11.11.crate)
-- quinn-proto 0.11.17 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.17.crate)
+- quinn-proto 0.11.19 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.19.crate)
 - quinn-udp 0.5.16 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/quinn-rs/quinn)
 - quote 1.0.47 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/quote)
 - r-efi 5.3.0 (Declared: MIT OR Apache-2.0 OR LGPL-2.1-or-later; selected: MIT; source: https://github.com/r-efi/r-efi)
@@ -187,7 +183,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - rand_xorshift 0.5.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rngs)
 - rcgen 0.14.10 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rustls/rcgen)
 - redox_syscall 0.5.18 (Declared: MIT; selected: MIT; source: https://gitlab.redox-os.org/redox-os/syscall)
-- regex-automata 0.4.18 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/regex)
 - regex-lite 0.1.9 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/regex)
 - regex-syntax 0.8.11 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/regex)
 - rfc6979 0.6.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/signatures)
@@ -216,7 +211,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - sha1 0.11.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
 - sha2 0.10.9 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
 - sha2 0.11.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
-- sharded-slab 0.1.7 (Declared: MIT; selected: MIT; source: https://github.com/hawkw/sharded-slab)
 - shlex 2.0.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/comex/rust-shlex)
 - signal-hook-registry 1.4.8 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/vorner/signal-hook)
 - signature 3.0.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/traits)
@@ -236,7 +230,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - tempfile 3.27.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Stebalien/tempfile)
 - thiserror 2.0.20 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/thiserror)
 - thiserror-impl 2.0.20 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/thiserror)
-- thread_local 1.1.10 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Amanieu/thread_local-rs)
 - time 0.3.55 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/time-rs/time)
 - time-core 0.1.9 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/time-rs/time)
 - time-macros 0.2.32 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/time-rs/time)
@@ -253,11 +246,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - toml_edit 0.25.20+spec-1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/toml-rs/toml)
 - toml_parser 1.1.6+spec-1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/toml-rs/toml)
 - tracing 0.1.44 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
-- tracing-attributes 0.1.31 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
 - tracing-core 0.1.36 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
-- tracing-futures 0.2.5 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
-- tracing-log 0.2.0 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
-- tracing-subscriber 0.3.23 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
 - try-lock 0.2.5 (Declared: MIT; selected: MIT; source: https://github.com/seanmonstar/try-lock)
 - tungstenite 0.30.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/snapview/tungstenite-rs)
 - typenum 1.20.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/paholg/typenum)
@@ -273,16 +262,19 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - utf_types 1.0.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/hsivonen/utf_types)
 - utf8_iter 1.0.4 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/hsivonen/utf8_iter)
 - utf8_iter 1.1.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/hsivonen/utf8_iter)
-- valuable 0.1.1 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/valuable)
 - version_check 0.9.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/SergioBenitez/version_check)
 - wait-timeout 0.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/alexcrichton/wait-timeout)
 - want 0.3.2 (Declared: MIT; selected: MIT; source: https://github.com/seanmonstar/want)
 - wasi 0.11.1+wasi-snapshot-preview1 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/wasi)
 - wasip2 1.0.4+wasi-0.2.12 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/wasi-rs)
 - wasm-bindgen 0.2.127 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen)
+- wasm-bindgen 0.2.130 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen)
 - wasm-bindgen-macro 0.2.127 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro)
+- wasm-bindgen-macro 0.2.130 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro)
 - wasm-bindgen-macro-support 0.2.127 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support)
+- wasm-bindgen-macro-support 0.2.130 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support)
 - wasm-bindgen-shared 0.2.127 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared)
+- wasm-bindgen-shared 0.2.130 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared)
 - web-time 1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/daxpedda/web-time)
 - windows_aarch64_gnullvm 0.52.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/microsoft/windows-rs)
 - windows_aarch64_msvc 0.52.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/microsoft/windows-rs)
@@ -385,11 +377,11 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - @eslint/core 1.2.1 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@eslint/core/-/core-1.2.1.tgz)
 - @eslint/object-schema 3.0.5 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@eslint/object-schema/-/object-schema-3.0.5.tgz)
 - @eslint/plugin-kit 0.7.3 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.3.tgz)
-- @floegence/flowersec-node-native 7.0.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-arm64 7.0.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-x64 7.0.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-arm64-gnu 7.0.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-x64-gnu 7.0.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native 7.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-arm64 7.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-x64 7.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-arm64-gnu 7.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-x64-gnu 7.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
 - @humanfs/core 0.19.2 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz)
 - @humanfs/node 0.16.8 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz)
 - @humanfs/types 0.15.0 (Declared: Apache-2.0; selected: Apache-2.0; source: https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz)
@@ -624,8 +616,6 @@ Their reviewed upstream license, notice, copyright, and patent materials are rep
 
 ### quinn 0.11.11
 
-Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_provider. Upstream crate SHA-256: 0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8. Modified source tree SHA-256: 8dee7b897e1a68c456dea7d92fddb06752515443096aff67f645f2e171030fcd.
-
 #### LICENSE-MIT
 
 Copyright (c) 2018 The quinn Developers
@@ -840,9 +830,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    See the License for the specific language governing permissions and
    limitations under the License.
 
-### quinn-proto 0.11.17
-
-Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_proto. Upstream crate SHA-256: 04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83. Modified source tree SHA-256: 4b7e2ee5152d340706750caa7a85a875b42d6b0c60820677a7fa0e69dabe7ce5.
+### quinn-proto 0.11.19
 
 #### LICENSE-MIT
 

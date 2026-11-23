@@ -53,7 +53,7 @@ func run() error {
 	if spent != 1 {
 		return fmt.Errorf("unexpected spend count %d", spent)
 	}
-	stream, err := session.OpenStream(ctx, "native-echo", flowersec.EmptyStreamMetadata())
+	stream, err := session.OpenStream(ctx, "quic-echo", flowersec.EmptyStreamMetadata())
 	if err != nil {
 		return err
 	}

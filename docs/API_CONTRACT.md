@@ -20,7 +20,7 @@ real SDK endpoints.
 | Capability layer | Contract | Go | TypeScript | Swift | Rust |
 | --- | --- | :---: | :---: | :---: | :---: |
 | `portable_core` | Artifact/lease, one-shot connect, session, reliable streams with validated metadata, RPC call/notify, redacted errors, optional connection controller | Yes | Yes | Yes | Yes |
-| `sdk_profile` | Carrier/profile capabilities, unreliable messages, or runtime-owned acceptance | WSS, raw QUIC, WebTransport, direct Acceptor, opaque TunnelRuntime | Browser WSS/WebTransport; Node WSS, raw QUIC, opt-in WebTransport (`draft02`, `native_h3`), direct Acceptor, opaque TunnelRuntime | Apple WSS endpoints, direct listener, opaque WSS relay | WSS, raw QUIC, opt-in WebTransport (`draft02`, `native_h3`), direct Acceptor, opaque TunnelRuntime |
+| `sdk_profile` | Carrier/profile capabilities, unreliable messages, or runtime-owned acceptance | WSS, raw QUIC, WebTransport, direct Acceptor, opaque TunnelRuntime | Browser WSS/WebTransport; Node WSS, raw QUIC, opt-in WebTransport (`draft02`), direct Acceptor, opaque TunnelRuntime | Apple WSS endpoints, direct listener, opaque WSS relay | WSS, raw QUIC, opt-in WebTransport (`draft02`), direct Acceptor, opaque TunnelRuntime |
 | `language_convenience` | Language-native additions | Inbound handlers | Generic RPC results and subscriptions | `Codable` RPC | `RpcPeerExt::call_typed` |
 
 Portable core, accepted-session lifecycle, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows require same-semantic public entries in every applicable SDK. An unsupported tuple records a stable reason and no executable test ID; supported tuples name their production entrypoint and focused test ID. The protocol carrier set is not a promise that every SDK exposes every carrier; each listener and connector profile declares only exact production-backed tuples.
@@ -28,30 +28,22 @@ Portable core, accepted-session lifecycle, control-plane issuance/authorization,
 The named deployment profiles are `native-server-core` for Go, Rust, and
 Node.js; `browser-client` for TypeScript browser clients; `apple-client` for
 Swift clients on Apple platforms; and `webtransport-server`, claimed by Go.
-Node and Rust offer `draft02` and `native_h3` for direct connections and tunnel legs.
-Each WebTransport listener accepts only its configured profile and checks the
-request authority and Origin. `native_h3` requires both peers to negotiate QUIC
-reliable stream reset and the HTTP/3 DATAGRAM and WebTransport settings before
-using Extended CONNECT with `webtransport-h3`. TLS and CONNECT do not replace
-Flowersec admission.
+Node and Rust use draft02 for direct connections and tunnel legs. Each listener
+checks the CONNECT authority, path and Origin. TLS and CONNECT do not replace
+Flowersec admission. Go clients use a different CONNECT protocol: issue an
+explicit raw QUIC route when a Go endpoint dials a Rust or Node listener,
+including a tunnel ingress. This is not WebTransport interoperability.
 
 In Node, install `@floegence/flowersec-node-native` alongside
 `@floegence/flowersec-core` for raw QUIC or WebTransport. The native wrapper
-loads its matching optional platform package. Pass `webTransportProfile: "native_h3"`
-or `"draft02"` and a canonical HTTP(S) `origin` to `connect` or
+loads its matching optional platform package. Pass `webTransport: true`
+and a canonical HTTP(S) `origin` to `connect` or
 `createConnectionController`. A custom TCP `connectionPath` excludes native
 carriers. A `createAcceptor` or `createTunnelRuntime` listener selects
-`carrier: "webtransport"`, the matching `profile`, and a nonempty `allowedOrigins` list.
-In Rust, use `ConnectorOptions::with_webtransport_profile(WebTransportProfile::NativeH3, origin)`
-or select `WebTransportProfile::Draft02`. Direct and tunnel listeners select
-`WebTransportListenerPolicy::new(host, origins)?.with_profile(WebTransportProfile::NativeH3)`.
-`with_webtransport_origin` and a listener policy without `with_profile` use draft02.
-
-On macOS arm64 loopback, Rust and Node each initiated and accepted native_h3
-direct connections with Go over UDP and exchanged encrypted DATAGRAMs. Rust
-also verified a native_h3 relay with two native_h3 legs; Node verified both
-two native_h3 legs and a native_h3 leg paired with raw QUIC. These tests do
-not verify cross-language relays, other platforms, or new H4 matrix entries.
+`carrier: "webtransport"` and a nonempty `allowedOrigins` list. Installing the
+addon or setting `origin` alone does not opt a Node client into WebTransport.
+In Rust, use `ConnectorOptions::with_webtransport_origin(origin)` and configure
+direct or tunnel listeners with `WebTransportListenerPolicy::new(host, origins)`.
 
 The native server profile records WebSocket and raw
 QUIC endpoint-client, direct-server, and opaque-tunnel runtime capabilities in

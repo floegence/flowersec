@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:fc500966-dc9d-53c9-8e99-557075cd2108",
+  "serialNumber": "urn:uuid:4c5928bb-ccaa-5734-8276-4e5984c0255b",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-node-native",
-      "version": "7.0.1",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1"
+      "version": "7.1.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.1.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.1.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
+        "value": "bb41dbded2330d2ef6c6081eccb4393584ba13c61899ccf36d005a67ecbee3d0"
       }
     ]
   },
@@ -174,6 +174,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bumpalo",
+      "version": "3.20.4",
+      "purl": "pkg:cargo/bumpalo@3.20.4",
+      "bom-ref": "pkg:cargo/bumpalo@3.20.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/fitzgen/bumpalo"
         }
       ],
       "properties": [
@@ -1309,6 +1337,34 @@
     },
     {
       "type": "library",
+      "name": "js-sys",
+      "version": "0.3.107",
+      "purl": "pkg:cargo/js-sys@0.3.107",
+      "bom-ref": "pkg:cargo/js-sys@0.3.107",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "lazy_static",
       "version": "1.5.0",
       "purl": "pkg:cargo/lazy_static@1.5.0",
@@ -2074,13 +2130,10 @@
           "expression": "MIT"
         }
       ],
-      "description": "Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_provider. Upstream crate SHA-256: 0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8. Modified source tree SHA-256: 8dee7b897e1a68c456dea7d92fddb06752515443096aff67f645f2e171030fcd.",
-      "copyright": "Copyright (c) 2018 The quinn Developers",
       "externalReferences": [
         {
           "type": "distribution",
           "url": "https://static.crates.io/crates/quinn/quinn-0.11.11.crate",
-          "comment": "Upstream crate before Flowersec modifications",
           "hashes": [
             {
               "alg": "SHA-256",
@@ -2103,25 +2156,22 @@
     {
       "type": "library",
       "name": "quinn-proto",
-      "version": "0.11.17",
-      "purl": "pkg:cargo/quinn-proto@0.11.17",
-      "bom-ref": "pkg:cargo/quinn-proto@0.11.17",
+      "version": "0.11.19",
+      "purl": "pkg:cargo/quinn-proto@0.11.19",
+      "bom-ref": "pkg:cargo/quinn-proto@0.11.19",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "description": "Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_proto. Upstream crate SHA-256: 04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83. Modified source tree SHA-256: 4b7e2ee5152d340706750caa7a85a875b42d6b0c60820677a7fa0e69dabe7ce5.",
-      "copyright": "Copyright (c) 2018 The quinn Developers",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.17.crate",
-          "comment": "Upstream crate before Flowersec modifications",
+          "url": "https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.19.crate",
           "hashes": [
             {
               "alg": "SHA-256",
-              "content": "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
+              "content": "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
             }
           ]
         }
@@ -2466,6 +2516,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "ISC"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustversion",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/rustversion@1.0.23",
+      "bom-ref": "pkg:cargo/rustversion@1.0.23",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/rustversion"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3231,34 +3309,6 @@
     },
     {
       "type": "library",
-      "name": "tracing-attributes",
-      "version": "0.1.31",
-      "purl": "pkg:cargo/tracing-attributes@0.1.31",
-      "bom-ref": "pkg:cargo/tracing-attributes@0.1.31",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tokio-rs/tracing"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "tracing-core",
       "version": "0.1.36",
       "purl": "pkg:cargo/tracing-core@0.1.36",
@@ -3502,6 +3552,146 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen",
+      "version": "0.2.130",
+      "purl": "pkg:cargo/wasm-bindgen@0.2.130",
+      "bom-ref": "pkg:cargo/wasm-bindgen@0.2.130",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.130",
+      "purl": "pkg:cargo/wasm-bindgen-macro@0.2.130",
+      "bom-ref": "pkg:cargo/wasm-bindgen-macro@0.2.130",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-macro-support",
+      "version": "0.2.130",
+      "purl": "pkg:cargo/wasm-bindgen-macro-support@0.2.130",
+      "bom-ref": "pkg:cargo/wasm-bindgen-macro-support@0.2.130",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.130",
+      "purl": "pkg:cargo/wasm-bindgen-shared@0.2.130",
+      "bom-ref": "pkg:cargo/wasm-bindgen-shared@0.2.130",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "web-time",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/web-time@1.1.0",
+      "bom-ref": "pkg:cargo/web-time@1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/daxpedda/web-time"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -4128,33 +4318,22 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.1.0",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http@1.5.0",
-        "pkg:cargo/lru-slab@0.1.2",
         "pkg:cargo/napi-build@2.6.0",
         "pkg:cargo/napi-derive@3.7.1",
         "pkg:cargo/napi@3.16.2",
-        "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/qpack@0.1.0",
-        "pkg:cargo/quinn-proto@0.11.17",
-        "pkg:cargo/quinn-udp@0.5.16",
+        "pkg:cargo/quinn-proto@0.11.19",
         "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rand@0.10.4",
-        "pkg:cargo/rand_pcg@0.10.2",
-        "pkg:cargo/ring@0.17.14",
-        "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls@0.23.46",
         "pkg:cargo/sha2@0.11.1",
-        "pkg:cargo/slab@0.4.12",
-        "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/thiserror@2.0.20",
-        "pkg:cargo/tinyvec@1.12.0",
         "pkg:cargo/tokio-util@0.7.20",
         "pkg:cargo/tokio@1.54.1",
-        "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/url@2.5.9",
         "pkg:cargo/x509-parser@0.18.1"
       ]
@@ -4202,6 +4381,10 @@
       "dependsOn": [
         "pkg:cargo/hybrid-array@0.4.14"
       ]
+    },
+    {
+      "ref": "pkg:cargo/bumpalo@3.20.4",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/bytes@1.12.1",
@@ -4370,17 +4553,21 @@
       "ref": "pkg:cargo/getrandom@0.2.17",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/js-sys@0.3.107",
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1"
+        "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
+        "pkg:cargo/wasm-bindgen@0.2.130"
       ]
     },
     {
       "ref": "pkg:cargo/getrandom@0.4.3",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/js-sys@0.3.107",
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/r-efi@6.0.0",
-        "pkg:cargo/rand_core@0.10.1"
+        "pkg:cargo/rand_core@0.10.1",
+        "pkg:cargo/wasm-bindgen@0.2.130"
       ]
     },
     {
@@ -4478,6 +4665,14 @@
     {
       "ref": "pkg:cargo/itoa@1.0.19",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/js-sys@0.3.107",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/futures-util@0.3.34",
+        "pkg:cargo/wasm-bindgen@0.2.130"
+      ]
     },
     {
       "ref": "pkg:cargo/lazy_static@1.5.0",
@@ -4641,12 +4836,38 @@
     {
       "ref": "pkg:cargo/quinn@0.11.11",
       "dependsOn": [
-        "pkg:cargo/quinn-proto@0.11.17"
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/cfg_aliases@0.2.2",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/quinn-proto@0.11.19",
+        "pkg:cargo/quinn-udp@0.5.16",
+        "pkg:cargo/rustc-hash@2.1.3",
+        "pkg:cargo/rustls@0.23.46",
+        "pkg:cargo/socket2@0.6.5",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/tokio@1.54.1",
+        "pkg:cargo/tracing@0.1.44",
+        "pkg:cargo/web-time@1.1.0"
       ]
     },
     {
-      "ref": "pkg:cargo/quinn-proto@0.11.17",
-      "dependsOn": []
+      "ref": "pkg:cargo/quinn-proto@0.11.19",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/lru-slab@0.1.2",
+        "pkg:cargo/rand@0.10.4",
+        "pkg:cargo/rand_pcg@0.10.2",
+        "pkg:cargo/ring@0.17.14",
+        "pkg:cargo/rustc-hash@2.1.3",
+        "pkg:cargo/rustls-pki-types@1.15.1",
+        "pkg:cargo/rustls@0.23.46",
+        "pkg:cargo/slab@0.4.12",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/tinyvec@1.12.0",
+        "pkg:cargo/tracing@0.1.44",
+        "pkg:cargo/web-time@1.1.0"
+      ]
     },
     {
       "ref": "pkg:cargo/quinn-udp@0.5.16",
@@ -4655,6 +4876,7 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
+        "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/windows-sys@0.61.2"
       ]
     },
@@ -4721,6 +4943,7 @@
     {
       "ref": "pkg:cargo/rustls-pki-types@1.15.1",
       "dependsOn": [
+        "pkg:cargo/web-time@1.1.0",
         "pkg:cargo/zeroize@1.9.2"
       ]
     },
@@ -4731,6 +4954,10 @@
         "pkg:cargo/rustls-pki-types@1.15.1",
         "pkg:cargo/untrusted@0.9.0"
       ]
+    },
+    {
+      "ref": "pkg:cargo/rustversion@1.0.23",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/semver@1.0.28",
@@ -4911,16 +5138,7 @@
       "ref": "pkg:cargo/tracing@0.1.44",
       "dependsOn": [
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tracing-attributes@0.1.31",
         "pkg:cargo/tracing-core@0.1.36"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tracing-attributes@0.1.31",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
       ]
     },
     {
@@ -4967,6 +5185,45 @@
     {
       "ref": "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen@0.2.130",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/rustversion@1.0.23",
+        "pkg:cargo/wasm-bindgen-macro@0.2.130",
+        "pkg:cargo/wasm-bindgen-shared@0.2.130"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen-macro@0.2.130",
+      "dependsOn": [
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/wasm-bindgen-macro-support@0.2.130"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen-macro-support@0.2.130",
+      "dependsOn": [
+        "pkg:cargo/bumpalo@3.20.4",
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@3.0.4",
+        "pkg:cargo/wasm-bindgen-shared@0.2.130"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen-shared@0.2.130",
+      "dependsOn": [
+        "pkg:cargo/unicode-ident@1.0.24"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/web-time@1.1.0",
+      "dependsOn": [
+        "pkg:cargo/js-sys@0.3.107",
+        "pkg:cargo/wasm-bindgen@0.2.130"
+      ]
     },
     {
       "ref": "pkg:cargo/windows_aarch64_gnullvm@0.52.6",

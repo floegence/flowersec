@@ -150,7 +150,6 @@ pub struct ConnectorOptions {
     close_flush_timeout: Option<Duration>,
     websocket_origin: Option<String>,
     webtransport_origin: Option<String>,
-    webtransport_profile: crate::WebTransportProfile,
     rpc_handlers: Option<Arc<RpcHandlerSnapshot>>,
 }
 
@@ -173,7 +172,6 @@ impl ConnectorOptions {
             close_flush_timeout: None,
             websocket_origin: None,
             webtransport_origin: None,
-            webtransport_profile: crate::WebTransportProfile::Draft02,
             rpc_handlers: None,
         }
     }
@@ -223,13 +221,8 @@ impl ConnectorOptions {
     }
 
     /// Enables the draft02 HTTP/3 WebTransport provider with an exact CONNECT Origin.
-    pub fn with_webtransport_origin(self, origin: impl Into<String>) -> Result<Self, ConnectError> {
-        self.with_webtransport_profile(crate::WebTransportProfile::Draft02, origin)
-    }
-
-    pub fn with_webtransport_profile(
+    pub fn with_webtransport_origin(
         mut self,
-        profile: crate::WebTransportProfile,
         origin: impl Into<String>,
     ) -> Result<Self, ConnectError> {
         let origin = origin.into();
@@ -237,7 +230,6 @@ impl ConnectorOptions {
             return Err(terminal_error(ConnectErrorCode::ArtifactInvalid));
         }
         self.webtransport_origin = Some(origin);
-        self.webtransport_profile = profile;
         Ok(self)
     }
 
@@ -570,7 +562,7 @@ async fn prepare_candidate(
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(CandidateFailureV3::Canceled),
-                result = tokio::time::timeout_at(deadline, crate::webtransport_v5::dial(&candidate.normalized_url, origin, options.webtransport_profile, tls, capacity)) => result.map_err(|_| CandidateFailureV3::Timeout)?,
+                result = tokio::time::timeout_at(deadline, crate::webtransport_v5::dial(&candidate.normalized_url, origin, tls, capacity)) => result.map_err(|_| CandidateFailureV3::Timeout)?,
             }
         }
     }

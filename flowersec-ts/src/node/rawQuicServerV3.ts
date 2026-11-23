@@ -46,16 +46,20 @@ export async function startNodeRawQuicListenerV3(
 }
 
 export type NodeWebTransportListenerConfig = Readonly<{
-  carrier: "webtransport"; profile: "draft02" | "native_h3"; host: string; port: number; publicURL?: string;
+  carrier: "webtransport"; host: string; port: number; publicURL?: string;
   tls: NodeRawQuicListenerOptionsV3["tls"]; allowedOrigins: readonly string[];
 }>;
 
+export function validateWebTransportListeners(listeners: readonly { carrier: string }[]): void {
+  if (listeners.some(listener => listener.carrier === "webtransport" && "profile" in listener)) throw new TypeError("WebTransport listener profile was removed; omit profile for draft02 or configure a raw_quic listener for Go clients");
+}
+
 export async function startNodeWebTransportListener(options: NodeWebTransportListenerConfig & NodeRawQuicListenerOptionsV3): Promise<NodeRawQuicListenerV3> {
   validateOptions(options);
-  if ((options.profile !== "draft02" && options.profile !== "native_h3") || !Array.isArray(options.allowedOrigins) || options.allowedOrigins.length < 1 || options.allowedOrigins.length > 64 ||
+  if (!Array.isArray(options.allowedOrigins) || options.allowedOrigins.length < 1 || options.allowedOrigins.length > 64 ||
       new Set(options.allowedOrigins).size !== options.allowedOrigins.length || !options.allowedOrigins.every(validOrigin)) throw new TypeError("invalid WebTransport Origin policy");
   const url = new URL(boundIngressURL(options.path, "webtransport", { host: options.host, port: options.port || 443 }, options.publicURL));
-  const driver = createNativeWebTransportDriver(loadNativeTransportAddon(), options.profile);
+  const driver = createNativeWebTransportDriver(loadNativeTransportAddon());
   if (driver === undefined) throw new NativeTransportUnavailableError();
   const listener = await driver.bind({ host: options.host, port: options.port, path: options.path, authorityHost: url.hostname,
     allowedOrigins: [...options.allowedOrigins], certificateChainDer: normalizeCertificateChain(options.tls.certificate),

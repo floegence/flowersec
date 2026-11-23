@@ -61,13 +61,13 @@ Handler failures reset only their stream.
 ## Supported Connections
 
 Rust supports direct and relayed WebSocket and raw QUIC connections. To dial a
-signed HTTPS WebTransport candidate, select `WebTransportProfile::NativeH3` or
-`WebTransportProfile::Draft02` and an exact Origin with `ConnectorOptions::with_webtransport_profile`. For a direct server, use
+signed HTTPS WebTransport candidate, pass an exact Origin with
+`ConnectorOptions::with_webtransport_origin`. For a direct server, use
 `Acceptor::bind_webtransport`; for relay ingress, use `TunnelRuntime::bind_webtransport`.
-Both accept `WebTransportListenerPolicy::new(host, origins).with_profile(profile)` and have an
+Both accept `WebTransportListenerPolicy::new(host, origins)` and have an
 `_on_socket` variant for deployments that issue routes against a bound UDP socket.
 The dedicated CONNECT connection carries reliable streams and negotiated native
-datagrams. `NativeH3` requires negotiated QUIC reliable stream reset. Deployments issue artifacts through an application control plane
+datagrams using draft02. Go clients dialing these listeners require an explicit raw QUIC route instead. Deployments issue artifacts through an application control plane
 such as the Go control-plane package.
 
 CA candidates use platform or explicit DER trust roots. Pin candidates use only

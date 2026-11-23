@@ -1,6 +1,6 @@
 [package]
 name = "flowersec-native-transport"
-version = "7.0.1"
+version = "7.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Flowersec-owned native transport primitives shared by Rust and Node runtimes"
@@ -18,17 +18,8 @@ __flowersec_internal_test_support = []
 bytes = "1"
 http = "1"
 qpack = "=0.1.0"
-udp = { package = "quinn-udp", version = "=0.5.16", default-features = false }
-rand = "0.10"
-rand_pcg = "0.10"
-ring = "0.17"
-rustc-hash = "2"
-lru-slab = "0.1"
-slab = "0.4"
-tinyvec = { version = "1", features = ["alloc"] }
-tracing = "0.1"
-pin-project-lite = "0.2"
-socket2 = "0.6"
+quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn-proto = { version = "=0.11.19", default-features = false }
 url = "=2.5.9"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 sha2 = "0.11"
@@ -41,11 +32,3 @@ x509-parser = "0.18"
 [dev-dependencies]
 cert_test_builder = { package = "rcgen", version = "0.14" }
 time = "0.3"
-assert_matches = "1.5"
-hex-literal = "1"
-tracing-futures = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-lazy_static = "1"
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)", "cfg(wasm_browser)"] }

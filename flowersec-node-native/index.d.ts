@@ -66,10 +66,8 @@ export function contractVersion(): number;
 export function connectRawQuic(options: RawQuicConnectOptions): NativeOperation<RawQuicSession>;
 export function bindRawQuic(options: RawQuicBindOptions): Promise<RawQuicListener>;
 
-export function supportsNativeH3(): boolean;
-export type WebTransportProfile = "draft02" | "native_h3";
-export type WebTransportConnectOptions = Omit<RawQuicConnectOptions, "host" | "port" | "serverName"> & Readonly<{ url: string; origin: string; profile?: WebTransportProfile }>;
-export type WebTransportBindOptions = RawQuicBindOptions & Readonly<{ authorityHost: string; allowedOrigins: readonly string[]; profile?: WebTransportProfile }>;
+export type WebTransportConnectOptions = Omit<RawQuicConnectOptions, "host" | "port" | "serverName"> & Readonly<{ url: string; origin: string }>;
+export type WebTransportBindOptions = RawQuicBindOptions & Readonly<{ authorityHost: string; allowedOrigins: readonly string[] }>;
 export interface WebTransportSession extends Omit<RawQuicSession, "kind" | "sendDatagram" | "localAddress" | "peerAddress"> {
   readonly kind: "webtransport";
   sendDatagram(data: Uint8Array): Promise<ReturnType<RawQuicSession["sendDatagram"]>>;

@@ -274,7 +274,7 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			Package:         "@floegence/flowersec-node-native",
 			ContractVersion: 5,
 			WireVersion:     5,
-			RuntimeExports:  []string{"bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "supportsNativeH3"},
+			RuntimeExports:  []string{"bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion"},
 		},
 		Coverage: coverageManifest{
 			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v7/client", MinStatementsPct: 1}},

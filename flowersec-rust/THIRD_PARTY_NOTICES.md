@@ -119,7 +119,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - proc-macro2 1.0.107 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/proc-macro2)
 - qpack 0.1.0 (Declared: MIT; selected: MIT; source: https://codeberg.org/gnunicorn/qpack-rs)
 - quinn 0.11.11 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn/quinn-0.11.11.crate)
-- quinn-proto 0.11.17 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.17.crate)
+- quinn-proto 0.11.19 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://static.crates.io/crates/quinn-proto/quinn-proto-0.11.19.crate)
 - quinn-udp 0.5.16 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/quinn-rs/quinn)
 - quote 1.0.47 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/quote)
 - r-efi 6.0.0 (Declared: MIT OR Apache-2.0 OR LGPL-2.1-or-later; selected: MIT; source: https://github.com/r-efi/r-efi)
@@ -177,7 +177,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - tokio-tungstenite 0.30.0 (Declared: MIT; selected: MIT; source: https://github.com/snapview/tokio-tungstenite)
 - tokio-util 0.7.20 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tokio)
 - tracing 0.1.44 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
-- tracing-attributes 0.1.31 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
 - tracing-core 0.1.36 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/tracing)
 - try-lock 0.2.5 (Declared: MIT; selected: MIT; source: https://github.com/seanmonstar/try-lock)
 - tungstenite 0.30.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/snapview/tungstenite-rs)
@@ -229,8 +228,6 @@ The following dependencies are incorporated into distributed Flowersec files or 
 Their reviewed upstream license, notice, copyright, and patent materials are reproduced below.
 
 ### quinn 0.11.11
-
-Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_provider. Upstream crate SHA-256: 0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8. Modified source tree SHA-256: 8dee7b897e1a68c456dea7d92fddb06752515443096aff67f645f2e171030fcd.
 
 #### LICENSE-MIT
 
@@ -446,9 +443,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    See the License for the specific language governing permissions and
    limitations under the License.
 
-### quinn-proto 0.11.17
-
-Flowersec incorporates modified upstream source in flowersec-native-transport/src/quic_proto. Upstream crate SHA-256: 04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83. Modified source tree SHA-256: 4b7e2ee5152d340706750caa7a85a875b42d6b0c60820677a7fa0e69dabe7ce5.
+### quinn-proto 0.11.19
 
 #### LICENSE-MIT
 

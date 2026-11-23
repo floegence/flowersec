@@ -116,7 +116,7 @@ pub use tunnel_runtime_v3::{
     TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError,
     TunnelRuntimeOptions, TunnelVerificationRecord,
 };
-pub use webtransport_v5::{WebTransportListenerPolicy, WebTransportProfile};
+pub use webtransport_v5::WebTransportListenerPolicy;
 #[cfg(test)]
 #[path = "idna_v3_integration_tests.rs"]
 mod idna_v3_integration_tests;

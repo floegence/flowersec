@@ -5,7 +5,7 @@ for the current Node.js platform. It is an implementation dependency of
 `@floegence/flowersec-core`; applications should use the public Flowersec Node.js
 API instead of importing this package directly.
 
-The addon exposes raw QUIC and both `draft02` and `native_h3` WebTransport backed by the shared Rust
+The addon exposes raw QUIC and `draft02` WebTransport backed by the shared Rust
 native driver. Browser exports never load this package.
 
 `waitRemoteSessionClose()` resolves to `true` only for a peer application close
@@ -19,8 +19,8 @@ the matching optional package for the current Node.js platform. Windows and
 musl packages are not published because they have no supported build and smoke
 coverage.
 
-Each platform binary is built from the shared Rust driver's modified copies of
-Quinn and quinn-proto. The wrapper and each platform package include SPDX and
+Each platform binary uses unmodified crates.io releases of Quinn and quinn-proto
+through the shared Rust driver. The wrapper and each platform package include SPDX and
 CycloneDX documents in `sbom/` and upstream license texts in
 `THIRD_PARTY_NOTICES.md`. In the wrapper, these describe the native addon
 loaded from the selected platform package.

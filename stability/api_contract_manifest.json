@@ -3820,8 +3820,6 @@
       "let _: fn(flowersec::AcceptorOptions, flowersec::WebTransportListenerPolicy) -> Result<flowersec::Acceptor, flowersec::AcceptError> = flowersec::Acceptor::bind_webtransport",
       "let _: fn(std::net::UdpSocket, flowersec::AcceptorOptions, flowersec::WebTransportListenerPolicy) -> Result<flowersec::Acceptor, flowersec::AcceptError> = flowersec::Acceptor::bind_webtransport_on_socket",
       "let _: std::io::Result<flowersec::WebTransportListenerPolicy> = flowersec::WebTransportListenerPolicy::new(String::new(), Vec::<String>::new())",
-      "let _: fn(flowersec::WebTransportListenerPolicy, flowersec::WebTransportProfile) -> flowersec::WebTransportListenerPolicy = flowersec::WebTransportListenerPolicy::with_profile",
-      "let _ = [flowersec::WebTransportProfile::Draft02, flowersec::WebTransportProfile::NativeH3]",
       "let _: fn(flowersec::Acceptor, flowersec::RpcFrameLimit) -> flowersec::Acceptor = flowersec::Acceptor::with_rpc_frame_limit",
       "let _: fn(flowersec::Acceptor, std::num::NonZeroU16) -> flowersec::Acceptor = flowersec::Acceptor::with_rpc_concurrency",
       "let _ = flowersec::Acceptor::local_address",
@@ -3899,7 +3897,6 @@
       "let _: fn(flowersec::ConnectorOptions, std::num::NonZeroU16) -> flowersec::ConnectorOptions = flowersec::ConnectorOptions::with_rpc_concurrency",
       "let _: fn(flowersec::ConnectorOptions, &str) -> Result<flowersec::ConnectorOptions, flowersec::ConnectError> = flowersec::ConnectorOptions::with_tunnel_ingress",
       "fn require_webtransport_origin(options: flowersec::ConnectorOptions, origin: impl Into<String>) -> Result<flowersec::ConnectorOptions, flowersec::ConnectError> { options.with_webtransport_origin(origin) }",
-      "fn require_webtransport_profile(options: flowersec::ConnectorOptions, profile: flowersec::WebTransportProfile, origin: impl Into<String>) -> Result<flowersec::ConnectorOptions, flowersec::ConnectError> { options.with_webtransport_profile(profile, origin) }",
       "let _: fn(&flowersec::NotificationSubscription) = flowersec::NotificationSubscription::cancel",
       "fn require_subscription(peer: &dyn flowersec::RpcPeer) -> Result<flowersec::NotificationSubscription, flowersec::SessionError> { peer.subscribe_notification(1, std::sync::Arc::new(|_| {})) }",
       "let _ = flowersec::connect",
@@ -4004,8 +4001,7 @@
       "bindWebTransport",
       "connectRawQuic",
       "connectWebTransport",
-      "contractVersion",
-      "supportsNativeH3"
+      "contractVersion"
     ]
   },
   "coverage": {
