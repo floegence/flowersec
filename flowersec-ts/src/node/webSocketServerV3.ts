@@ -49,6 +49,9 @@ export async function startNodeWebSocketListenerV3(
     minVersion: "TLSv1.3",
     maxVersion: "TLSv1.3",
     secureOptions: constants.SSL_OP_NO_TICKET,
+  }, (_request, response) => {
+    response.writeHead(404, { Connection: "close", "Content-Length": "0" });
+    response.end();
   });
   const sessions = new SessionQueueV3(maxPendingSessions, pendingSessionTimeoutMs);
   const sockets = new Set<any>();

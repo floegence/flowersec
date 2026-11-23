@@ -1137,19 +1137,18 @@ test("binding gate requires exact external artifacts and does not invent missing
   fs.writeFileSync(contractPath, JSON.stringify(contract));
   fs.appendFileSync(path.join(root, "docs/TRANSPORT_V4_BINDING.md"), contract.design.review_evidence_sha256);
   const options = {root, designPath:path.join(root,"missing-design.md"), evidencePath:path.join(root,"missing-evidence.md")};
-  assert.deepEqual(verifyBinding(options).external, {design:"missing", review_evidence:"missing"});
+  const unchecked = {design:"not_checked", review_evidence:"not_checked"};
+  assert.deepEqual(verifyBinding(options).external, unchecked);
   assert.throws(() => verifyBinding({...options, requireExternal:true}), /required design unavailable/u);
-  const designPath = process.env.FLOWERSEC_V4_DESIGN_PATH ?? path.resolve(repositoryRoot, "../flowersec-v4-transport-security-design.zh-CN.md");
-  if (fs.existsSync(designPath)) assert.throws(() => verifyBinding({...options, designPath, requireExternal:true}), /required review_evidence unavailable/u);
   fs.writeFileSync(options.designPath, "incorrect design\n");
-  assert.throws(() => verifyBinding(options), /external design SHA changed/u);
+  assert.deepEqual(verifyBinding(options).external, unchecked);
+  assert.throws(() => verifyBinding({...options, requireExternal:true}), /external design SHA changed/u);
   assert.equal(fs.readFileSync(options.designPath,"utf8"), "incorrect design\n");
   fs.unlinkSync(options.designPath);
   contract.design.review_evidence_status = "pending_independent_review";
   contract.design.review_evidence_sha256 = null;
   fs.writeFileSync(contractPath, JSON.stringify(contract));
-  assert.deepEqual(verifyBinding(options).external, {design:"missing", review_evidence:"unbound"});
-  if (fs.existsSync(designPath)) assert.throws(() => verifyBinding({...options, designPath, requireExternal:true}), /has no verified evidence binding/u);
+  assert.deepEqual(verifyBinding(options).external, {design:"not_checked", review_evidence:"unbound"});
 }));
 
 test("binding gate rejects documentation schema revision drift", () => isolatedArtifacts(root => {

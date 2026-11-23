@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:2eb28fce-9ef9-5ffe-8658-39288574c504",
+  "serialNumber": "urn:uuid:fdb8d133-ff90-5251-8e54-d48b82a01411",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-source",
-      "version": "7.0.0",
-      "purl": "pkg:generic/flowersec-source@7.0.0",
-      "bom-ref": "pkg:generic/flowersec-source@7.0.0"
+      "version": "7.0.1",
+      "purl": "pkg:generic/flowersec-source@7.0.1",
+      "bom-ref": "pkg:generic/flowersec-source@7.0.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
+        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
       }
     ]
   },
@@ -470,9 +470,9 @@
     {
       "type": "library",
       "name": "bit-set",
-      "version": "0.8.0",
-      "purl": "pkg:cargo/bit-set@0.8.0",
-      "bom-ref": "pkg:cargo/bit-set@0.8.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/bit-set@0.11.1",
+      "bom-ref": "pkg:cargo/bit-set@0.11.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -481,7 +481,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/contain-rs/bit-set"
+          "url": "https://github.com/contain-rs/bit-vec"
         }
       ],
       "properties": [
@@ -498,9 +498,9 @@
     {
       "type": "library",
       "name": "bit-vec",
-      "version": "0.8.0",
-      "purl": "pkg:cargo/bit-vec@0.8.0",
-      "bom-ref": "pkg:cargo/bit-vec@0.8.0",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/bit-vec@0.10.2",
+      "bom-ref": "pkg:cargo/bit-vec@0.10.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -656,6 +656,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "borsh",
+      "version": "1.8.1",
+      "purl": "pkg:cargo/borsh@1.8.1",
+      "bom-ref": "pkg:cargo/borsh@1.8.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/near/borsh-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "borsh-derive",
+      "version": "1.8.1",
+      "purl": "pkg:cargo/borsh-derive@1.8.1",
+      "bom-ref": "pkg:cargo/borsh-derive@1.8.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/near/borsh-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1002,9 +1058,9 @@
     {
       "type": "library",
       "name": "convert_case",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/convert_case@0.11.0",
-      "bom-ref": "pkg:cargo/convert_case@0.11.0",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/convert_case@0.12.0",
+      "bom-ref": "pkg:cargo/convert_case@0.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1020,6 +1076,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "core_detect",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/core_detect@1.0.0",
+      "bom-ref": "pkg:cargo/core_detect@1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/thomcc/core_detect"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1658,6 +1742,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "equivalent",
+      "version": "1.0.3",
+      "purl": "pkg:cargo/equivalent@1.0.3",
+      "bom-ref": "pkg:cargo/equivalent@1.0.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/indexmap-rs/equivalent"
         }
       ],
       "properties": [
@@ -2317,6 +2429,34 @@
     },
     {
       "type": "library",
+      "name": "hashbrown",
+      "version": "0.17.2",
+      "purl": "pkg:cargo/hashbrown@0.17.2",
+      "bom-ref": "pkg:cargo/hashbrown@0.17.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/hashbrown"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "hex-literal",
       "version": "1.1.0",
       "purl": "pkg:cargo/hex-literal@1.1.0",
@@ -2542,9 +2682,9 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.1",
-      "purl": "pkg:cargo/hyper@1.11.1",
-      "bom-ref": "pkg:cargo/hyper@1.11.1",
+      "version": "1.12.0",
+      "purl": "pkg:cargo/hyper@1.12.0",
+      "bom-ref": "pkg:cargo/hyper@1.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -3064,6 +3204,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "(Apache-2.0 OR MIT) AND Unicode-3.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "indexmap",
+      "version": "2.14.2",
+      "purl": "pkg:cargo/indexmap@2.14.2",
+      "bom-ref": "pkg:cargo/indexmap@2.14.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/indexmap-rs/indexmap"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3634,9 +3802,9 @@
     {
       "type": "library",
       "name": "napi",
-      "version": "3.12.2",
-      "purl": "pkg:cargo/napi@3.12.2",
-      "bom-ref": "pkg:cargo/napi@3.12.2",
+      "version": "3.16.2",
+      "purl": "pkg:cargo/napi@3.16.2",
+      "bom-ref": "pkg:cargo/napi@3.16.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -3662,9 +3830,9 @@
     {
       "type": "library",
       "name": "napi-build",
-      "version": "2.4.1",
-      "purl": "pkg:cargo/napi-build@2.4.1",
-      "bom-ref": "pkg:cargo/napi-build@2.4.1",
+      "version": "2.6.0",
+      "purl": "pkg:cargo/napi-build@2.6.0",
+      "bom-ref": "pkg:cargo/napi-build@2.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -3690,9 +3858,9 @@
     {
       "type": "library",
       "name": "napi-derive",
-      "version": "3.6.3",
-      "purl": "pkg:cargo/napi-derive@3.6.3",
-      "bom-ref": "pkg:cargo/napi-derive@3.6.3",
+      "version": "3.7.1",
+      "purl": "pkg:cargo/napi-derive@3.7.1",
+      "bom-ref": "pkg:cargo/napi-derive@3.7.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -3718,9 +3886,9 @@
     {
       "type": "library",
       "name": "napi-derive-backend",
-      "version": "6.1.2",
-      "purl": "pkg:cargo/napi-derive-backend@6.1.2",
-      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "version": "7.0.1",
+      "purl": "pkg:cargo/napi-derive-backend@7.0.1",
+      "bom-ref": "pkg:cargo/napi-derive-backend@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -3746,9 +3914,9 @@
     {
       "type": "library",
       "name": "napi-sys",
-      "version": "3.3.0",
-      "purl": "pkg:cargo/napi-sys@3.3.0",
-      "bom-ref": "pkg:cargo/napi-sys@3.3.0",
+      "version": "3.4.1",
+      "purl": "pkg:cargo/napi-sys@3.4.1",
+      "bom-ref": "pkg:cargo/napi-sys@3.4.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -4473,34 +4641,6 @@
     },
     {
       "type": "library",
-      "name": "ppv-lite86",
-      "version": "0.2.21",
-      "purl": "pkg:cargo/ppv-lite86@0.2.21",
-      "bom-ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/cryptocorrosion/cryptocorrosion"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "primefield",
       "version": "0.14.0",
       "purl": "pkg:cargo/primefield@0.14.0",
@@ -4557,6 +4697,34 @@
     },
     {
       "type": "library",
+      "name": "proc-macro-crate",
+      "version": "3.5.0",
+      "purl": "pkg:cargo/proc-macro-crate@3.5.0",
+      "bom-ref": "pkg:cargo/proc-macro-crate@3.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/bkchr/proc-macro-crate"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "proc-macro2",
       "version": "1.0.107",
       "purl": "pkg:cargo/proc-macro2@1.0.107",
@@ -4586,9 +4754,9 @@
     {
       "type": "library",
       "name": "proptest",
-      "version": "1.11.0",
-      "purl": "pkg:cargo/proptest@1.11.0",
-      "bom-ref": "pkg:cargo/proptest@1.11.0",
+      "version": "1.12.0",
+      "purl": "pkg:cargo/proptest@1.12.0",
+      "bom-ref": "pkg:cargo/proptest@1.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -4856,65 +5024,9 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
-      "bom-ref": "pkg:cargo/rand@0.10.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand",
-      "version": "0.9.5",
-      "purl": "pkg:cargo/rand@0.9.5",
-      "bom-ref": "pkg:cargo/rand@0.9.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_chacha",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/rand_chacha@0.9.0",
-      "bom-ref": "pkg:cargo/rand_chacha@0.9.0",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/rand@0.10.4",
+      "bom-ref": "pkg:cargo/rand@0.10.4",
       "licenses": [
         {
           "expression": "MIT"
@@ -4967,34 +5079,6 @@
     },
     {
       "type": "library",
-      "name": "rand_core",
-      "version": "0.9.5",
-      "purl": "pkg:cargo/rand_core@0.9.5",
-      "bom-ref": "pkg:cargo/rand_core@0.9.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rand_pcg",
       "version": "0.10.2",
       "purl": "pkg:cargo/rand_pcg@0.10.2",
@@ -5024,9 +5108,9 @@
     {
       "type": "library",
       "name": "rand_xorshift",
-      "version": "0.4.0",
-      "purl": "pkg:cargo/rand_xorshift@0.4.0",
-      "bom-ref": "pkg:cargo/rand_xorshift@0.4.0",
+      "version": "0.5.0",
+      "purl": "pkg:cargo/rand_xorshift@0.5.0",
+      "bom-ref": "pkg:cargo/rand_xorshift@0.5.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -5780,9 +5864,9 @@
     {
       "type": "library",
       "name": "serde_json",
-      "version": "1.0.151",
-      "purl": "pkg:cargo/serde_json@1.0.151",
-      "bom-ref": "pkg:cargo/serde_json@1.0.151",
+      "version": "1.0.154",
+      "purl": "pkg:cargo/serde_json@1.0.154",
+      "bom-ref": "pkg:cargo/serde_json@1.0.154",
       "licenses": [
         {
           "expression": "MIT"
@@ -5892,9 +5976,9 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
-      "bom-ref": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
+      "bom-ref": "pkg:cargo/sha2@0.11.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -6713,9 +6797,9 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.3",
-      "purl": "pkg:cargo/tokio@1.53.3",
-      "bom-ref": "pkg:cargo/tokio@1.53.3",
+      "version": "1.54.1",
+      "purl": "pkg:cargo/tokio@1.54.1",
+      "bom-ref": "pkg:cargo/tokio@1.54.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -6825,9 +6909,9 @@
     {
       "type": "library",
       "name": "tokio-util",
-      "version": "0.7.19",
-      "purl": "pkg:cargo/tokio-util@0.7.19",
-      "bom-ref": "pkg:cargo/tokio-util@0.7.19",
+      "version": "0.7.20",
+      "purl": "pkg:cargo/tokio-util@0.7.20",
+      "bom-ref": "pkg:cargo/tokio-util@0.7.20",
       "licenses": [
         {
           "expression": "MIT"
@@ -6843,6 +6927,90 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_datetime",
+      "version": "1.1.3+spec-1.1.0",
+      "purl": "pkg:cargo/toml_datetime@1.1.3+spec-1.1.0",
+      "bom-ref": "pkg:cargo/toml_datetime@1.1.3+spec-1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_edit",
+      "version": "0.25.20+spec-1.1.0",
+      "purl": "pkg:cargo/toml_edit@0.25.20+spec-1.1.0",
+      "bom-ref": "pkg:cargo/toml_edit@0.25.20+spec-1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_parser",
+      "version": "1.1.6+spec-1.1.0",
+      "purl": "pkg:cargo/toml_parser@1.1.6+spec-1.1.0",
+      "bom-ref": "pkg:cargo/toml_parser@1.1.6+spec-1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -7525,9 +7693,9 @@
     {
       "type": "library",
       "name": "want",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/want@0.3.1",
-      "bom-ref": "pkg:cargo/want@0.3.1",
+      "version": "0.3.2",
+      "purl": "pkg:cargo/want@0.3.2",
+      "bom-ref": "pkg:cargo/want@0.3.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -8084,6 +8252,34 @@
     },
     {
       "type": "library",
+      "name": "winnow",
+      "version": "1.0.5",
+      "purl": "pkg:cargo/winnow@1.0.5",
+      "bom-ref": "pkg:cargo/winnow@1.0.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/winnow-rs/winnow"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "wit-bindgen",
       "version": "0.57.1",
       "purl": "pkg:cargo/wit-bindgen@0.57.1",
@@ -8392,62 +8588,6 @@
     },
     {
       "type": "library",
-      "name": "zerocopy",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy-derive",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "zerofrom",
       "version": "0.1.8",
       "purl": "pkg:cargo/zerofrom@0.1.8",
@@ -8533,9 +8673,9 @@
     {
       "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
-      "bom-ref": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.2",
+      "purl": "pkg:cargo/zeroize@1.9.2",
+      "bom-ref": "pkg:cargo/zeroize@1.9.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -8841,9 +8981,9 @@
     {
       "type": "library",
       "name": "github.com/dustin/go-humanize",
-      "version": "v1.0.1",
-      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
-      "bom-ref": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "version": "v1.1.0",
+      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
+      "bom-ref": "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -9037,9 +9177,9 @@
     {
       "type": "library",
       "name": "github.com/ncruces/go-strftime",
-      "version": "v1.0.0",
-      "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
-      "bom-ref": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+      "version": "v1.1.0",
+      "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
+      "bom-ref": "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -9093,9 +9233,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/quic-go",
-      "version": "v0.63.0",
-      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
-      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
+      "version": "v0.64.1",
+      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.64.1",
+      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.64.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -9177,9 +9317,9 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.57.0",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.57.0",
-      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "version": "v0.58.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.58.0",
+      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.58.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -9205,9 +9345,9 @@
     {
       "type": "library",
       "name": "golang.org/x/net",
-      "version": "v0.60.0",
-      "purl": "pkg:golang/golang.org/x/net@v0.60.0",
-      "bom-ref": "pkg:golang/golang.org/x/net@v0.60.0",
+      "version": "v0.61.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.61.0",
+      "bom-ref": "pkg:golang/golang.org/x/net@v0.61.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -9261,9 +9401,9 @@
     {
       "type": "library",
       "name": "golang.org/x/text",
-      "version": "v0.42.0",
-      "purl": "pkg:golang/golang.org/x/text@v0.42.0",
-      "bom-ref": "pkg:golang/golang.org/x/text@v0.42.0",
+      "version": "v0.43.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.43.0",
+      "bom-ref": "pkg:golang/golang.org/x/text@v0.43.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -9289,9 +9429,9 @@
     {
       "type": "library",
       "name": "modernc.org/libc",
-      "version": "v1.75.7",
-      "purl": "pkg:golang/modernc.org/libc@v1.75.7",
-      "bom-ref": "pkg:golang/modernc.org/libc@v1.75.7",
+      "version": "v1.79.0",
+      "purl": "pkg:golang/modernc.org/libc@v1.79.0",
+      "bom-ref": "pkg:golang/modernc.org/libc@v1.79.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause AND MIT AND BSD-2-Clause"
@@ -9373,9 +9513,9 @@
     {
       "type": "library",
       "name": "modernc.org/sqlite",
-      "version": "v1.59.0",
-      "purl": "pkg:golang/modernc.org/sqlite@v1.59.0",
-      "bom-ref": "pkg:golang/modernc.org/sqlite@v1.59.0",
+      "version": "v1.60.1",
+      "purl": "pkg:golang/modernc.org/sqlite@v1.60.1",
+      "bom-ref": "pkg:golang/modernc.org/sqlite@v1.60.1",
       "licenses": [
         {
           "expression": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain"
@@ -9525,6 +9665,146 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-1.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@cacheable/memory",
+      "version": "2.2.0",
+      "purl": "pkg:npm/%40cacheable/memory@2.2.0",
+      "bom-ref": "pkg:npm/%40cacheable/memory@2.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@cacheable/memory/-/memory-2.2.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@cacheable/utils",
+      "version": "2.5.0",
+      "purl": "pkg:npm/%40cacheable/utils@2.5.0",
+      "bom-ref": "pkg:npm/%40cacheable/utils@2.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@cacheable/utils/-/utils-2.5.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@emnapi/core",
+      "version": "2.0.0-beta.2",
+      "purl": "pkg:npm/%40emnapi/core@2.0.0-beta.2",
+      "bom-ref": "pkg:npm/%40emnapi/core@2.0.0-beta.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@emnapi/core/-/core-2.0.0-beta.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@emnapi/runtime",
+      "version": "2.0.0-beta.2",
+      "purl": "pkg:npm/%40emnapi/runtime@2.0.0-beta.2",
+      "bom-ref": "pkg:npm/%40emnapi/runtime@2.0.0-beta.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-2.0.0-beta.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@emnapi/wasi-threads",
+      "version": "2.2.0",
+      "purl": "pkg:npm/%40emnapi/wasi-threads@2.2.0",
+      "bom-ref": "pkg:npm/%40emnapi/wasi-threads@2.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-2.2.0.tgz"
         }
       ],
       "properties": [
@@ -10325,9 +10605,9 @@
     {
       "type": "library",
       "name": "@eslint/config-array",
-      "version": "0.23.5",
-      "purl": "pkg:npm/%40eslint/config-array@0.23.5",
-      "bom-ref": "pkg:npm/%40eslint/config-array@0.23.5",
+      "version": "0.23.6",
+      "purl": "pkg:npm/%40eslint/config-array@0.23.6",
+      "bom-ref": "pkg:npm/%40eslint/config-array@0.23.6",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -10336,7 +10616,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@eslint/config-array/-/config-array-0.23.5.tgz"
+          "url": "https://registry.npmjs.org/@eslint/config-array/-/config-array-0.23.6.tgz"
         }
       ],
       "properties": [
@@ -10437,9 +10717,9 @@
     {
       "type": "library",
       "name": "@eslint/plugin-kit",
-      "version": "0.7.2",
-      "purl": "pkg:npm/%40eslint/plugin-kit@0.7.2",
-      "bom-ref": "pkg:npm/%40eslint/plugin-kit@0.7.2",
+      "version": "0.7.3",
+      "purl": "pkg:npm/%40eslint/plugin-kit@0.7.3",
+      "bom-ref": "pkg:npm/%40eslint/plugin-kit@0.7.3",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -10448,7 +10728,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.2.tgz"
+          "url": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.3.tgz"
         }
       ],
       "properties": [
@@ -10465,9 +10745,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -10493,9 +10773,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -10521,9 +10801,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-x64",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -10549,9 +10829,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -10577,9 +10857,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -10744,6 +11024,34 @@
     },
     {
       "type": "library",
+      "name": "@isaacs/nonrecursive-glob-match",
+      "version": "1.1.0",
+      "purl": "pkg:npm/%40isaacs/nonrecursive-glob-match@1.1.0",
+      "bom-ref": "pkg:npm/%40isaacs/nonrecursive-glob-match@1.1.0",
+      "licenses": [
+        {
+          "expression": "BlueOak-1.0.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@isaacs/nonrecursive-glob-match/-/nonrecursive-glob-match-1.1.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BlueOak-1.0.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@jridgewell/resolve-uri",
       "version": "3.1.2",
       "purl": "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
@@ -10813,6 +11121,90 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@keyv/bigmap",
+      "version": "1.3.1",
+      "purl": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "bom-ref": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@keyv/bigmap/-/bigmap-1.3.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@keyv/serialize",
+      "version": "1.1.1",
+      "purl": "pkg:npm/%40keyv/serialize@1.1.1",
+      "bom-ref": "pkg:npm/%40keyv/serialize@1.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@keyv/serialize/-/serialize-1.1.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@napi-rs/wasm-runtime",
+      "version": "1.2.6",
+      "purl": "pkg:npm/%40napi-rs/wasm-runtime@1.2.6",
+      "bom-ref": "pkg:npm/%40napi-rs/wasm-runtime@1.2.6",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.2.6.tgz"
         }
       ],
       "properties": [
@@ -10913,9 +11305,9 @@
     {
       "type": "library",
       "name": "@oxc-project/types",
-      "version": "0.146.0",
-      "purl": "pkg:npm/%40oxc-project/types@0.146.0",
-      "bom-ref": "pkg:npm/%40oxc-project/types@0.146.0",
+      "version": "0.156.0",
+      "purl": "pkg:npm/%40oxc-project/types@0.156.0",
+      "bom-ref": "pkg:npm/%40oxc-project/types@0.156.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -10924,7 +11316,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@oxc-project/types/-/types-0.146.0.tgz"
+          "url": "https://registry.npmjs.org/@oxc-project/types/-/types-0.156.0.tgz"
         }
       ],
       "properties": [
@@ -10969,9 +11361,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-android-arm-eabi",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -10980,7 +11372,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm-eabi/-/binding-android-arm-eabi-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm-eabi/-/binding-android-arm-eabi-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -10997,9 +11389,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-android-arm64",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-android-arm64@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-android-arm64@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11008,7 +11400,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11025,9 +11417,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-darwin-arm64",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11036,7 +11428,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11053,9 +11445,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-darwin-x64",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11064,7 +11456,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11081,9 +11473,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-freebsd-x64",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11092,7 +11484,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11109,9 +11501,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm-gnueabihf",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11120,7 +11512,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11137,9 +11529,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm64-gnu",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11148,7 +11540,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11165,9 +11557,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm64-musl",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11176,7 +11568,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11193,9 +11585,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-ppc64-gnu",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11204,7 +11596,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11221,9 +11613,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-s390x-gnu",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11232,7 +11624,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11249,9 +11641,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-x64-gnu",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11260,7 +11652,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11277,9 +11669,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-x64-musl",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11288,7 +11680,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11305,9 +11697,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-openharmony-arm64",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11316,7 +11708,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.2.19.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@rolldown/binding-wasm32-wasi",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.2.19",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rolldown/binding-wasm32-wasi/-/binding-wasm32-wasi-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11333,9 +11753,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-win32-arm64-msvc",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11344,7 +11764,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11361,9 +11781,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.2.5",
-      "purl": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.5",
-      "bom-ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.19",
+      "bom-ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -11372,7 +11792,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -11389,9 +11809,9 @@
     {
       "type": "library",
       "name": "@rolldown/pluginutils",
-      "version": "1.0.1",
-      "purl": "pkg:npm/%40rolldown/pluginutils@1.0.1",
-      "bom-ref": "pkg:npm/%40rolldown/pluginutils@1.0.1",
+      "version": "1.1.1",
+      "purl": "pkg:npm/%40rolldown/pluginutils@1.1.1",
+      "bom-ref": "pkg:npm/%40rolldown/pluginutils@1.1.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -11400,7 +11820,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.1.1.tgz"
         }
       ],
       "properties": [
@@ -11429,6 +11849,34 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@tybys/wasm-util",
+      "version": "0.10.5",
+      "purl": "pkg:npm/%40tybys/wasm-util@0.10.5",
+      "bom-ref": "pkg:npm/%40tybys/wasm-util@0.10.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.5.tgz"
         }
       ],
       "properties": [
@@ -11613,9 +12061,9 @@
     {
       "type": "library",
       "name": "@types/ws",
-      "version": "8.18.1",
-      "purl": "pkg:npm/%40types/ws@8.18.1",
-      "bom-ref": "pkg:npm/%40types/ws@8.18.1",
+      "version": "8.18.2",
+      "purl": "pkg:npm/%40types/ws@8.18.2",
+      "bom-ref": "pkg:npm/%40types/ws@8.18.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -11624,7 +12072,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz"
+          "url": "https://registry.npmjs.org/@types/ws/-/ws-8.18.2.tgz"
         }
       ],
       "properties": [
@@ -11641,9 +12089,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/eslint-plugin",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/eslint-plugin@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11652,7 +12100,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11669,9 +12117,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/parser",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/parser@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/parser@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/parser@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/parser@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11680,7 +12128,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11697,9 +12145,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/project-service",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/project-service@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/project-service@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11708,7 +12156,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11725,9 +12173,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/scope-manager",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11736,7 +12184,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11753,9 +12201,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/tsconfig-utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11764,7 +12212,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11781,9 +12229,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/type-utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/type-utils@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/type-utils@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11792,7 +12240,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11809,9 +12257,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/types",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/types@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/types@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/types@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/types@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11820,7 +12268,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11837,9 +12285,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/typescript-estree",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11848,7 +12296,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11865,9 +12313,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/utils@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/utils@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/utils@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11876,7 +12324,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -11893,9 +12341,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/visitor-keys",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+      "version": "8.73.0",
+      "purl": "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
+      "bom-ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11904,7 +12352,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.73.0.tgz"
         }
       ],
       "properties": [
@@ -12537,9 +12985,9 @@
     {
       "type": "library",
       "name": "@vitest/coverage-v8",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/coverage-v8@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/coverage-v8@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/coverage-v8@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/coverage-v8@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12548,7 +12996,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12565,9 +13013,9 @@
     {
       "type": "library",
       "name": "@vitest/expect",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/expect@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/expect@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/expect@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/expect@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12576,7 +13024,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12593,9 +13041,9 @@
     {
       "type": "library",
       "name": "@vitest/mocker",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/mocker@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/mocker@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/mocker@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/mocker@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12604,7 +13052,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12621,9 +13069,9 @@
     {
       "type": "library",
       "name": "@vitest/pretty-format",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/pretty-format@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/pretty-format@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/pretty-format@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/pretty-format@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12632,7 +13080,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12649,9 +13097,9 @@
     {
       "type": "library",
       "name": "@vitest/runner",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/runner@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/runner@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/runner@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/runner@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12660,7 +13108,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12677,9 +13125,9 @@
     {
       "type": "library",
       "name": "@vitest/snapshot",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/snapshot@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/snapshot@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/snapshot@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/snapshot@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12688,7 +13136,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12705,9 +13153,9 @@
     {
       "type": "library",
       "name": "@vitest/spy",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/spy@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/spy@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/spy@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/spy@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12716,7 +13164,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -12733,9 +13181,9 @@
     {
       "type": "library",
       "name": "@vitest/utils",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/utils@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/utils@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/%40vitest/utils@4.1.12",
+      "bom-ref": "pkg:npm/%40vitest/utils@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -12744,7 +13192,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -13013,9 +13461,9 @@
     {
       "type": "library",
       "name": "brace-expansion",
-      "version": "5.0.9",
-      "purl": "pkg:npm/brace-expansion@5.0.9",
-      "bom-ref": "pkg:npm/brace-expansion@5.0.9",
+      "version": "5.0.13",
+      "purl": "pkg:npm/brace-expansion@5.0.13",
+      "bom-ref": "pkg:npm/brace-expansion@5.0.13",
       "licenses": [
         {
           "expression": "MIT"
@@ -13024,7 +13472,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz"
+          "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.13.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cacheable",
+      "version": "2.5.0",
+      "purl": "pkg:npm/cacheable@2.5.0",
+      "bom-ref": "pkg:npm/cacheable@2.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/cacheable/-/cacheable-2.5.0.tgz"
         }
       ],
       "properties": [
@@ -13041,9 +13517,9 @@
     {
       "type": "library",
       "name": "chai",
-      "version": "6.2.2",
-      "purl": "pkg:npm/chai@6.2.2",
-      "bom-ref": "pkg:npm/chai@6.2.2",
+      "version": "6.3.0",
+      "purl": "pkg:npm/chai@6.3.0",
+      "bom-ref": "pkg:npm/chai@6.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -13052,7 +13528,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz"
+          "url": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz"
         }
       ],
       "properties": [
@@ -13349,9 +13825,9 @@
     {
       "type": "library",
       "name": "eslint",
-      "version": "10.9.1",
-      "purl": "pkg:npm/eslint@10.9.1",
-      "bom-ref": "pkg:npm/eslint@10.9.1",
+      "version": "10.15.0",
+      "purl": "pkg:npm/eslint@10.15.0",
+      "bom-ref": "pkg:npm/eslint@10.15.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -13360,7 +13836,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/eslint/-/eslint-10.9.1.tgz"
+          "url": "https://registry.npmjs.org/eslint/-/eslint-10.15.0.tgz"
         }
       ],
       "properties": [
@@ -13769,9 +14245,9 @@
     {
       "type": "library",
       "name": "fast-uri",
-      "version": "3.1.7",
-      "purl": "pkg:npm/fast-uri@3.1.7",
-      "bom-ref": "pkg:npm/fast-uri@3.1.7",
+      "version": "3.1.9",
+      "purl": "pkg:npm/fast-uri@3.1.9",
+      "bom-ref": "pkg:npm/fast-uri@3.1.9",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -13780,7 +14256,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz"
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz"
         }
       ],
       "properties": [
@@ -13825,9 +14301,9 @@
     {
       "type": "library",
       "name": "file-entry-cache",
-      "version": "8.0.0",
-      "purl": "pkg:npm/file-entry-cache@8.0.0",
-      "bom-ref": "pkg:npm/file-entry-cache@8.0.0",
+      "version": "11.1.5",
+      "purl": "pkg:npm/file-entry-cache@11.1.5",
+      "bom-ref": "pkg:npm/file-entry-cache@11.1.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -13836,7 +14312,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz"
+          "url": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-11.1.5.tgz"
         }
       ],
       "properties": [
@@ -13881,9 +14357,9 @@
     {
       "type": "library",
       "name": "flat-cache",
-      "version": "4.0.1",
-      "purl": "pkg:npm/flat-cache@4.0.1",
-      "bom-ref": "pkg:npm/flat-cache@4.0.1",
+      "version": "6.1.23",
+      "purl": "pkg:npm/flat-cache@6.1.23",
+      "bom-ref": "pkg:npm/flat-cache@6.1.23",
       "licenses": [
         {
           "expression": "MIT"
@@ -13892,7 +14368,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz"
+          "url": "https://registry.npmjs.org/flat-cache/-/flat-cache-6.1.23.tgz"
         }
       ],
       "properties": [
@@ -13909,9 +14385,9 @@
     {
       "type": "library",
       "name": "flatted",
-      "version": "3.4.2",
-      "purl": "pkg:npm/flatted@3.4.2",
-      "bom-ref": "pkg:npm/flatted@3.4.2",
+      "version": "3.4.4",
+      "purl": "pkg:npm/flatted@3.4.4",
+      "bom-ref": "pkg:npm/flatted@3.4.4",
       "licenses": [
         {
           "expression": "ISC"
@@ -13920,7 +14396,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/flatted/-/flatted-3.4.2.tgz"
+          "url": "https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz"
         }
       ],
       "properties": [
@@ -14033,6 +14509,90 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hashery",
+      "version": "1.5.1",
+      "purl": "pkg:npm/hashery@1.5.1",
+      "bom-ref": "pkg:npm/hashery@1.5.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/hashery/-/hashery-1.5.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hookified",
+      "version": "1.15.1",
+      "purl": "pkg:npm/hookified@1.15.1",
+      "bom-ref": "pkg:npm/hookified@1.15.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/hookified/-/hookified-1.15.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hookified",
+      "version": "2.2.0",
+      "purl": "pkg:npm/hookified@2.2.0",
+      "bom-ref": "pkg:npm/hookified@2.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/hookified/-/hookified-2.2.0.tgz"
         }
       ],
       "properties": [
@@ -14356,34 +14916,6 @@
     },
     {
       "type": "library",
-      "name": "json-buffer",
-      "version": "3.0.1",
-      "purl": "pkg:npm/json-buffer@3.0.1",
-      "bom-ref": "pkg:npm/json-buffer@3.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "json-schema-traverse",
       "version": "0.4.1",
       "purl": "pkg:npm/json-schema-traverse@0.4.1",
@@ -14469,9 +15001,9 @@
     {
       "type": "library",
       "name": "keyv",
-      "version": "4.5.4",
-      "purl": "pkg:npm/keyv@4.5.4",
-      "bom-ref": "pkg:npm/keyv@4.5.4",
+      "version": "5.6.0",
+      "purl": "pkg:npm/keyv@5.6.0",
+      "bom-ref": "pkg:npm/keyv@5.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -14480,7 +15012,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz"
+          "url": "https://registry.npmjs.org/keyv/-/keyv-5.6.0.tgz"
         }
       ],
       "properties": [
@@ -14973,9 +15505,9 @@
     {
       "type": "library",
       "name": "minimatch",
-      "version": "10.2.6",
-      "purl": "pkg:npm/minimatch@10.2.6",
-      "bom-ref": "pkg:npm/minimatch@10.2.6",
+      "version": "11.0.9",
+      "purl": "pkg:npm/minimatch@11.0.9",
+      "bom-ref": "pkg:npm/minimatch@11.0.9",
       "licenses": [
         {
           "expression": "BlueOak-1.0.0"
@@ -14984,7 +15516,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz"
+          "url": "https://registry.npmjs.org/minimatch/-/minimatch-11.0.9.tgz"
         }
       ],
       "properties": [
@@ -15365,9 +15897,9 @@
     {
       "type": "library",
       "name": "picomatch",
-      "version": "4.0.5",
-      "purl": "pkg:npm/picomatch@4.0.5",
-      "bom-ref": "pkg:npm/picomatch@4.0.5",
+      "version": "4.0.7",
+      "purl": "pkg:npm/picomatch@4.0.7",
+      "bom-ref": "pkg:npm/picomatch@4.0.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -15376,7 +15908,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz"
         }
       ],
       "properties": [
@@ -15532,6 +16064,34 @@
     },
     {
       "type": "library",
+      "name": "qified",
+      "version": "0.10.1",
+      "purl": "pkg:npm/qified@0.10.1",
+      "bom-ref": "pkg:npm/qified@0.10.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/qified/-/qified-0.10.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "railroad-diagrams",
       "version": "1.0.0",
       "purl": "pkg:npm/railroad-diagrams@1.0.0",
@@ -15645,9 +16205,9 @@
     {
       "type": "library",
       "name": "rolldown",
-      "version": "1.2.5",
-      "purl": "pkg:npm/rolldown@1.2.5",
-      "bom-ref": "pkg:npm/rolldown@1.2.5",
+      "version": "1.2.19",
+      "purl": "pkg:npm/rolldown@1.2.19",
+      "bom-ref": "pkg:npm/rolldown@1.2.19",
       "licenses": [
         {
           "expression": "MIT"
@@ -15656,7 +16216,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.5.tgz"
+          "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.19.tgz"
         }
       ],
       "properties": [
@@ -15841,9 +16401,9 @@
     {
       "type": "library",
       "name": "source-map-js",
-      "version": "1.2.1",
-      "purl": "pkg:npm/source-map-js@1.2.1",
-      "bom-ref": "pkg:npm/source-map-js@1.2.1",
+      "version": "1.2.4",
+      "purl": "pkg:npm/source-map-js@1.2.4",
+      "bom-ref": "pkg:npm/source-map-js@1.2.4",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -15852,7 +16412,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz"
+          "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.4.tgz"
         }
       ],
       "properties": [
@@ -16065,9 +16625,9 @@
     {
       "type": "library",
       "name": "tr46",
-      "version": "6.0.0",
-      "purl": "pkg:npm/tr46@6.0.0",
-      "bom-ref": "pkg:npm/tr46@6.0.0",
+      "version": "7.0.0",
+      "purl": "pkg:npm/tr46@7.0.0",
+      "bom-ref": "pkg:npm/tr46@7.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -16076,7 +16636,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz"
+          "url": "https://registry.npmjs.org/tr46/-/tr46-7.0.0.tgz"
         }
       ],
       "properties": [
@@ -16111,6 +16671,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tslib",
+      "version": "2.9.1",
+      "purl": "pkg:npm/tslib@2.9.1",
+      "bom-ref": "pkg:npm/tslib@2.9.1",
+      "licenses": [
+        {
+          "expression": "0BSD"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tslib/-/tslib-2.9.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "0BSD"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -16261,9 +16849,9 @@
     {
       "type": "library",
       "name": "vite",
-      "version": "8.2.1",
-      "purl": "pkg:npm/vite@8.2.1",
-      "bom-ref": "pkg:npm/vite@8.2.1",
+      "version": "8.3.5",
+      "purl": "pkg:npm/vite@8.3.5",
+      "bom-ref": "pkg:npm/vite@8.3.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -16272,7 +16860,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/vite/-/vite-8.2.1.tgz"
+          "url": "https://registry.npmjs.org/vite/-/vite-8.3.5.tgz"
         }
       ],
       "properties": [
@@ -16289,9 +16877,9 @@
     {
       "type": "library",
       "name": "vitest",
-      "version": "4.1.11",
-      "purl": "pkg:npm/vitest@4.1.11",
-      "bom-ref": "pkg:npm/vitest@4.1.11",
+      "version": "4.1.12",
+      "purl": "pkg:npm/vitest@4.1.12",
+      "bom-ref": "pkg:npm/vitest@4.1.12",
       "licenses": [
         {
           "expression": "MIT"
@@ -16300,7 +16888,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/vitest/-/vitest-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/vitest/-/vitest-4.1.12.tgz"
         }
       ],
       "properties": [
@@ -16401,9 +16989,9 @@
     {
       "type": "library",
       "name": "ws",
-      "version": "8.21.3",
-      "purl": "pkg:npm/ws@8.21.3",
-      "bom-ref": "pkg:npm/ws@8.21.3",
+      "version": "8.22.0",
+      "purl": "pkg:npm/ws@8.22.0",
+      "bom-ref": "pkg:npm/ws@8.22.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -16412,7 +17000,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz"
+          "url": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz"
         }
       ],
       "properties": [
@@ -16569,9 +17157,9 @@
     {
       "type": "library",
       "name": "swift-nio",
-      "version": "2.101.3",
-      "purl": "pkg:swift/swift-nio@2.101.3",
-      "bom-ref": "pkg:swift/swift-nio@2.101.3",
+      "version": "2.105.0",
+      "purl": "pkg:swift/swift-nio@2.105.0",
+      "bom-ref": "pkg:swift/swift-nio@2.105.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -16597,9 +17185,9 @@
     {
       "type": "library",
       "name": "swift-nio-ssl",
-      "version": "2.37.2",
-      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
-      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "version": "2.37.6",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.6",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.6",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -16653,7 +17241,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-source@7.0.0",
+      "ref": "pkg:generic/flowersec-source@7.0.1",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.1",
         "pkg:cargo/assert_matches@1.5.0",
@@ -16668,24 +17256,24 @@
         "pkg:cargo/http-body-util@0.1.5",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/hyper-util@0.1.20",
-        "pkg:cargo/hyper@1.11.1",
+        "pkg:cargo/hyper@1.12.0",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.2.2",
         "pkg:cargo/idna_mapping@1.1.0",
         "pkg:cargo/lazy_static@1.5.0",
         "pkg:cargo/libfuzzer-sys@0.4.13",
         "pkg:cargo/lru-slab@0.1.2",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-derive@3.6.3",
-        "pkg:cargo/napi@3.12.2",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-derive@3.7.1",
+        "pkg:cargo/napi@3.16.2",
         "pkg:cargo/p256@0.14.0",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/proptest@1.11.0",
+        "pkg:cargo/proptest@1.12.0",
         "pkg:cargo/qpack@0.1.0",
         "pkg:cargo/quinn-proto@0.11.17",
         "pkg:cargo/quinn-udp@0.5.16",
         "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.4",
         "pkg:cargo/rand_pcg@0.10.2",
         "pkg:cargo/rcgen@0.14.10",
         "pkg:cargo/regex-lite@0.1.9",
@@ -16694,8 +17282,8 @@
         "pkg:cargo/rustls-native-certs@0.8.4",
         "pkg:cargo/rustls@0.23.46",
         "pkg:cargo/serde@1.0.229",
-        "pkg:cargo/serde_json@1.0.151",
-        "pkg:cargo/sha2@0.11.0",
+        "pkg:cargo/serde_json@1.0.154",
+        "pkg:cargo/sha2@0.11.1",
         "pkg:cargo/slab@0.4.12",
         "pkg:cargo/snow@0.10.0",
         "pkg:cargo/socket2@0.6.5",
@@ -16706,8 +17294,8 @@
         "pkg:cargo/tinyvec@1.12.0",
         "pkg:cargo/tokio-rustls@0.26.4",
         "pkg:cargo/tokio-tungstenite@0.30.0",
-        "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.3",
+        "pkg:cargo/tokio-util@0.7.20",
+        "pkg:cargo/tokio@1.54.1",
         "pkg:cargo/tracing-futures@0.2.5",
         "pkg:cargo/tracing-subscriber@0.3.23",
         "pkg:cargo/tracing@0.1.44",
@@ -16716,54 +17304,54 @@
         "pkg:cargo/x25519-dalek@3.0.0",
         "pkg:cargo/x509-parser@0.18.1",
         "pkg:cargo/yamux@0.14.0",
-        "pkg:cargo/zeroize@1.9.0",
+        "pkg:cargo/zeroize@1.9.2",
         "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
         "pkg:golang/filippo.io/edwards25519@v1.2.0",
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
-        "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+        "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
         "pkg:golang/github.com/flynn/noise@v1.1.0",
         "pkg:golang/github.com/google/uuid@v1.6.0",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
         "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
         "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
-        "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+        "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.64.1",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/crypto@v0.57.0",
-        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/crypto@v0.58.0",
+        "pkg:golang/golang.org/x/net@v0.61.0",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/golang.org/x/text@v0.42.0",
-        "pkg:golang/modernc.org/libc@v1.75.7",
+        "pkg:golang/golang.org/x/text@v0.43.0",
+        "pkg:golang/modernc.org/libc@v1.79.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1",
-        "pkg:golang/modernc.org/sqlite@v1.59.0",
-        "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+        "pkg:golang/modernc.org/sqlite@v1.60.1",
+        "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
         "pkg:npm/%40noble/ciphers@2.4.0",
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
         "pkg:npm/%40playwright/test@1.62.1",
         "pkg:npm/%40types/node@26.4.0",
-        "pkg:npm/%40types/ws@8.18.1",
-        "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
-        "pkg:npm/%40typescript-eslint/parser@8.68.0",
+        "pkg:npm/%40types/ws@8.18.2",
+        "pkg:npm/%40typescript-eslint/eslint-plugin@8.73.0",
+        "pkg:npm/%40typescript-eslint/parser@8.73.0",
         "pkg:npm/%40typescript/native@7.0.2",
-        "pkg:npm/%40vitest/coverage-v8@4.1.11",
+        "pkg:npm/%40vitest/coverage-v8@4.1.12",
         "pkg:npm/ajv-formats-draft2019@1.6.1",
         "pkg:npm/ajv-formats@3.0.1",
         "pkg:npm/ajv@8.20.0",
-        "pkg:npm/eslint@10.9.1",
-        "pkg:npm/tr46@6.0.0",
+        "pkg:npm/eslint@10.15.0",
+        "pkg:npm/tr46@7.0.0",
         "pkg:npm/tsx@4.23.13",
         "pkg:npm/typescript@6.0.2",
-        "pkg:npm/vite@8.2.1",
-        "pkg:npm/vitest@4.1.11",
-        "pkg:npm/ws@8.21.3",
+        "pkg:npm/vite@8.3.5",
+        "pkg:npm/vitest@4.1.12",
+        "pkg:npm/ws@8.22.0",
         "pkg:swift/swift-crypto@4.5.1",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio-ssl@2.37.6",
+        "pkg:swift/swift-nio@2.105.0"
       ]
     },
     {
@@ -16872,14 +17460,17 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/bit-set@0.8.0",
+      "ref": "pkg:cargo/bit-set@0.11.1",
       "dependsOn": [
-        "pkg:cargo/bit-vec@0.8.0"
+        "pkg:cargo/bit-vec@0.10.2"
       ]
     },
     {
-      "ref": "pkg:cargo/bit-vec@0.8.0",
-      "dependsOn": []
+      "ref": "pkg:cargo/bit-vec@0.10.2",
+      "dependsOn": [
+        "pkg:cargo/borsh@1.8.1",
+        "pkg:cargo/serde@1.0.229"
+      ]
     },
     {
       "ref": "pkg:cargo/bit-vec@0.9.1",
@@ -16907,6 +17498,24 @@
       "ref": "pkg:cargo/block-buffer@0.12.1",
       "dependsOn": [
         "pkg:cargo/hybrid-array@0.4.14"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/borsh@1.8.1",
+      "dependsOn": [
+        "pkg:cargo/borsh-derive@1.8.1",
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/cfg_aliases@0.2.2"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/borsh-derive@1.8.1",
+      "dependsOn": [
+        "pkg:cargo/once_cell@1.21.4",
+        "pkg:cargo/proc-macro-crate@3.5.0",
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
@@ -16957,7 +17566,7 @@
         "pkg:cargo/chacha20@0.9.1",
         "pkg:cargo/cipher@0.4.4",
         "pkg:cargo/poly1305@0.8.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -16965,7 +17574,7 @@
       "dependsOn": [
         "pkg:cargo/crypto-common@0.1.6",
         "pkg:cargo/inout@0.1.4",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -16985,10 +17594,14 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/convert_case@0.11.0",
+      "ref": "pkg:cargo/convert_case@0.12.0",
       "dependsOn": [
         "pkg:cargo/unicode-segmentation@1.13.3"
       ]
+    },
+    {
+      "ref": "pkg:cargo/core_detect@1.0.0",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/core-foundation@0.10.1",
@@ -17027,7 +17640,7 @@
         "pkg:cargo/num-traits@0.2.19",
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -17082,7 +17695,7 @@
         "pkg:cargo/fiat-crypto@0.3.0",
         "pkg:cargo/rustc_version@0.4.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -17102,7 +17715,7 @@
       "dependsOn": [
         "pkg:cargo/const-oid@0.10.2",
         "pkg:cargo/pem-rfc7468@1.0.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -17154,7 +17767,7 @@
         "pkg:cargo/rfc6979@0.6.0",
         "pkg:cargo/signature@3.0.0",
         "pkg:cargo/spki@0.8.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -17173,14 +17786,18 @@
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/sec1@0.8.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
+    },
+    {
+      "ref": "pkg:cargo/equivalent@1.0.3",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/errno@0.3.14",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -17329,6 +17946,10 @@
       ]
     },
     {
+      "ref": "pkg:cargo/hashbrown@0.17.2",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/hex-literal@1.1.0",
       "dependsOn": []
     },
@@ -17378,15 +17999,14 @@
       "dependsOn": [
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/typenum@1.20.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
-      "ref": "pkg:cargo/hyper@1.11.1",
+      "ref": "pkg:cargo/hyper@1.12.0",
       "dependsOn": [
         "pkg:cargo/atomic-waker@1.1.2",
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-channel@0.3.34",
         "pkg:cargo/futures-core@0.3.34",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
@@ -17394,8 +18014,8 @@
         "pkg:cargo/itoa@1.0.18",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/smallvec@1.15.2",
-        "pkg:cargo/tokio@1.53.3",
-        "pkg:cargo/want@0.3.1"
+        "pkg:cargo/tokio@1.54.1",
+        "pkg:cargo/want@0.3.2"
       ]
     },
     {
@@ -17404,9 +18024,9 @@
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper@1.11.1",
+        "pkg:cargo/hyper@1.12.0",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -17563,6 +18183,13 @@
       ]
     },
     {
+      "ref": "pkg:cargo/indexmap@2.14.2",
+      "dependsOn": [
+        "pkg:cargo/equivalent@1.0.3",
+        "pkg:cargo/hashbrown@0.17.2"
+      ]
+    },
+    {
       "ref": "pkg:cargo/inout@0.1.4",
       "dependsOn": [
         "pkg:cargo/generic-array@0.14.9"
@@ -17668,46 +18295,46 @@
       ]
     },
     {
-      "ref": "pkg:cargo/napi@3.12.2",
+      "ref": "pkg:cargo/napi@3.16.2",
       "dependsOn": [
         "pkg:cargo/bitflags@2.13.1",
         "pkg:cargo/ctor@1.0.13",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-sys@3.3.0",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-sys@3.4.1",
         "pkg:cargo/nohash-hasher@0.2.0",
         "pkg:cargo/rustc-hash@2.1.3",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-build@2.4.1",
+      "ref": "pkg:cargo/napi-build@2.6.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/napi-derive@3.6.3",
+      "ref": "pkg:cargo/napi-derive@3.7.1",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/ctor@1.0.13",
-        "pkg:cargo/napi-derive-backend@6.1.2",
+        "pkg:cargo/napi-derive-backend@7.0.1",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "ref": "pkg:cargo/napi-derive-backend@7.0.1",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/semver@1.0.28",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-sys@3.3.0",
+      "ref": "pkg:cargo/napi-sys@3.4.1",
       "dependsOn": [
         "pkg:cargo/libloading@0.9.0"
       ]
@@ -17777,7 +18404,7 @@
         "pkg:cargo/elliptic-curve@0.14.1",
         "pkg:cargo/primefield@0.14.0",
         "pkg:cargo/primeorder@0.14.0",
-        "pkg:cargo/sha2@0.11.0"
+        "pkg:cargo/sha2@0.11.1"
       ]
     },
     {
@@ -17867,12 +18494,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "dependsOn": [
-        "pkg:cargo/zerocopy@0.8.56"
-      ]
-    },
-    {
       "ref": "pkg:cargo/primefield@0.14.0",
       "dependsOn": [
         "pkg:cargo/crypto-bigint@0.7.11",
@@ -17880,7 +18501,7 @@
         "pkg:cargo/ff@0.14.0",
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -17894,21 +18515,28 @@
       ]
     },
     {
+      "ref": "pkg:cargo/proc-macro-crate@3.5.0",
+      "dependsOn": [
+        "pkg:cargo/toml_edit@0.25.20+spec-1.1.0"
+      ]
+    },
+    {
       "ref": "pkg:cargo/proc-macro2@1.0.107",
       "dependsOn": [
         "pkg:cargo/unicode-ident@1.0.24"
       ]
     },
     {
-      "ref": "pkg:cargo/proptest@1.11.0",
+      "ref": "pkg:cargo/proptest@1.12.0",
       "dependsOn": [
-        "pkg:cargo/bit-set@0.8.0",
-        "pkg:cargo/bit-vec@0.8.0",
+        "pkg:cargo/bit-set@0.11.1",
+        "pkg:cargo/bit-vec@0.10.2",
         "pkg:cargo/bitflags@2.13.1",
+        "pkg:cargo/chacha20@0.10.2",
+        "pkg:cargo/core_detect@1.0.0",
         "pkg:cargo/num-traits@0.2.19",
-        "pkg:cargo/rand@0.9.5",
-        "pkg:cargo/rand_chacha@0.9.0",
-        "pkg:cargo/rand_xorshift@0.4.0",
+        "pkg:cargo/rand@0.10.4",
+        "pkg:cargo/rand_xorshift@0.5.0",
         "pkg:cargo/regex-syntax@0.8.11",
         "pkg:cargo/rusty-fork@0.3.1",
         "pkg:cargo/tempfile@3.27.0",
@@ -17962,7 +18590,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/rand@0.10.2",
+      "ref": "pkg:cargo/rand@0.10.4",
       "dependsOn": [
         "pkg:cargo/chacha20@0.10.2",
         "pkg:cargo/getrandom@0.4.3",
@@ -17970,28 +18598,8 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rand@0.9.5",
-      "dependsOn": [
-        "pkg:cargo/rand_chacha@0.9.0",
-        "pkg:cargo/rand_core@0.9.5"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand_chacha@0.9.0",
-      "dependsOn": [
-        "pkg:cargo/ppv-lite86@0.2.21",
-        "pkg:cargo/rand_core@0.9.5"
-      ]
-    },
-    {
       "ref": "pkg:cargo/rand_core@0.10.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/rand_core@0.9.5",
-      "dependsOn": [
-        "pkg:cargo/getrandom@0.3.4"
-      ]
     },
     {
       "ref": "pkg:cargo/rand_pcg@0.10.2",
@@ -18000,9 +18608,9 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rand_xorshift@0.4.0",
+      "ref": "pkg:cargo/rand_xorshift@0.5.0",
       "dependsOn": [
-        "pkg:cargo/rand_core@0.9.5"
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
@@ -18079,7 +18687,7 @@
         "pkg:cargo/errno@0.3.14",
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/linux-raw-sys@0.12.1",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -18090,7 +18698,7 @@
         "pkg:cargo/rustls-pki-types@1.15.1",
         "pkg:cargo/rustls-webpki@0.103.16",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -18105,7 +18713,7 @@
     {
       "ref": "pkg:cargo/rustls-pki-types@1.15.1",
       "dependsOn": [
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -18147,7 +18755,7 @@
         "pkg:cargo/der@0.8.1",
         "pkg:cargo/hybrid-array@0.4.14",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -18193,7 +18801,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/serde_json@1.0.151",
+      "ref": "pkg:cargo/serde_json@1.0.154",
       "dependsOn": [
         "pkg:cargo/itoa@1.0.18",
         "pkg:cargo/memchr@2.8.3",
@@ -18226,7 +18834,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/sha2@0.11.0",
+      "ref": "pkg:cargo/sha2@0.11.1",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/cpufeatures@0.3.1",
@@ -18345,10 +18953,10 @@
       "ref": "pkg:cargo/tempfile@3.27.0",
       "dependsOn": [
         "pkg:cargo/fastrand@2.5.0",
-        "pkg:cargo/getrandom@0.3.4",
+        "pkg:cargo/getrandom@0.4.3",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/rustix@1.1.6",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -18418,7 +19026,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/tokio@1.53.3",
+      "ref": "pkg:cargo/tokio@1.54.1",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/libc@0.2.189",
@@ -18442,7 +19050,7 @@
       "ref": "pkg:cargo/tokio-rustls@0.26.4",
       "dependsOn": [
         "pkg:cargo/rustls@0.23.46",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -18450,12 +19058,12 @@
       "dependsOn": [
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/tokio@1.53.3",
+        "pkg:cargo/tokio@1.54.1",
         "pkg:cargo/tungstenite@0.30.0"
       ]
     },
     {
-      "ref": "pkg:cargo/tokio-util@0.7.19",
+      "ref": "pkg:cargo/tokio-util@0.7.20",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/futures-core@0.3.34",
@@ -18463,7 +19071,28 @@
         "pkg:cargo/futures-sink@0.3.34",
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/toml_datetime@1.1.3+spec-1.1.0",
+      "dependsOn": [
+        "pkg:cargo/serde_core@1.0.229"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/toml_edit@0.25.20+spec-1.1.0",
+      "dependsOn": [
+        "pkg:cargo/indexmap@2.14.2",
+        "pkg:cargo/toml_datetime@1.1.3+spec-1.1.0",
+        "pkg:cargo/toml_parser@1.1.6+spec-1.1.0",
+        "pkg:cargo/winnow@1.0.5"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/toml_parser@1.1.6+spec-1.1.0",
+      "dependsOn": [
+        "pkg:cargo/winnow@1.0.5"
       ]
     },
     {
@@ -18531,7 +19160,7 @@
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/httparse@1.10.1",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.4",
         "pkg:cargo/sha1@0.11.0",
         "pkg:cargo/thiserror@2.0.20"
       ]
@@ -18619,7 +19248,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/want@0.3.1",
+      "ref": "pkg:cargo/want@0.3.2",
       "dependsOn": [
         "pkg:cargo/try-lock@0.2.5"
       ]
@@ -18736,6 +19365,12 @@
       ]
     },
     {
+      "ref": "pkg:cargo/winnow@1.0.5",
+      "dependsOn": [
+        "pkg:cargo/memchr@2.8.3"
+      ]
+    },
+    {
       "ref": "pkg:cargo/wit-bindgen@0.57.1",
       "dependsOn": []
     },
@@ -18757,7 +19392,7 @@
       "dependsOn": [
         "pkg:cargo/curve25519-dalek@5.0.0",
         "pkg:cargo/rand_core@0.10.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -18829,20 +19464,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/zerocopy@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/zerocopy-derive@0.8.56"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
-      ]
-    },
-    {
       "ref": "pkg:cargo/zerofrom@0.1.8",
       "dependsOn": [
         "pkg:cargo/zerofrom-derive@0.1.7",
@@ -18868,7 +19489,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/zeroize@1.9.0",
+      "ref": "pkg:cargo/zeroize@1.9.2",
       "dependsOn": [
         "pkg:cargo/zeroize_derive@1.5.0"
       ]
@@ -18929,7 +19550,7 @@
     {
       "ref": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.57.0"
+        "pkg:golang/golang.org/x/crypto@v0.58.0"
       ]
     },
     {
@@ -18941,13 +19562,13 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "ref": "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
       "dependsOn": []
     },
     {
       "ref": "pkg:golang/github.com/flynn/noise@v1.1.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.57.0"
+        "pkg:golang/golang.org/x/crypto@v0.58.0"
       ]
     },
     {
@@ -18975,23 +19596,23 @@
       ]
     },
     {
-      "ref": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+      "ref": "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
       "dependsOn": []
     },
     {
       "ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.60.0"
+        "pkg:golang/golang.org/x/net@v0.61.0"
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
+      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.64.1",
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/golang.org/x/crypto@v0.57.0",
-        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/crypto@v0.58.0",
+        "pkg:golang/golang.org/x/net@v0.61.0",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/golang.org/x/text@v0.42.0"
+        "pkg:golang/golang.org/x/text@v0.43.0"
       ]
     },
     {
@@ -18999,11 +19620,11 @@
       "dependsOn": [
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
-        "pkg:golang/golang.org/x/crypto@v0.57.0",
-        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.64.1",
+        "pkg:golang/golang.org/x/crypto@v0.58.0",
+        "pkg:golang/golang.org/x/net@v0.61.0",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/golang.org/x/text@v0.42.0"
+        "pkg:golang/golang.org/x/text@v0.43.0"
       ]
     },
     {
@@ -19011,19 +19632,19 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "ref": "pkg:golang/golang.org/x/crypto@v0.58.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/net@v0.61.0",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/golang.org/x/text@v0.42.0"
+        "pkg:golang/golang.org/x/text@v0.43.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/net@v0.60.0",
+      "ref": "pkg:golang/golang.org/x/net@v0.61.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.57.0",
+        "pkg:golang/golang.org/x/crypto@v0.58.0",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/golang.org/x/text@v0.42.0"
+        "pkg:golang/golang.org/x/text@v0.43.0"
       ]
     },
     {
@@ -19031,16 +19652,16 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/text@v0.42.0",
+      "ref": "pkg:golang/golang.org/x/text@v0.43.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/modernc.org/libc@v1.75.7",
+      "ref": "pkg:golang/modernc.org/libc@v1.79.0",
       "dependsOn": [
-        "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+        "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
         "pkg:golang/github.com/google/uuid@v1.6.0",
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
-        "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+        "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
         "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
@@ -19062,15 +19683,15 @@
       ]
     },
     {
-      "ref": "pkg:golang/modernc.org/sqlite@v1.59.0",
+      "ref": "pkg:golang/modernc.org/sqlite@v1.60.1",
       "dependsOn": [
-        "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+        "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
         "pkg:golang/github.com/google/uuid@v1.6.0",
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
-        "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+        "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
         "pkg:golang/golang.org/x/sys@v0.49.0",
-        "pkg:golang/modernc.org/libc@v1.75.7",
+        "pkg:golang/modernc.org/libc@v1.79.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1"
       ]
@@ -19099,6 +19720,41 @@
     {
       "ref": "pkg:npm/%40bcoe/v8-coverage@1.0.2",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40cacheable/memory@2.2.0",
+      "dependsOn": [
+        "pkg:npm/%40cacheable/utils@2.5.0",
+        "pkg:npm/%40keyv/bigmap@1.3.1",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40cacheable/utils@2.5.0",
+      "dependsOn": [
+        "pkg:npm/hashery@1.5.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40emnapi/core@2.0.0-beta.2",
+      "dependsOn": [
+        "pkg:npm/%40emnapi/wasi-threads@2.2.0",
+        "pkg:npm/tslib@2.9.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40emnapi/runtime@2.0.0-beta.2",
+      "dependsOn": [
+        "pkg:npm/tslib@2.9.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40emnapi/wasi-threads@2.2.0",
+      "dependsOn": [
+        "pkg:npm/tslib@2.9.1"
+      ]
     },
     {
       "ref": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
@@ -19208,7 +19864,7 @@
       "ref": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
       "dependsOn": [
         "pkg:npm/eslint-visitor-keys@3.4.3",
-        "pkg:npm/eslint@10.9.1"
+        "pkg:npm/eslint@10.15.0"
       ]
     },
     {
@@ -19216,11 +19872,11 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40eslint/config-array@0.23.5",
+      "ref": "pkg:npm/%40eslint/config-array@0.23.6",
       "dependsOn": [
         "pkg:npm/%40eslint/object-schema@3.0.5",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/minimatch@10.2.6"
+        "pkg:npm/minimatch@11.0.9"
       ]
     },
     {
@@ -19240,35 +19896,35 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40eslint/plugin-kit@0.7.2",
+      "ref": "pkg:npm/%40eslint/plugin-kit@0.7.3",
       "dependsOn": [
         "pkg:npm/%40eslint/core@1.2.1",
         "pkg:npm/levn@0.4.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
       "dependsOn": [
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0"
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
       "dependsOn": []
     },
     {
@@ -19298,6 +19954,10 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:npm/%40isaacs/nonrecursive-glob-match@1.1.0",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
       "dependsOn": []
     },
@@ -19310,6 +19970,26 @@
       "dependsOn": [
         "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
         "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "dependsOn": [
+        "pkg:npm/hashery@1.5.1",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40keyv/serialize@1.1.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40napi-rs/wasm-runtime@1.2.6",
+      "dependsOn": [
+        "pkg:npm/%40emnapi/core@2.0.0-beta.2",
+        "pkg:npm/%40emnapi/runtime@2.0.0-beta.2",
+        "pkg:npm/%40tybys/wasm-util@0.10.5"
       ]
     },
     {
@@ -19327,7 +20007,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40oxc-project/types@0.146.0",
+      "ref": "pkg:npm/%40oxc-project/types@0.156.0",
       "dependsOn": []
     },
     {
@@ -19337,72 +20017,86 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.2.19",
+      "dependsOn": [
+        "pkg:npm/%40emnapi/core@2.0.0-beta.2",
+        "pkg:npm/%40emnapi/runtime@2.0.0-beta.2",
+        "pkg:npm/%40napi-rs/wasm-runtime@1.2.6"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.5",
+      "ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.19",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/pluginutils@1.0.1",
+      "ref": "pkg:npm/%40rolldown/pluginutils@1.1.1",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40standard-schema/spec@1.1.0",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40tybys/wasm-util@0.10.5",
+      "dependsOn": [
+        "pkg:npm/tslib@2.9.1"
+      ]
     },
     {
       "ref": "pkg:npm/%40types/chai@5.2.3",
@@ -19434,21 +20128,21 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40types/ws@8.18.1",
+      "ref": "pkg:npm/%40types/ws@8.18.2",
       "dependsOn": [
         "pkg:npm/%40types/node@26.4.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.73.0",
       "dependsOn": [
         "pkg:npm/%40eslint-community/regexpp@4.12.2",
-        "pkg:npm/%40typescript-eslint/parser@8.68.0",
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/%40typescript-eslint/parser@8.73.0",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
+        "pkg:npm/%40typescript-eslint/type-utils@8.73.0",
+        "pkg:npm/%40typescript-eslint/utils@8.73.0",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
+        "pkg:npm/eslint@10.15.0",
         "pkg:npm/ignore@7.0.5",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/ts-api-utils@2.5.0",
@@ -19456,64 +20150,65 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/parser@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/parser@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/eslint@10.15.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/project-service@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
+        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.73.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0"
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.73.0",
       "dependsOn": [
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/type-utils@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/%40typescript-eslint/utils@8.68.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
+        "pkg:npm/%40typescript-eslint/utils@8.73.0",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/eslint@10.15.0",
         "pkg:npm/ts-api-utils@2.5.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/types@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/types@8.73.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/project-service@8.68.0",
-        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+        "pkg:npm/%40typescript-eslint/project-service@8.73.0",
+        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.73.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
+        "pkg:npm/%40typescript/native@7.0.2",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/minimatch@10.2.6",
+        "pkg:npm/minimatch@11.0.9",
         "pkg:npm/semver@7.7.3",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/ts-api-utils@2.5.0",
@@ -19521,20 +20216,20 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/utils@8.73.0",
       "dependsOn": [
         "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.73.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.73.0",
+        "pkg:npm/eslint@10.15.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.73.0",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
+        "pkg:npm/%40typescript-eslint/types@8.73.0",
         "pkg:npm/eslint-visitor-keys@5.0.1"
       ]
     },
@@ -19648,10 +20343,10 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40vitest/coverage-v8@4.1.11",
+      "ref": "pkg:npm/%40vitest/coverage-v8@4.1.12",
       "dependsOn": [
         "pkg:npm/%40bcoe/v8-coverage@1.0.2",
-        "pkg:npm/%40vitest/utils@4.1.11",
+        "pkg:npm/%40vitest/utils@4.1.12",
         "pkg:npm/ast-v8-to-istanbul@1.0.3",
         "pkg:npm/istanbul-lib-coverage@3.2.2",
         "pkg:npm/istanbul-lib-report@3.0.1",
@@ -19660,59 +20355,59 @@
         "pkg:npm/obug@2.1.1",
         "pkg:npm/std-env@4.1.0",
         "pkg:npm/tinyrainbow@3.1.0",
-        "pkg:npm/vitest@4.1.11"
+        "pkg:npm/vitest@4.1.12"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/expect@4.1.11",
+      "ref": "pkg:npm/%40vitest/expect@4.1.12",
       "dependsOn": [
         "pkg:npm/%40standard-schema/spec@1.1.0",
         "pkg:npm/%40types/chai@5.2.3",
-        "pkg:npm/%40vitest/spy@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/chai@6.2.2",
+        "pkg:npm/%40vitest/spy@4.1.12",
+        "pkg:npm/%40vitest/utils@4.1.12",
+        "pkg:npm/chai@6.3.0",
         "pkg:npm/tinyrainbow@3.1.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/mocker@4.1.11",
+      "ref": "pkg:npm/%40vitest/mocker@4.1.12",
       "dependsOn": [
-        "pkg:npm/%40vitest/spy@4.1.11",
+        "pkg:npm/%40vitest/spy@4.1.12",
         "pkg:npm/estree-walker@3.0.3",
         "pkg:npm/magic-string@0.30.21",
-        "pkg:npm/vite@8.2.1"
+        "pkg:npm/vite@8.3.5"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/pretty-format@4.1.11",
+      "ref": "pkg:npm/%40vitest/pretty-format@4.1.12",
       "dependsOn": [
         "pkg:npm/tinyrainbow@3.1.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/runner@4.1.11",
+      "ref": "pkg:npm/%40vitest/runner@4.1.12",
       "dependsOn": [
-        "pkg:npm/%40vitest/utils@4.1.11",
+        "pkg:npm/%40vitest/utils@4.1.12",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/snapshot@4.1.11",
+      "ref": "pkg:npm/%40vitest/snapshot@4.1.12",
       "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
+        "pkg:npm/%40vitest/pretty-format@4.1.12",
+        "pkg:npm/%40vitest/utils@4.1.12",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/spy@4.1.11",
+      "ref": "pkg:npm/%40vitest/spy@4.1.12",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40vitest/utils@4.1.11",
+      "ref": "pkg:npm/%40vitest/utils@4.1.12",
       "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
+        "pkg:npm/%40vitest/pretty-format@4.1.12",
         "pkg:npm/convert-source-map@2.0.0",
         "pkg:npm/tinyrainbow@3.1.0"
       ]
@@ -19740,7 +20435,7 @@
       "ref": "pkg:npm/ajv@8.20.0",
       "dependsOn": [
         "pkg:npm/fast-deep-equal@3.1.3",
-        "pkg:npm/fast-uri@3.1.7",
+        "pkg:npm/fast-uri@3.1.9",
         "pkg:npm/json-schema-traverse@1.0.0",
         "pkg:npm/require-from-string@2.0.2"
       ]
@@ -19778,13 +20473,23 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/brace-expansion@5.0.9",
+      "ref": "pkg:npm/brace-expansion@5.0.13",
       "dependsOn": [
         "pkg:npm/balanced-match@4.0.4"
       ]
     },
     {
-      "ref": "pkg:npm/chai@6.2.2",
+      "ref": "pkg:npm/cacheable@2.5.0",
+      "dependsOn": [
+        "pkg:npm/%40cacheable/memory@2.2.0",
+        "pkg:npm/%40cacheable/utils@2.5.0",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0",
+        "pkg:npm/qified@0.10.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/chai@6.3.0",
       "dependsOn": []
     },
     {
@@ -19861,14 +20566,14 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/eslint@10.9.1",
+      "ref": "pkg:npm/eslint@10.15.0",
       "dependsOn": [
         "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
         "pkg:npm/%40eslint-community/regexpp@4.12.2",
-        "pkg:npm/%40eslint/config-array@0.23.5",
+        "pkg:npm/%40eslint/config-array@0.23.6",
         "pkg:npm/%40eslint/config-helpers@0.7.0",
         "pkg:npm/%40eslint/core@1.2.1",
-        "pkg:npm/%40eslint/plugin-kit@0.7.2",
+        "pkg:npm/%40eslint/plugin-kit@0.7.3",
         "pkg:npm/%40humanfs/node@0.16.8",
         "pkg:npm/%40humanwhocodes/module-importer@1.0.1",
         "pkg:npm/%40humanwhocodes/retry@0.4.3",
@@ -19883,14 +20588,14 @@
         "pkg:npm/esquery@1.7.0",
         "pkg:npm/esutils@2.0.3",
         "pkg:npm/fast-deep-equal@3.1.3",
-        "pkg:npm/file-entry-cache@8.0.0",
+        "pkg:npm/file-entry-cache@11.1.5",
         "pkg:npm/find-up@5.0.0",
         "pkg:npm/glob-parent@6.0.2",
         "pkg:npm/ignore@5.3.2",
         "pkg:npm/imurmurhash@0.1.4",
         "pkg:npm/is-glob@4.0.3",
         "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
-        "pkg:npm/minimatch@10.2.6",
+        "pkg:npm/minimatch@11.0.9",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/optionator@0.9.4"
       ]
@@ -19967,19 +20672,19 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/fast-uri@3.1.7",
+      "ref": "pkg:npm/fast-uri@3.1.9",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/fdir@6.5.0",
       "dependsOn": [
-        "pkg:npm/picomatch@4.0.5"
+        "pkg:npm/picomatch@4.0.7"
       ]
     },
     {
-      "ref": "pkg:npm/file-entry-cache@8.0.0",
+      "ref": "pkg:npm/file-entry-cache@11.1.5",
       "dependsOn": [
-        "pkg:npm/flat-cache@4.0.1"
+        "pkg:npm/flat-cache@6.1.23"
       ]
     },
     {
@@ -19990,14 +20695,15 @@
       ]
     },
     {
-      "ref": "pkg:npm/flat-cache@4.0.1",
+      "ref": "pkg:npm/flat-cache@6.1.23",
       "dependsOn": [
-        "pkg:npm/flatted@3.4.2",
-        "pkg:npm/keyv@4.5.4"
+        "pkg:npm/cacheable@2.5.0",
+        "pkg:npm/flatted@3.4.4",
+        "pkg:npm/hookified@1.15.1"
       ]
     },
     {
-      "ref": "pkg:npm/flatted@3.4.2",
+      "ref": "pkg:npm/flatted@3.4.4",
       "dependsOn": []
     },
     {
@@ -20016,6 +20722,20 @@
     },
     {
       "ref": "pkg:npm/has-flag@4.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/hashery@1.5.1",
+      "dependsOn": [
+        "pkg:npm/hookified@1.15.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/hookified@1.15.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/hookified@2.2.0",
       "dependsOn": []
     },
     {
@@ -20072,10 +20792,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/json-buffer@3.0.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/json-schema-traverse@0.4.1",
       "dependsOn": []
     },
@@ -20088,9 +20804,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/keyv@4.5.4",
+      "ref": "pkg:npm/keyv@5.6.0",
       "dependsOn": [
-        "pkg:npm/json-buffer@3.0.1"
+        "pkg:npm/%40keyv/serialize@1.1.1"
       ]
     },
     {
@@ -20178,7 +20894,7 @@
       "dependsOn": [
         "pkg:npm/%40babel/parser@7.29.2",
         "pkg:npm/%40babel/types@7.29.0",
-        "pkg:npm/source-map-js@1.2.1"
+        "pkg:npm/source-map-js@1.2.4"
       ]
     },
     {
@@ -20188,9 +20904,10 @@
       ]
     },
     {
-      "ref": "pkg:npm/minimatch@10.2.6",
+      "ref": "pkg:npm/minimatch@11.0.9",
       "dependsOn": [
-        "pkg:npm/brace-expansion@5.0.9"
+        "pkg:npm/%40isaacs/nonrecursive-glob-match@1.1.0",
+        "pkg:npm/brace-expansion@5.0.13"
       ]
     },
     {
@@ -20262,7 +20979,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/picomatch@4.0.5",
+      "ref": "pkg:npm/picomatch@4.0.7",
       "dependsOn": []
     },
     {
@@ -20281,7 +20998,7 @@
       "dependsOn": [
         "pkg:npm/nanoid@3.3.18",
         "pkg:npm/picocolors@1.1.1",
-        "pkg:npm/source-map-js@1.2.1"
+        "pkg:npm/source-map-js@1.2.4"
       ]
     },
     {
@@ -20291,6 +21008,12 @@
     {
       "ref": "pkg:npm/punycode@2.3.1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/qified@0.10.1",
+      "dependsOn": [
+        "pkg:npm/hookified@2.2.0"
+      ]
     },
     {
       "ref": "pkg:npm/railroad-diagrams@1.0.0",
@@ -20312,25 +21035,26 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/rolldown@1.2.5",
+      "ref": "pkg:npm/rolldown@1.2.19",
       "dependsOn": [
-        "pkg:npm/%40oxc-project/types@0.146.0",
-        "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.5",
-        "pkg:npm/%40rolldown/binding-android-arm64@1.2.5",
-        "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.5",
-        "pkg:npm/%40rolldown/binding-darwin-x64@1.2.5",
-        "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.5",
-        "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.5",
-        "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.5",
-        "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.5",
-        "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.5",
-        "pkg:npm/%40rolldown/pluginutils@1.0.1"
+        "pkg:npm/%40oxc-project/types@0.156.0",
+        "pkg:npm/%40rolldown/binding-android-arm-eabi@1.2.19",
+        "pkg:npm/%40rolldown/binding-android-arm64@1.2.19",
+        "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.19",
+        "pkg:npm/%40rolldown/binding-darwin-x64@1.2.19",
+        "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.19",
+        "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.19",
+        "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.19",
+        "pkg:npm/%40rolldown/binding-wasm32-wasi@1.2.19",
+        "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.19",
+        "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.19",
+        "pkg:npm/%40rolldown/pluginutils@1.1.1"
       ]
     },
     {
@@ -20364,7 +21088,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/source-map-js@1.2.1",
+      "ref": "pkg:npm/source-map-js@1.2.4",
       "dependsOn": []
     },
     {
@@ -20393,7 +21117,7 @@
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@4.0.5"
+        "pkg:npm/picomatch@4.0.7"
       ]
     },
     {
@@ -20401,7 +21125,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/tr46@6.0.0",
+      "ref": "pkg:npm/tr46@7.0.0",
       "dependsOn": [
         "pkg:npm/punycode@2.3.1"
       ]
@@ -20411,6 +21135,10 @@
       "dependsOn": [
         "pkg:npm/typescript@6.0.2"
       ]
+    },
+    {
+      "ref": "pkg:npm/tslib@2.9.1",
+      "dependsOn": []
     },
     {
       "ref": "pkg:npm/tsx@4.23.13",
@@ -20442,43 +21170,43 @@
       ]
     },
     {
-      "ref": "pkg:npm/vite@8.2.1",
+      "ref": "pkg:npm/vite@8.3.5",
       "dependsOn": [
         "pkg:npm/%40types/node@26.4.0",
         "pkg:npm/esbuild@0.28.2",
         "pkg:npm/fsevents@2.3.3",
         "pkg:npm/lightningcss@1.33.0",
-        "pkg:npm/picomatch@4.0.5",
+        "pkg:npm/picomatch@4.0.7",
         "pkg:npm/postcss@8.5.23",
-        "pkg:npm/rolldown@1.2.5",
+        "pkg:npm/rolldown@1.2.19",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/tsx@4.23.13"
       ]
     },
     {
-      "ref": "pkg:npm/vitest@4.1.11",
+      "ref": "pkg:npm/vitest@4.1.12",
       "dependsOn": [
         "pkg:npm/%40types/node@26.4.0",
-        "pkg:npm/%40vitest/coverage-v8@4.1.11",
-        "pkg:npm/%40vitest/expect@4.1.11",
-        "pkg:npm/%40vitest/mocker@4.1.11",
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
-        "pkg:npm/%40vitest/runner@4.1.11",
-        "pkg:npm/%40vitest/snapshot@4.1.11",
-        "pkg:npm/%40vitest/spy@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
+        "pkg:npm/%40vitest/coverage-v8@4.1.12",
+        "pkg:npm/%40vitest/expect@4.1.12",
+        "pkg:npm/%40vitest/mocker@4.1.12",
+        "pkg:npm/%40vitest/pretty-format@4.1.12",
+        "pkg:npm/%40vitest/runner@4.1.12",
+        "pkg:npm/%40vitest/snapshot@4.1.12",
+        "pkg:npm/%40vitest/spy@4.1.12",
+        "pkg:npm/%40vitest/utils@4.1.12",
         "pkg:npm/es-module-lexer@2.1.0",
         "pkg:npm/expect-type@1.3.0",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/obug@2.1.1",
         "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@4.0.5",
+        "pkg:npm/picomatch@4.0.7",
         "pkg:npm/std-env@4.1.0",
         "pkg:npm/tinybench@2.9.0",
         "pkg:npm/tinyexec@1.0.2",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/tinyrainbow@3.1.0",
-        "pkg:npm/vite@8.2.1",
+        "pkg:npm/vite@8.3.5",
         "pkg:npm/why-is-node-running@2.3.0"
       ]
     },
@@ -20500,7 +21228,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/ws@8.21.3",
+      "ref": "pkg:npm/ws@8.22.0",
       "dependsOn": []
     },
     {
@@ -20526,7 +21254,7 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio@2.101.3",
+      "ref": "pkg:swift/swift-nio@2.105.0",
       "dependsOn": [
         "pkg:swift/swift-atomics@1.3.1",
         "pkg:swift/swift-collections@1.6.0",
@@ -20534,9 +21262,9 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "ref": "pkg:swift/swift-nio-ssl@2.37.6",
       "dependsOn": [
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio@2.105.0"
       ]
     },
     {

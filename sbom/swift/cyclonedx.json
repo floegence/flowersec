@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:a39ae13e-3e69-5052-8f2b-c91e97adf989",
+  "serialNumber": "urn:uuid:c073f460-c586-550c-86af-eb52989139dc",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "Flowersec",
-      "version": "7.0.0",
-      "purl": "pkg:swift/Flowersec@7.0.0",
-      "bom-ref": "pkg:swift/Flowersec@7.0.0"
+      "version": "7.0.1",
+      "purl": "pkg:swift/Flowersec@7.0.1",
+      "bom-ref": "pkg:swift/Flowersec@7.0.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
+        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
       }
     ]
   },
@@ -134,9 +134,9 @@
     {
       "type": "library",
       "name": "swift-nio",
-      "version": "2.101.3",
-      "purl": "pkg:swift/swift-nio@2.101.3",
-      "bom-ref": "pkg:swift/swift-nio@2.101.3",
+      "version": "2.105.0",
+      "purl": "pkg:swift/swift-nio@2.105.0",
+      "bom-ref": "pkg:swift/swift-nio@2.105.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -162,9 +162,9 @@
     {
       "type": "library",
       "name": "swift-nio-ssl",
-      "version": "2.37.2",
-      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
-      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "version": "2.37.6",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.6",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.6",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -218,11 +218,11 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:swift/Flowersec@7.0.0",
+      "ref": "pkg:swift/Flowersec@7.0.1",
       "dependsOn": [
         "pkg:swift/swift-crypto@4.5.1",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio-ssl@2.37.6",
+        "pkg:swift/swift-nio@2.105.0"
       ]
     },
     {
@@ -244,7 +244,7 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio@2.101.3",
+      "ref": "pkg:swift/swift-nio@2.105.0",
       "dependsOn": [
         "pkg:swift/swift-atomics@1.3.1",
         "pkg:swift/swift-collections@1.6.0",
@@ -252,9 +252,9 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "ref": "pkg:swift/swift-nio-ssl@2.37.6",
       "dependsOn": [
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio@2.105.0"
       ]
     },
     {

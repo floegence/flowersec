@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:3d3e2601-5a99-597b-833c-96847ead7391",
+  "serialNumber": "urn:uuid:057fabe8-4969-5201-835f-201159f78ec0",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-core",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-core@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-core@7.0.0"
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-core@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-core@7.0.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
+        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
       }
     ]
   },
@@ -22,9 +22,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -50,9 +50,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -78,9 +78,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-x64",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -106,9 +106,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -134,9 +134,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -302,9 +302,9 @@
     {
       "type": "library",
       "name": "tr46",
-      "version": "6.0.0",
-      "purl": "pkg:npm/tr46@6.0.0",
-      "bom-ref": "pkg:npm/tr46@6.0.0",
+      "version": "7.0.0",
+      "purl": "pkg:npm/tr46@7.0.0",
+      "bom-ref": "pkg:npm/tr46@7.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -313,7 +313,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz"
+          "url": "https://registry.npmjs.org/tr46/-/tr46-7.0.0.tgz"
         }
       ],
       "properties": [
@@ -358,9 +358,9 @@
     {
       "type": "library",
       "name": "ws",
-      "version": "8.21.3",
-      "purl": "pkg:npm/ws@8.21.3",
-      "bom-ref": "pkg:npm/ws@8.21.3",
+      "version": "8.22.0",
+      "purl": "pkg:npm/ws@8.22.0",
+      "bom-ref": "pkg:npm/ws@8.22.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -369,7 +369,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz"
+          "url": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz"
         }
       ],
       "properties": [
@@ -386,40 +386,40 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-core@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-core@7.0.1",
       "dependsOn": [
-        "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+        "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
         "pkg:npm/%40noble/ciphers@2.4.0",
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
         "pkg:npm/%40types/node@26.4.0",
-        "pkg:npm/tr46@6.0.0",
-        "pkg:npm/ws@8.21.3"
+        "pkg:npm/tr46@7.0.0",
+        "pkg:npm/ws@8.22.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native@7.0.1",
       "dependsOn": [
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0"
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@7.0.1",
       "dependsOn": []
     },
     {
@@ -447,7 +447,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/tr46@6.0.0",
+      "ref": "pkg:npm/tr46@7.0.0",
       "dependsOn": [
         "pkg:npm/punycode@2.3.1"
       ]
@@ -457,7 +457,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/ws@8.21.3",
+      "ref": "pkg:npm/ws@8.22.0",
       "dependsOn": []
     }
   ]

@@ -1,6 +1,7 @@
 import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -243,6 +244,7 @@ describe("Node production server runtime Flowersec/5", () => {
     artifact = directArtifact(acceptor.addresses()[0]!.port);
     let accepted;
     try {
+      await expectOrdinaryHTTPSRejected(acceptor.addresses()[0]!.port, "direct");
       const accepting = acceptor.accept();
       const connecting = connectV3(lease(artifact), {
         origin: "https://app.example",
@@ -630,6 +632,7 @@ describe("Node production server runtime Flowersec/5", () => {
     authority.issue(first, "lease-1");
     authority.issue(second, "lease-2");
     try {
+      await expectOrdinaryHTTPSRejected(port, "tunnel");
       const [client, server] = await Promise.all([
         connectV3(lease(first), {
           origin: "https://app.example",
@@ -958,6 +961,25 @@ describe("Node production server runtime Flowersec/5", () => {
     }
   }, 10_000);
 });
+
+async function expectOrdinaryHTTPSRejected(port: number, path: "direct" | "tunnel"): Promise<void> {
+  const peer = connectTLS({ host: "127.0.0.1", port, ca: rootCertificate, servername: "localhost" });
+  try {
+    const signal = AbortSignal.timeout(3_000);
+    await once(peer, "secureConnect", { signal });
+    const chunks: Buffer[] = [];
+    peer.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const eof = once(peer, "end", { signal });
+    peer.write(`GET /flowersec/v5/${path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n`);
+    await eof;
+    const [headers, ...body] = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n");
+    expect(headers).toMatch(/^HTTP\/1\.1 404 /);
+    expect(headers).toMatch(/^Connection: close\r?$/im);
+    expect(body).toEqual([""]);
+  } finally {
+    peer.destroy();
+  }
+}
 
 function directArtifact(port: number): ArtifactV3 {
   return {

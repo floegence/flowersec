@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:724c05e6-dbf0-500c-83c7-75666244f663",
+  "serialNumber": "urn:uuid:1ef1e97e-c69b-5cba-8d30-460c68e10a22",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec",
-      "version": "7.0.0",
-      "purl": "pkg:cargo/flowersec@7.0.0",
-      "bom-ref": "pkg:cargo/flowersec@7.0.0"
+      "version": "7.0.1",
+      "purl": "pkg:cargo/flowersec@7.0.1",
+      "bom-ref": "pkg:cargo/flowersec@7.0.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
+        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
       }
     ]
   },
@@ -1870,9 +1870,9 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.1",
-      "purl": "pkg:cargo/hyper@1.11.1",
-      "bom-ref": "pkg:cargo/hyper@1.11.1",
+      "version": "1.12.0",
+      "purl": "pkg:cargo/hyper@1.12.0",
+      "bom-ref": "pkg:cargo/hyper@1.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -3400,9 +3400,9 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
-      "bom-ref": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/rand@0.10.4",
+      "bom-ref": "pkg:cargo/rand@0.10.4",
       "licenses": [
         {
           "expression": "MIT"
@@ -4044,9 +4044,9 @@
     {
       "type": "library",
       "name": "serde_json",
-      "version": "1.0.151",
-      "purl": "pkg:cargo/serde_json@1.0.151",
-      "bom-ref": "pkg:cargo/serde_json@1.0.151",
+      "version": "1.0.154",
+      "purl": "pkg:cargo/serde_json@1.0.154",
+      "bom-ref": "pkg:cargo/serde_json@1.0.154",
       "licenses": [
         {
           "expression": "MIT"
@@ -4128,9 +4128,9 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
-      "bom-ref": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
+      "bom-ref": "pkg:cargo/sha2@0.11.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -4744,9 +4744,9 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.3",
-      "purl": "pkg:cargo/tokio@1.53.3",
-      "bom-ref": "pkg:cargo/tokio@1.53.3",
+      "version": "1.54.1",
+      "purl": "pkg:cargo/tokio@1.54.1",
+      "bom-ref": "pkg:cargo/tokio@1.54.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -4856,9 +4856,9 @@
     {
       "type": "library",
       "name": "tokio-util",
-      "version": "0.7.19",
-      "purl": "pkg:cargo/tokio-util@0.7.19",
-      "bom-ref": "pkg:cargo/tokio-util@0.7.19",
+      "version": "0.7.20",
+      "purl": "pkg:cargo/tokio-util@0.7.20",
+      "bom-ref": "pkg:cargo/tokio-util@0.7.20",
       "licenses": [
         {
           "expression": "MIT"
@@ -5248,9 +5248,9 @@
     {
       "type": "library",
       "name": "want",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/want@0.3.1",
-      "bom-ref": "pkg:cargo/want@0.3.1",
+      "version": "0.3.2",
+      "purl": "pkg:cargo/want@0.3.2",
+      "bom-ref": "pkg:cargo/want@0.3.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -6032,9 +6032,9 @@
     {
       "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
-      "bom-ref": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.2",
+      "purl": "pkg:cargo/zeroize@1.9.2",
+      "bom-ref": "pkg:cargo/zeroize@1.9.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -6200,7 +6200,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:cargo/flowersec@7.0.0",
+      "ref": "pkg:cargo/flowersec@7.0.1",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.1",
         "pkg:cargo/async-trait@0.1.92",
@@ -6213,7 +6213,7 @@
         "pkg:cargo/http-body-util@0.1.5",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/hyper-util@0.1.20",
-        "pkg:cargo/hyper@1.11.1",
+        "pkg:cargo/hyper@1.12.0",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.2.2",
         "pkg:cargo/idna_mapping@1.1.0",
@@ -6224,15 +6224,15 @@
         "pkg:cargo/quinn-proto@0.11.17",
         "pkg:cargo/quinn-udp@0.5.16",
         "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.4",
         "pkg:cargo/rand_pcg@0.10.2",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls-native-certs@0.8.4",
         "pkg:cargo/rustls@0.23.46",
         "pkg:cargo/serde@1.0.229",
-        "pkg:cargo/serde_json@1.0.151",
-        "pkg:cargo/sha2@0.11.0",
+        "pkg:cargo/serde_json@1.0.154",
+        "pkg:cargo/sha2@0.11.1",
         "pkg:cargo/slab@0.4.12",
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
@@ -6241,15 +6241,15 @@
         "pkg:cargo/tinyvec@1.12.0",
         "pkg:cargo/tokio-rustls@0.26.4",
         "pkg:cargo/tokio-tungstenite@0.30.0",
-        "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.3",
+        "pkg:cargo/tokio-util@0.7.20",
+        "pkg:cargo/tokio@1.54.1",
         "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/unicode-normalization@0.1.25",
         "pkg:cargo/url@2.5.9",
         "pkg:cargo/x25519-dalek@3.0.0",
         "pkg:cargo/x509-parser@0.18.1",
         "pkg:cargo/yamux@0.14.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -6424,7 +6424,7 @@
         "pkg:cargo/num-traits@0.2.19",
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -6457,7 +6457,7 @@
         "pkg:cargo/fiat-crypto@0.3.0",
         "pkg:cargo/rustc_version@0.4.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -6477,7 +6477,7 @@
       "dependsOn": [
         "pkg:cargo/const-oid@0.10.2",
         "pkg:cargo/pem-rfc7468@1.0.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -6521,7 +6521,7 @@
         "pkg:cargo/rfc6979@0.6.0",
         "pkg:cargo/signature@3.0.0",
         "pkg:cargo/spki@0.8.0",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -6540,14 +6540,14 @@
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/sec1@0.8.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
       "ref": "pkg:cargo/errno@0.3.14",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -6712,15 +6712,14 @@
       "dependsOn": [
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/typenum@1.20.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
-      "ref": "pkg:cargo/hyper@1.11.1",
+      "ref": "pkg:cargo/hyper@1.12.0",
       "dependsOn": [
         "pkg:cargo/atomic-waker@1.1.2",
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-channel@0.3.34",
         "pkg:cargo/futures-core@0.3.34",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
@@ -6728,8 +6727,8 @@
         "pkg:cargo/itoa@1.0.18",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/smallvec@1.15.2",
-        "pkg:cargo/tokio@1.53.3",
-        "pkg:cargo/want@0.3.1"
+        "pkg:cargo/tokio@1.54.1",
+        "pkg:cargo/want@0.3.2"
       ]
     },
     {
@@ -6738,9 +6737,9 @@
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper@1.11.1",
+        "pkg:cargo/hyper@1.12.0",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -6943,7 +6942,7 @@
         "pkg:cargo/elliptic-curve@0.14.1",
         "pkg:cargo/primefield@0.14.0",
         "pkg:cargo/primeorder@0.14.0",
-        "pkg:cargo/sha2@0.11.0"
+        "pkg:cargo/sha2@0.11.1"
       ]
     },
     {
@@ -7024,7 +7023,7 @@
         "pkg:cargo/ff@0.14.0",
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -7067,7 +7066,7 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -7081,7 +7080,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/rand@0.10.2",
+      "ref": "pkg:cargo/rand@0.10.4",
       "dependsOn": [
         "pkg:cargo/chacha20@0.10.2",
         "pkg:cargo/getrandom@0.4.3",
@@ -7146,7 +7145,7 @@
         "pkg:cargo/rustls-pki-types@1.15.1",
         "pkg:cargo/rustls-webpki@0.103.16",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -7161,7 +7160,7 @@
     {
       "ref": "pkg:cargo/rustls-pki-types@1.15.1",
       "dependsOn": [
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -7194,7 +7193,7 @@
         "pkg:cargo/der@0.8.1",
         "pkg:cargo/hybrid-array@0.4.14",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -7240,7 +7239,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/serde_json@1.0.151",
+      "ref": "pkg:cargo/serde_json@1.0.154",
       "dependsOn": [
         "pkg:cargo/itoa@1.0.18",
         "pkg:cargo/memchr@2.8.3",
@@ -7265,7 +7264,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/sha2@0.11.0",
+      "ref": "pkg:cargo/sha2@0.11.1",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/cpufeatures@0.3.1",
@@ -7402,7 +7401,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/tokio@1.53.3",
+      "ref": "pkg:cargo/tokio@1.54.1",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/libc@0.2.189",
@@ -7426,7 +7425,7 @@
       "ref": "pkg:cargo/tokio-rustls@0.26.4",
       "dependsOn": [
         "pkg:cargo/rustls@0.23.46",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -7434,12 +7433,12 @@
       "dependsOn": [
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/tokio@1.53.3",
+        "pkg:cargo/tokio@1.54.1",
         "pkg:cargo/tungstenite@0.30.0"
       ]
     },
     {
-      "ref": "pkg:cargo/tokio-util@0.7.19",
+      "ref": "pkg:cargo/tokio-util@0.7.20",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/futures-core@0.3.34",
@@ -7447,7 +7446,7 @@
         "pkg:cargo/futures-sink@0.3.34",
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -7484,7 +7483,7 @@
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/httparse@1.10.1",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.4",
         "pkg:cargo/sha1@0.11.0",
         "pkg:cargo/thiserror@2.0.20"
       ]
@@ -7533,7 +7532,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/want@0.3.1",
+      "ref": "pkg:cargo/want@0.3.2",
       "dependsOn": [
         "pkg:cargo/try-lock@0.2.5"
       ]
@@ -7661,7 +7660,7 @@
       "dependsOn": [
         "pkg:cargo/curve25519-dalek@5.0.0",
         "pkg:cargo/rand_core@0.10.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -7724,7 +7723,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/zeroize@1.9.0",
+      "ref": "pkg:cargo/zeroize@1.9.2",
       "dependsOn": [
         "pkg:cargo/zeroize_derive@1.5.0"
       ]

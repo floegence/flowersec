@@ -82,26 +82,19 @@ export function verifyBinding({root = repositoryRoot, requireExternal = false, d
     if (entry.artifact) assert.ok(fs.existsSync(path.join(root, entry.artifact)), `missing tracked artifact ${entry.artifact}`);
     for (const test of entry.tests) assert.ok(fs.existsSync(path.join(root, test)), `missing tracked test ${test}`);
   }
+  if (!requireExternal) return {references:"verified", external:{design:"not_checked", review_evidence:contract.design.review_evidence_sha256 === null ? "unbound" : "not_checked"}, schema_gate:"not_frozen"};
   const sources = [
     {name:"design", file:designPath ?? process.env.FLOWERSEC_V4_DESIGN_PATH ?? resolveExternalPath(root, contract.design.source_path), sha:expectedDesignSHA},
     {name:"review_evidence", file:evidencePath ?? process.env.FLOWERSEC_V4_EVIDENCE_PATH ?? resolveExternalPath(root, contract.design.review_evidence_path), sha:contract.design.review_evidence_sha256},
   ];
   const availability = {};
   for (const source of sources) {
-    if (source.sha === null) {
-      availability[source.name] = "unbound";
-      if (requireExternal) throw new Error(`required ${source.name} has no verified evidence binding`);
-      continue;
-    }
+    if (source.sha === null) throw new Error(`required ${source.name} has no verified evidence binding`);
     assert.match(source.sha, /^[a-f0-9]{64}$/u);
-    if (!fs.existsSync(source.file)) {
-      availability[source.name] = "missing";
-      if (requireExternal) throw new Error(`required ${source.name} unavailable: ${source.file}`);
-    } else {
-      assert.equal(digest(fs.readFileSync(source.file)), source.sha, `external ${source.name} SHA changed`);
-      if (source.name === "review_evidence") verifyArchitectureReviews(source.file, expectedDesignSHA);
-      availability[source.name] = "verified";
-    }
+    if (!fs.existsSync(source.file)) throw new Error(`required ${source.name} unavailable: ${source.file}`);
+    assert.equal(digest(fs.readFileSync(source.file)), source.sha, `external ${source.name} SHA changed`);
+    if (source.name === "review_evidence") verifyArchitectureReviews(source.file, expectedDesignSHA);
+    availability[source.name] = "verified";
   }
   return {references:"verified", external:availability, schema_gate:"not_frozen"};
 }

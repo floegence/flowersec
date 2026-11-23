@@ -321,6 +321,14 @@ are projected to `ConnectError`. Low-level carrier factories, capability
 descriptors, candidate diagnostics, wire contracts, and cryptographic state
 are not package exports.
 
+The dedicated Node WSS listeners used by `createAcceptor` and `createTunnelRuntime`
+do not serve ordinary HTTPS routes. When a request does not ask to upgrade,
+the listener responds with an empty `404` and closes that connection promptly,
+even if the client requested keep-alive. Cleanup does not wait for the client to
+disconnect or the listener to shut down. The same listener continues to accept
+valid WSS upgrades. This rule does not apply to servers that let the host route
+ordinary HTTP requests.
+
 `ConnectError.retryDisposition` is the retry property. For `retry_after`, `notBeforeUnixMilliseconds` is the absolute deadline. `ConnectionController.waitForSession(...)` is passive and returns structured failed, closed, or canceled errors; `connectionDiagnostic(...)` projects snapshots to state, attempt, failure phase/code, and retry disposition without retaining a Session. Unreliable-message failures use only `unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, and `operation_failed`; accepted and the three `dropped_*` states remain send outcomes.
 
 Node `SessionOptions.origin` and `ConnectionControllerOptions.origin` are optional. WebSocket and WebTransport candidates require an HTTP(S) origin. With no origin, only raw QUIC candidates can be eligible.

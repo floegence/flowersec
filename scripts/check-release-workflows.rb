@@ -557,9 +557,9 @@ validate_step_contracts(codeql_steps, [
       "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
     },
   } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_swift_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
@@ -571,9 +571,9 @@ validate_step_contracts(codeql_swift_steps, [
   { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
   { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "run"], values: { "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d" } },
 ], "the CodeQL Swift analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
@@ -601,7 +601,7 @@ validate_step_contracts(scorecard_steps, [
     "with" => { "name" => "scorecard-results", "path" => "results.sarif", "retention-days" => 5 },
   } },
   { name: "Upload Scorecard results", keys: ["name", "uses", "with"], values: {
-    "uses" => "github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd",
+    "uses" => "github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d",
     "with" => { "sarif_file" => "results.sarif" },
   } },
 ], "the Scorecard analysis job")
@@ -655,7 +655,7 @@ validate_step_contracts(release_steps, [
   } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
   { name: "Download native prebuilt packages", keys: ["name", "if", "uses", "with"], values: {
     "if" => "needs.prepare.outputs.release_complete == 'false'",
-    "uses" => "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    "uses" => "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
     "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
   } },
   { name: "Setup cosign", keys: ["name", "uses", "with"], values: {

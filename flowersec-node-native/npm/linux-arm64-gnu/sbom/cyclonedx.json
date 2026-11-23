@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:e1d1cf9a-49de-5c60-8ce5-3fc5055a1ab4",
+  "serialNumber": "urn:uuid:b4281535-ff3b-5506-8a6f-0b3a29d264ad",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "7.0.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0"
+      "version": "7.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9cab50f72dd16810d65be1c78b80aed0c8c44e0a3f0e487d62bca15f82f65caf"
+        "value": "e3886fb97d8c5366baef230d70fa4954a41a5384ebdb5d2cdd7ae50b7710b0fb"
       }
     ]
   },
@@ -358,9 +358,9 @@
     {
       "type": "library",
       "name": "convert_case",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/convert_case@0.11.0",
-      "bom-ref": "pkg:cargo/convert_case@0.11.0",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/convert_case@0.12.0",
+      "bom-ref": "pkg:cargo/convert_case@0.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1534,9 +1534,9 @@
     {
       "type": "library",
       "name": "napi",
-      "version": "3.12.2",
-      "purl": "pkg:cargo/napi@3.12.2",
-      "bom-ref": "pkg:cargo/napi@3.12.2",
+      "version": "3.16.2",
+      "purl": "pkg:cargo/napi@3.16.2",
+      "bom-ref": "pkg:cargo/napi@3.16.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -1562,9 +1562,9 @@
     {
       "type": "library",
       "name": "napi-build",
-      "version": "2.4.1",
-      "purl": "pkg:cargo/napi-build@2.4.1",
-      "bom-ref": "pkg:cargo/napi-build@2.4.1",
+      "version": "2.6.0",
+      "purl": "pkg:cargo/napi-build@2.6.0",
+      "bom-ref": "pkg:cargo/napi-build@2.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1590,9 +1590,9 @@
     {
       "type": "library",
       "name": "napi-derive",
-      "version": "3.6.3",
-      "purl": "pkg:cargo/napi-derive@3.6.3",
-      "bom-ref": "pkg:cargo/napi-derive@3.6.3",
+      "version": "3.7.1",
+      "purl": "pkg:cargo/napi-derive@3.7.1",
+      "bom-ref": "pkg:cargo/napi-derive@3.7.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -1618,9 +1618,9 @@
     {
       "type": "library",
       "name": "napi-derive-backend",
-      "version": "6.1.2",
-      "purl": "pkg:cargo/napi-derive-backend@6.1.2",
-      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "version": "7.0.1",
+      "purl": "pkg:cargo/napi-derive-backend@7.0.1",
+      "bom-ref": "pkg:cargo/napi-derive-backend@7.0.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -1646,9 +1646,9 @@
     {
       "type": "library",
       "name": "napi-sys",
-      "version": "3.3.0",
-      "purl": "pkg:cargo/napi-sys@3.3.0",
-      "bom-ref": "pkg:cargo/napi-sys@3.3.0",
+      "version": "3.4.1",
+      "purl": "pkg:cargo/napi-sys@3.4.1",
+      "bom-ref": "pkg:cargo/napi-sys@3.4.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -2224,9 +2224,9 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
-      "bom-ref": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/rand@0.10.4",
+      "bom-ref": "pkg:cargo/rand@0.10.4",
       "licenses": [
         {
           "expression": "MIT"
@@ -2588,9 +2588,9 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
-      "bom-ref": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
+      "bom-ref": "pkg:cargo/sha2@0.11.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -3120,9 +3120,9 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.3",
-      "purl": "pkg:cargo/tokio@1.53.3",
-      "bom-ref": "pkg:cargo/tokio@1.53.3",
+      "version": "1.54.1",
+      "purl": "pkg:cargo/tokio@1.54.1",
+      "bom-ref": "pkg:cargo/tokio@1.54.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -3176,9 +3176,9 @@
     {
       "type": "library",
       "name": "tokio-util",
-      "version": "0.7.19",
-      "purl": "pkg:cargo/tokio-util@0.7.19",
-      "bom-ref": "pkg:cargo/tokio-util@0.7.19",
+      "version": "0.7.20",
+      "purl": "pkg:cargo/tokio-util@0.7.20",
+      "bom-ref": "pkg:cargo/tokio-util@0.7.20",
       "licenses": [
         {
           "expression": "MIT"
@@ -4016,9 +4016,9 @@
     {
       "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
-      "bom-ref": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.2",
+      "purl": "pkg:cargo/zeroize@1.9.2",
+      "bom-ref": "pkg:cargo/zeroize@1.9.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -4128,32 +4128,32 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.0.1",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/lru-slab@0.1.2",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-derive@3.6.3",
-        "pkg:cargo/napi@3.12.2",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-derive@3.7.1",
+        "pkg:cargo/napi@3.16.2",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/qpack@0.1.0",
         "pkg:cargo/quinn-proto@0.11.17",
         "pkg:cargo/quinn-udp@0.5.16",
         "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.4",
         "pkg:cargo/rand_pcg@0.10.2",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls@0.23.46",
-        "pkg:cargo/sha2@0.11.0",
+        "pkg:cargo/sha2@0.11.1",
         "pkg:cargo/slab@0.4.12",
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/tinyvec@1.12.0",
-        "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.3",
+        "pkg:cargo/tokio-util@0.7.20",
+        "pkg:cargo/tokio@1.54.1",
         "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/url@2.5.9",
         "pkg:cargo/x509-parser@0.18.1"
@@ -4235,7 +4235,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/convert_case@0.11.0",
+      "ref": "pkg:cargo/convert_case@0.12.0",
       "dependsOn": [
         "pkg:cargo/unicode-segmentation@1.13.3"
       ]
@@ -4519,46 +4519,46 @@
       ]
     },
     {
-      "ref": "pkg:cargo/napi@3.12.2",
+      "ref": "pkg:cargo/napi@3.16.2",
       "dependsOn": [
         "pkg:cargo/bitflags@2.13.1",
         "pkg:cargo/ctor@1.0.13",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-sys@3.3.0",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-sys@3.4.1",
         "pkg:cargo/nohash-hasher@0.2.0",
         "pkg:cargo/rustc-hash@2.1.3",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-build@2.4.1",
+      "ref": "pkg:cargo/napi-build@2.6.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/napi-derive@3.6.3",
+      "ref": "pkg:cargo/napi-derive@3.7.1",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/ctor@1.0.13",
-        "pkg:cargo/napi-derive-backend@6.1.2",
+        "pkg:cargo/napi-derive-backend@7.0.1",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "ref": "pkg:cargo/napi-derive-backend@7.0.1",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/semver@1.0.28",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-sys@3.3.0",
+      "ref": "pkg:cargo/napi-sys@3.4.1",
       "dependsOn": [
         "pkg:cargo/libloading@0.9.0"
       ]
@@ -4655,7 +4655,7 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/windows-sys@0.52.0"
+        "pkg:cargo/windows-sys@0.61.2"
       ]
     },
     {
@@ -4669,7 +4669,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/rand@0.10.2",
+      "ref": "pkg:cargo/rand@0.10.4",
       "dependsOn": [
         "pkg:cargo/chacha20@0.10.2",
         "pkg:cargo/getrandom@0.4.3",
@@ -4715,13 +4715,13 @@
         "pkg:cargo/rustls-pki-types@1.15.1",
         "pkg:cargo/rustls-webpki@0.103.16",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
       "ref": "pkg:cargo/rustls-pki-types@1.15.1",
       "dependsOn": [
-        "pkg:cargo/zeroize@1.9.0"
+        "pkg:cargo/zeroize@1.9.2"
       ]
     },
     {
@@ -4757,7 +4757,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/sha2@0.11.0",
+      "ref": "pkg:cargo/sha2@0.11.1",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/cpufeatures@0.3.1",
@@ -4877,7 +4877,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/tokio@1.53.3",
+      "ref": "pkg:cargo/tokio@1.54.1",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/libc@0.2.189",
@@ -4897,14 +4897,14 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tokio-util@0.7.19",
+      "ref": "pkg:cargo/tokio-util@0.7.20",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/futures-core@0.3.34",
         "pkg:cargo/futures-sink@0.3.34",
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.3"
+        "pkg:cargo/tokio@1.54.1"
       ]
     },
     {
@@ -5080,7 +5080,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/zeroize@1.9.0",
+      "ref": "pkg:cargo/zeroize@1.9.2",
       "dependsOn": []
     },
     {

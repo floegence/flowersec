@@ -11,12 +11,12 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - github.com/libp2p/go-buffer-pool v0.0.2 (Declared: MIT; selected: MIT; source: https://github.com/libp2p/go-buffer-pool)
 - github.com/libp2p/go-yamux/v5 v5.1.0 (Declared: MPL-2.0; selected: MPL-2.0; source: https://github.com/libp2p/go-yamux/v5)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)
-- github.com/quic-go/quic-go v0.63.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
+- github.com/quic-go/quic-go v0.64.1 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
 - github.com/quic-go/webtransport-go v0.13.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
-- golang.org/x/crypto v0.57.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
-- golang.org/x/net v0.60.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
+- golang.org/x/crypto v0.58.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
+- golang.org/x/net v0.61.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
 - golang.org/x/sys v0.49.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
-- golang.org/x/text v0.42.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
+- golang.org/x/text v0.43.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
 ## Distributed Dependency License Materials
 
 The following dependencies are incorporated into distributed Flowersec files or binaries.

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -223,7 +224,7 @@ func endpointFrameLimits(large bool) (fs.RPCFrameLimits, error) {
 		return limits, nil
 	}
 	n, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil || n == 0 || int(n) <= 0 {
+	if err != nil || n == 0 || n > math.MaxInt {
 		return limits, errors.New("FSEC_RPC_FRAME_BYTES must be a positive 32-bit frame size supported on this platform")
 	}
 	// Request and response each carry at most one nonzero 53-bit request ID.

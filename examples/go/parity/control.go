@@ -228,15 +228,21 @@ func serveAuthorizer(args []string) error {
 			ID string `json:"lease_id"`
 		}
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
-		if err != nil || decode(raw, &in) != nil || !validLookupKey(in.ID) {
+		if err != nil || decode(raw, &in) != nil {
 			http.Error(w, "invalid lease", 400)
 			return
 		}
-		if _, err = os.Stat(filepath.Join(*records, "admitted-"+in.ID)); err != nil {
+		key, ok := decodeLookupKey(in.ID)
+		if !ok {
+			http.Error(w, "invalid lease", 400)
+			return
+		}
+		id := base64.RawURLEncoding.EncodeToString(key[:])
+		if _, err = os.Stat(filepath.Join(*records, "admitted-"+id)); err != nil {
 			http.Error(w, "unknown lease", 404)
 			return
 		}
-		if err = markers.release("released-" + in.ID); err != nil {
+		if err = markers.release("released-" + id); err != nil {
 			http.Error(w, "release failed", 500)
 			return
 		}
@@ -317,10 +323,15 @@ func (m *authorizationMarkers) release(name string) error {
 }
 
 func validLookupKey(key string) bool {
-	if len(key) != base64.RawURLEncoding.EncodedLen(sha256.Size) {
-		return false
-	}
+	_, ok := decodeLookupKey(key)
+	return ok
+}
+
+func decodeLookupKey(key string) ([sha256.Size]byte, bool) {
 	var raw [sha256.Size]byte
+	if len(key) != base64.RawURLEncoding.EncodedLen(sha256.Size) {
+		return raw, false
+	}
 	n, err := base64.RawURLEncoding.Strict().Decode(raw[:], []byte(key))
-	return err == nil && n == len(raw)
+	return raw, err == nil && n == len(raw)
 }
