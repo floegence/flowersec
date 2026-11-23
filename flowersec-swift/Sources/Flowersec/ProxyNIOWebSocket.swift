@@ -386,13 +386,13 @@
     private let lock = NSLock()
     private let maxBufferedBytes: Int
     private let maxBufferedFrames: Int
-    private var frames: [BufferedFrame] = []
+    private var frames = CircularBuffer<BufferedFrame>()
     private var bufferedBytes = 0
     private var waiters: [Waiter] = []
     private var nextWaiterID: UInt64 = 1
     private var failure: (any Error)?
 
-    init(maxBufferedBytes: Int, maxBufferedFrames: Int = .max) {
+    init(maxBufferedBytes: Int, maxBufferedFrames: Int = 1024) {
       self.maxBufferedBytes = maxBufferedBytes
       self.maxBufferedFrames = maxBufferedFrames
     }

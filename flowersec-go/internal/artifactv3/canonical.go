@@ -182,6 +182,13 @@ func NormalizeTunnelEndpoint(carrier Carrier, raw string) (string, error) {
 	return normalizeCandidateURL(PathTunnel, carrier, raw)
 }
 
+func NormalizeDirectEndpoint(carrier Carrier, raw string) (string, error) {
+	if raw == "" || len(raw) > 2048 {
+		return "", ErrInvalidCandidate
+	}
+	return normalizeCandidateURL(PathDirect, carrier, raw)
+}
+
 func normalizeCandidateURL(kind PathKind, carrier Carrier, raw string) (string, error) {
 	if strings.ContainsAny(raw, "\\?#%") {
 		return "", fmt.Errorf("%w: forbidden URL component", ErrInvalidCandidate)

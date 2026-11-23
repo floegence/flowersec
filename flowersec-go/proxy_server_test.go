@@ -126,6 +126,7 @@ func TestProxyServerCanonicalPathContract(t *testing.T) {
 		{raw: "/safe/%2e%2e/admin?mode=encoded", want: "/admin?mode=encoded"},
 		{raw: "/safe\\..\\admin?mode=backslash", want: "/admin?mode=backslash"},
 		{raw: "/safe//child?mode=double", want: "/safe/child?mode=double"},
+		{raw: "/files/a%3bb/%7e?mode=%3b", want: "/files/a%3Bb/~?mode=%3B"},
 	}
 	for _, test := range tests {
 		t.Run(test.raw, func(t *testing.T) {

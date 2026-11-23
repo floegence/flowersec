@@ -308,7 +308,7 @@ func (server *ProxyServer) proxyTimeout(milliseconds int64) (time.Duration, erro
 }
 
 func parseProxyPath(raw string) (*url.URL, error) {
-	if raw != strings.TrimSpace(raw) || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, "://") {
+	if raw != strings.TrimSpace(raw) || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, "://") || strings.Contains(raw, "#") {
 		return nil, ErrInvalidProxyServer
 	}
 	for _, value := range []byte(raw) {
@@ -321,8 +321,8 @@ func parseProxyPath(raw string) (*url.URL, error) {
 	if separator := strings.IndexByte(raw, '?'); separator >= 0 {
 		rawPath, query = raw[:separator], raw[separator:]
 	}
-	lowerPath := strings.ToLower(rawPath)
-	if strings.Contains(lowerPath, "%2f") || strings.Contains(lowerPath, "%5c") {
+	rawPath, ok := normalizeProxyPercentEscapes(rawPath, true)
+	if !ok {
 		return nil, ErrInvalidProxyServer
 	}
 	normalizedQuery, ok := normalizeProxyPercentEscapes(strings.TrimPrefix(query, "?"), false)
@@ -336,19 +336,15 @@ func parseProxyPath(raw string) (*url.URL, error) {
 	if strings.HasPrefix(rawPath, "//") {
 		return nil, ErrInvalidProxyServer
 	}
-	for strings.Contains(rawPath, "//") {
-		rawPath = strings.ReplaceAll(rawPath, "//", "/")
+	keepTrailingSlash := strings.HasSuffix(rawPath, "/") || strings.HasSuffix(rawPath, "/.") || strings.HasSuffix(rawPath, "/..")
+	rawPath = pathpkg.Clean(rawPath)
+	if keepTrailingSlash && rawPath != "/" {
+		rawPath += "/"
 	}
 	parsed, err := url.ParseRequestURI(rawPath + query)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" {
 		return nil, ErrInvalidProxyServer
 	}
-	keepTrailingSlash := strings.HasSuffix(parsed.Path, "/") || strings.HasSuffix(parsed.Path, "/.") || strings.HasSuffix(parsed.Path, "/..")
-	parsed.Path = pathpkg.Clean(parsed.Path)
-	if keepTrailingSlash && parsed.Path != "/" {
-		parsed.Path += "/"
-	}
-	parsed.RawPath = ""
 	return parsed, nil
 }
 

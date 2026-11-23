@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { u32be } from "../utils/bin.js";
 import type { ByteStream, Session, StreamOpenOptions } from "../public/contract.js";
 import { createProxyRuntime } from "./runtime.js";
+import { connectProxyBrowser } from "./integration.js";
+import * as browserConnector from "../browser/connectSessionV3.js";
+import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
+import type { ArtifactV3 } from "../v3/artifact.js";
 import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
@@ -78,6 +82,22 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("enforces acquisition paths even with a broader host policy", async () => {
+    const session = new FakeSession([]);
+    const connector = vi.spyOn(browserConnector, "connectV3").mockResolvedValue(session);
+    const lease = createArtifactLeaseV3Internal({ scoped: [{ scope: "proxy.runtime", scope_version: 2, critical: true,
+      payload: { mode: "controller_bridge", controllerBridge: { allowedOrigins: ["https://app.example"] }, appBasePath: "/app", http: { additionalPathPrefixes: ["/assets/"] } } }] } as unknown as ArtifactV3, async () => {});
+    try {
+      const handle = await connectProxyBrowser(lease, { runtime: { pathPolicy: { allowedPathPrefixes: ["/"] } } });
+      try {
+        await expect(handle.runtime.fetch("/application")).rejects.toThrow(/scope/u);
+        await expect(handle.runtime.openWebSocketStream("/assets/socket")).rejects.toThrow(/scope/u);
+        expect(session.opens).toHaveLength(0);
+        await expect(handle.runtime.fetch("/assets/icon")).rejects.toBeDefined();
+        expect(session.opens).toHaveLength(1);
+      } finally { await handle.dispose(); }
+    } finally { connector.mockRestore(); }
+  });
   it("binds a service worker container to one runtime until disposal", async () => {
     const container = new EventTarget() as ServiceWorkerContainer;
     vi.stubGlobal("navigator", { serviceWorker: container });

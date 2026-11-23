@@ -573,6 +573,7 @@ export class SessionV3 implements SessionV3Contract {
   releaseStream(stream: EncryptedStreamV3): void {
     stream.wipeRecordMaterials();
     if (stream.terminalError !== undefined) {
+      this.incoming.remove(stream.id);
       this.releasedStreams.delete(stream.id);
       this.releasedStreamCleanup.unregister(stream);
     }
@@ -831,6 +832,7 @@ export class SessionV3 implements SessionV3Contract {
         }));
         return;
       }
+      if (stream.terminalError !== undefined) return;
       this.incoming.push({
         id: stream.id,
         kind: stream.kind,
@@ -998,6 +1000,7 @@ export class SessionV3 implements SessionV3Contract {
                 if (releasedStream !== undefined) {
                   this.releasedStreamCleanup.unregister(releasedStream);
                   releasedStream.markTerminal(new SessionV3Error("stream_reset", "logical stream reset by peer"));
+                  this.incoming.remove(id);
                 }
               }
             }
@@ -2302,21 +2305,25 @@ class AsyncSemaphore {
   }
 }
 
-class AsyncQueue<T> {
-  private readonly values: T[] = [];
+class AsyncQueue<T extends { id: bigint }> {
+  private readonly values = new Map<bigint, T>();
   private readonly waiters = new Set<AsyncQueueWaiter<T>>();
   private error: Error | undefined;
 
   push(value: T): void {
     if (this.error !== undefined) return;
     const waiter = this.waiters.values().next().value as AsyncQueueWaiter<T> | undefined;
-    if (waiter === undefined || !waiter.deliver(value)) this.values.push(value);
+    if (waiter === undefined || !waiter.deliver(value)) this.values.set(value.id, value);
+  }
+
+  remove(id: bigint): void {
+    this.values.delete(id);
   }
 
   async shift(signal?: AbortSignal): Promise<T> {
     if (this.error !== undefined) throw this.error;
-    const value = this.values.shift();
-    if (value !== undefined) return value;
+    const value = this.values.values().next().value;
+    if (value !== undefined) { this.values.delete(value.id); return value; }
     return await new Promise<T>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
@@ -2347,7 +2354,7 @@ class AsyncQueue<T> {
 
   fail(error: Error): void {
     this.error = error;
-    this.values.length = 0;
+    this.values.clear();
     for (const waiter of [...this.waiters]) waiter.fail(error);
   }
 }

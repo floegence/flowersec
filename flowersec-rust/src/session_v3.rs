@@ -36,13 +36,13 @@ use crate::{
         AEAD_TAG_V3_SIZE, CipherSuiteV3, DirectionV3, EpochRootsV3, INNER_HEADER_V3_SIZE,
         InnerRecordTypeV3, MAX_DATA_V3_BYTES, MAX_UNRELIABLE_PLAINTEXT_V3_BYTES,
         MAX_UNRELIABLE_WIRE_V3_BYTES, OpenPayloadV3, RECORD_HEADER_V3_SIZE, RecordHeaderV3,
-        SETUP_PREFACE_V3_SIZE, SetupPrefaceV3, StreamOpenerRoleV3, UNRELIABLE_HEADER_V3_SIZE,
-        UnreliableHeaderV3, compute_fss3_hash_v3, compute_open_hash_v3, compute_setup_mac_v3,
-        decode_inner_record_v3, decode_open_payload_v3, derive_control_material_v3,
-        derive_epoch_zero_v3, derive_next_epoch_v3, derive_stream_material_v3,
-        derive_unreliable_material_v3, encode_inner_record_v3, encode_open_payload_v3,
-        open_record_v3, open_unreliable_v3, seal_record_v3, seal_unreliable_v3,
-        verify_setup_mac_v3,
+        RecordMaterialV3, SETUP_PREFACE_V3_SIZE, SetupPrefaceV3, StreamOpenerRoleV3,
+        UNRELIABLE_HEADER_V3_SIZE, UnreliableHeaderV3, compute_fss3_hash_v3, compute_open_hash_v3,
+        compute_setup_mac_v3, decode_inner_record_v3, decode_open_payload_v3,
+        derive_control_material_v3, derive_epoch_zero_v3, derive_next_epoch_v3,
+        derive_stream_material_v3, derive_unreliable_material_v3, encode_inner_record_v3,
+        encode_open_payload_v3, open_record_v3, open_unreliable_v3, seal_record_v3,
+        seal_unreliable_v3, verify_setup_mac_v3,
     },
     transport_v3::{
         ByteStream, CLIENT_FINISHED_LABEL_V3, CarrierSessionV3, CarrierStreamV3,
@@ -600,6 +600,7 @@ impl EncryptedSessionV3 {
 
     fn terminate_stream_buffers(&self) {
         for stream in self.live_streams() {
+            stream.retire_record_material();
             stream.buffered_reads.terminate();
         }
     }
@@ -3047,6 +3048,8 @@ async fn commit_outbound_abandonment_v3(
 }
 
 struct EncryptedStreamV3 {
+    send_material: StreamMaterialSlot,
+    recv_material: StreamMaterialSlot,
     session: Weak<SelfSession>,
     carrier: Arc<dyn CarrierStreamV3>,
     id: u64,
@@ -3326,8 +3329,8 @@ async fn open_stream_with_capacity_v3(
         session,
         &carrier,
         id,
-        epoch,
-        0,
+        (epoch, 0),
+        None,
         InnerRecordTypeV3::Open,
         &open,
     )
@@ -3391,6 +3394,8 @@ async fn open_stream_with_capacity_v3(
     };
     let stream = Arc::new(EncryptedStreamV3 {
         session: Arc::downgrade(&owner),
+        send_material: StreamMaterialSlot::default(),
+        recv_material: StreamMaterialSlot::default(),
         carrier,
         id,
         kind: kind.to_owned(),
@@ -3584,6 +3589,10 @@ impl Drop for EncryptedStreamV3 {
 }
 
 impl EncryptedStreamV3 {
+    fn retire_record_material(&self) {
+        self.send_material.retire();
+        self.recv_material.retire();
+    }
     fn terminal_error(&self) -> Option<SessionError> {
         if let Some(error) = self.terminal.get() {
             return Some(*error);
@@ -3823,8 +3832,8 @@ impl EncryptedStreamV3 {
             &session,
             &self.carrier,
             self.id,
-            epoch,
-            sequence,
+            (epoch, sequence),
+            Some(&self.send_material),
             kind,
             payload,
         )
@@ -3911,7 +3920,7 @@ impl EncryptedStreamV3 {
                 "logical stream reset",
             )),
             _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
-            record = read_stream_record_progress_v3(session, &self.carrier, self.id, started) => record?,
+            record = read_stream_record_progress_v3(session, &self.carrier, self.id, started, Some((self.recv_epoch.load(Ordering::Acquire) as u32, &self.recv_material))) => record?,
         };
         let prior = *self.prior_ack.lock().await;
         if kind == InnerRecordTypeV3::StreamKeyUpdateAck && prior == Some((epoch, sequence)) {
@@ -3997,6 +4006,7 @@ impl EncryptedStreamV3 {
     }
 
     fn release_capacity(&self) {
+        self.retire_record_material();
         self._outbound_permit
             .lock()
             .expect("outbound permit lock poisoned")
@@ -4209,6 +4219,7 @@ impl EncryptedStreamV3 {
         *self.prior_ack.lock().await = Some((current_epoch, prior_sequence));
         self.recv_epoch
             .store(u64::from(next_epoch), Ordering::Release);
+        self.recv_material.clear();
         self.recv_sequence.store(0, Ordering::Release);
         *self.recv_update.lock().await = Some((transition, next_epoch));
         self.recv_update_changed.notify_waiters();
@@ -4305,6 +4316,7 @@ impl EncryptedStreamV3 {
         }
         self.send_epoch
             .store(u64::from(next_epoch), Ordering::Release);
+        self.send_material.clear();
         self.send_sequence.store(0, Ordering::Release);
         *self.send_update.lock().await = None;
         *self.send_update_ack.lock().await = Some((transition, next_epoch));
@@ -4380,8 +4392,8 @@ async fn reject_inbound_open_v3(
         session,
         carrier,
         id,
-        send_epoch,
-        0,
+        (send_epoch, 0),
+        None,
         InnerRecordTypeV3::OpenReject,
         &payload,
     )
@@ -4542,6 +4554,8 @@ async fn accept_one_stream_v3(
     session.peer_ledger.lock().await.mark_terminal(id)?;
     let stream = Arc::new(EncryptedStreamV3 {
         session: Arc::downgrade(&session),
+        send_material: StreamMaterialSlot::default(),
+        recv_material: StreamMaterialSlot::default(),
         carrier,
         id,
         kind: open.kind().to_owned(),
@@ -4580,8 +4594,8 @@ async fn accept_one_stream_v3(
         &session,
         &stream_carrier,
         id,
-        send_epoch,
-        0,
+        (send_epoch, 0),
+        Some(&stream.send_material),
         InnerRecordTypeV3::OpenAck,
         &ack,
     )
@@ -5270,32 +5284,80 @@ fn next_stream_send_sequence_v3(sequence: &AtomicU64) -> io::Result<u64> {
         .map_err(|_| invalid("logical stream send sequence exhausted"))
 }
 
+#[derive(Default)]
+struct StreamMaterialSlot {
+    cached: StdMutex<Option<(u32, Arc<RecordMaterialV3>)>>,
+    retired: AtomicBool,
+}
+
+impl StreamMaterialSlot {
+    fn clear(&self) {
+        self.cached
+            .lock()
+            .expect("stream material lock poisoned")
+            .take();
+    }
+
+    fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
+        self.clear();
+    }
+}
+
+async fn stream_material_v3(
+    session: &EncryptedSessionV3,
+    id: u64,
+    epoch: u32,
+    direction: DirectionV3,
+    slot: Option<&StreamMaterialSlot>,
+) -> io::Result<Arc<RecordMaterialV3>> {
+    if let Some(cached) = slot.and_then(|slot| {
+        slot.cached
+            .lock()
+            .expect("stream material lock poisoned")
+            .as_ref()
+            .filter(|(cached_epoch, _)| *cached_epoch == epoch)
+            .map(|(_, material)| material.clone())
+    }) {
+        return Ok(cached);
+    }
+    let root = {
+        let state = session.state.lock().await;
+        let roots = if direction == session.send_direction {
+            &state.send_roots
+        } else {
+            &state.recv_roots
+        };
+        zeroize::Zeroizing::new(
+            *roots
+                .get(&epoch)
+                .ok_or_else(|| invalid("missing stream roots"))?
+                .stream_root(),
+        )
+    };
+    let material = Arc::new(
+        derive_stream_material_v3(&root, &session.h3, id, direction, epoch).map_err(proto)?,
+    );
+    if let Some(slot) = slot {
+        let mut cached = slot.cached.lock().expect("stream material lock poisoned");
+        if !slot.retired.load(Ordering::Acquire) {
+            *cached = Some((epoch, material.clone()));
+        }
+    }
+    Ok(material)
+}
+
 async fn write_stream_record_v3(
     session: &EncryptedSessionV3,
     carrier: &Arc<dyn CarrierStreamV3>,
     id: u64,
-    epoch: u32,
-    sequence: u64,
+    (epoch, sequence): (u32, u64),
+    slot: Option<&StreamMaterialSlot>,
     kind: InnerRecordTypeV3,
     payload: &[u8],
 ) -> io::Result<()> {
     let inner = encode_inner_record_v3(kind, payload).map_err(proto)?;
-    let (key, nonce) = {
-        let state = session.state.lock().await;
-        let roots = state
-            .send_roots
-            .get(&epoch)
-            .ok_or_else(|| invalid("missing stream send roots"))?;
-        let material = derive_stream_material_v3(
-            roots.stream_root(),
-            &session.h3,
-            id,
-            session.send_direction,
-            epoch,
-        )
-        .map_err(proto)?;
-        (*material.record_key(), *material.nonce_prefix())
-    };
+    let material = stream_material_v3(session, id, epoch, session.send_direction, slot).await?;
     let header = RecordHeaderV3::new(
         epoch,
         sequence,
@@ -5303,8 +5365,8 @@ async fn write_stream_record_v3(
     );
     let ciphertext = seal_record_v3(
         session.config.suite,
-        &key,
-        &nonce,
+        material.record_key(),
+        material.nonce_prefix(),
         &session.h3,
         id,
         session.send_direction,
@@ -5326,7 +5388,7 @@ async fn read_stream_record_v3(
     carrier: &Arc<dyn CarrierStreamV3>,
     id: u64,
 ) -> io::Result<(InnerRecordTypeV3, Vec<u8>, u32, u64)> {
-    read_stream_record_progress_v3(session, carrier, id, &mut false).await
+    read_stream_record_progress_v3(session, carrier, id, &mut false, None).await
 }
 
 async fn read_stream_record_progress_v3(
@@ -5334,32 +5396,20 @@ async fn read_stream_record_progress_v3(
     carrier: &Arc<dyn CarrierStreamV3>,
     id: u64,
     started: &mut bool,
+    current: Option<(u32, &StreamMaterialSlot)>,
 ) -> io::Result<(InnerRecordTypeV3, Vec<u8>, u32, u64)> {
     let mut raw = [0; RECORD_HEADER_V3_SIZE];
     read_exact_progress_v3(carrier, &mut raw, started).await?;
     let header = RecordHeaderV3::decode(&raw).map_err(proto)?;
     let mut ciphertext = vec![0; header.ciphertext_length() as usize];
     read_exact_v3(carrier, &mut ciphertext).await?;
-    let (key, nonce) = {
-        let state = session.state.lock().await;
-        let roots = state
-            .recv_roots
-            .get(&header.epoch())
-            .ok_or_else(|| invalid("missing stream receive roots"))?;
-        let material = derive_stream_material_v3(
-            roots.stream_root(),
-            &session.h3,
-            id,
-            session.recv_direction,
-            header.epoch(),
-        )
-        .map_err(proto)?;
-        (*material.record_key(), *material.nonce_prefix())
-    };
+    let slot = current.and_then(|(epoch, slot)| (epoch == header.epoch()).then_some(slot));
+    let material =
+        stream_material_v3(session, id, header.epoch(), session.recv_direction, slot).await?;
     let plaintext = open_record_v3(
         session.config.suite,
-        &key,
-        &nonce,
+        material.record_key(),
+        material.nonce_prefix(),
         &session.h3,
         id,
         session.recv_direction,

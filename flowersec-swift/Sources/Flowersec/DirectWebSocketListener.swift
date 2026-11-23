@@ -183,8 +183,7 @@ private struct WebSocketIngressConfigV3: Sendable {
       else { ch.close(promise: nil); return ch.eventLoop.makeSucceededFuture(nil) }
       return ch.eventLoop.makeSucceededFuture(HTTPHeaders([("sec-websocket-protocol", proto)]))
     }, upgradePipelineHandler: { ch, head in
-      let state = ProxyWebSocketInboundState(maxBufferedBytes: proxyWebSocketInboundBufferBytes(maxFrameBytes: maximum),
-        maxBufferedFrames: tunnel ? 1024 : .max)
+      let state = ProxyWebSocketInboundState(maxBufferedBytes: proxyWebSocketInboundBufferBytes(maxFrameBytes: maximum))
       do {
         try ch.pipeline.syncOperations.addHandler(DirectClientFrameRuleV3())
         if tunnel { try ch.pipeline.syncOperations.addHandler(RelayAdmissionFrameGate()) }

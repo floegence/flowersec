@@ -69,6 +69,12 @@ export function claimArtifactLeaseV3(lease: ArtifactLeaseV3): ClaimedArtifactLea
   return Object.freeze(claim) as ClaimedArtifactLeaseV3;
 }
 
+export function leaseScopeV3(lease: ArtifactLeaseV3, name: string) {
+  const state = leaseStates.get(lease);
+  if (state === undefined || state.status !== "idle") throw new ArtifactLeaseV3Error();
+  return state.artifact.scoped.find(entry => entry.scope === name);
+}
+
 /** Local routing mistakes must not claim, retire or spend the invitation. */
 export function claimConnectionLeaseV3(lease: ArtifactLeaseV3, ingress?: string): ClaimedArtifactLeaseV3 {
   const state = leaseStates.get(lease);

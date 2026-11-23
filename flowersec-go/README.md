@@ -195,3 +195,14 @@ proxy failure never falls back to direct access. Use the same instance's
 `HTTPTransport()` for application-owned HTTPS bootstrap requests. Applications
 continue to own HTTP redirect policy and transport cleanup. See
 [the public contract](../docs/API_CONTRACT.md#explicit-go-https-egress).
+
+### Direct listener identity
+
+`AcceptorOptions.IngressEndpoints` binds a registered Direct listener to its
+public candidate URL. Set it when using port translation, virtual hosting,
+wildcard certificates, or an advertised address different from the bound
+socket. Otherwise admission uses the local port and IP, a loopback alias, or
+the single DNS name on the presented certificate matching SNI. A request Host
+header alone never selects the listener identity. HTTP Direct and private
+loopback use their dedicated issuance and handler APIs; the authorization
+record must match the receiving profile before the host consumes it.

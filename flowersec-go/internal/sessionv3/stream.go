@@ -1442,6 +1442,11 @@ func (s *engineSession) resolveOutboundOpen(id uint64) error {
 }
 
 func (s *encryptedStream) peerReset(cause error) {
+	s.applyPeerReset(cause)
+	s.session.cleanupEpochRoots()
+}
+
+func (s *encryptedStream) applyPeerReset(cause error) {
 	s.terminalMu.Lock()
 	if s.terminalErr != nil {
 		s.terminalMu.Unlock()
@@ -1456,7 +1461,6 @@ func (s *encryptedStream) peerReset(cause error) {
 	s.completeSendRekeyTerminal()
 	s.clearRootEpochs()
 	s.finish(cause, false)
-	s.session.cleanupEpochRoots()
 }
 
 func (s *encryptedStream) completeSendRekeyTerminal() {

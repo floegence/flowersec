@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
 
 describe("proxy service worker generator", () => {
+  it("forwards bounded non-streaming uploads and rejects oversized blobs", async () => {
+    const bodies: string[] = [];
+    const worker = generatedWorker(async id => ({ id, postMessage(message: { req: {body: ArrayBuffer} }, [port]: MessagePort[]) {
+      bodies.push(new TextDecoder().decode(message.req.body));
+      port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204, headers: [] });
+      port!.postMessage({ type: "flowersec-proxy:response_end" });
+      port!.close();
+    } }), { maxRequestBodyBytes: 3 });
+    for (const [text, status] of [["one", 204], ["long", 413]] as const) {
+      const request = new Request("https://app.example/upload", { method: "POST", body: text });
+      Object.defineProperty(request, "body", { value: undefined });
+      expect((await within(worker.fetch(request))).status).toBe(status);
+    }
+    expect(bodies).toEqual(["one"]);
+  });
+
   it("routes interleaved requests only to the initiating client by default", async () => {
     const worker = generatedWorker(async id => ({ id, postMessage(_value: unknown, [port]: MessagePort[]) {
       port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204, headers: [{ name: "x-runtime", value: id }] });

@@ -33,6 +33,17 @@ func MatchesTunnelIngress(ctx context.Context, decoded *artifactv3.DecodedReques
 	if !ok || ingress.endpoint == "" || len(ingress.leaf) == 0 || decoded == nil || decoded.Request.PathKind != artifactv3.PathTunnel {
 		return false
 	}
+	return matchesIngress(ingress, decoded, now)
+}
+
+func MatchesDirectIngress(decoded *artifactv3.DecodedRequest, kind artifactv3.Carrier, endpoint string, state *tls.ConnectionState, now time.Time) bool {
+	if decoded == nil || decoded.Request.PathKind != artifactv3.PathDirect || state == nil || state.Version != tls.VersionTLS13 || state.DidResume || len(state.LocalCertificate) == 0 {
+		return false
+	}
+	return matchesIngress(tunnelIngress{carrier: kind, endpoint: endpoint, leaf: state.LocalCertificate[0]}, decoded, now)
+}
+
+func matchesIngress(ingress tunnelIngress, decoded *artifactv3.DecodedRequest, now time.Time) bool {
 	for _, candidate := range decoded.Request.Candidates {
 		if candidate.ID != decoded.Request.ChosenCandidateID || candidate.Carrier != ingress.carrier || candidate.NormalizedURL != ingress.endpoint {
 			continue

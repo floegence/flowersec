@@ -23,6 +23,7 @@ var leaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 // AuthorizationRecord is the opaque, secret server-side counterpart of one
 // issued artifact. Its explicit Encode method is the only persistence boundary.
 type AuthorizationRecord struct {
+	directProfile    string
 	authorityScope   string
 	artifact         *artifactv3.Artifact
 	artifactJSON     []byte
@@ -34,6 +35,7 @@ type AuthorizationRecord struct {
 }
 
 type issuedPublication struct {
+	directProfile    string
 	artifact         *artifactv3.Artifact
 	artifactHash     [sha256.Size]byte
 	lookupKey        string
@@ -48,6 +50,7 @@ type restoredAuthorizationArtifact struct {
 }
 
 type authorizationRecordWire struct {
+	DirectProfile     string `json:"direct_profile,omitempty"`
 	AuthorityScope    string `json:"authority_scope,omitempty"`
 	SchemaVersion     int    `json:"schema_version"`
 	ArtifactBase64URL string `json:"artifact_base64url"`
@@ -86,7 +89,7 @@ func (record AuthorizationRecord) LookupKey() string { return record.lookupKey }
 // storage. Callers must protect the returned bytes as credentials.
 func (record AuthorizationRecord) Encode() ([]byte, error) {
 	if issued := record.issued; issued != nil {
-		if !record.validScope() || record.artifact != issued.artifact || record.authorityScope != issued.authorityScope ||
+		if !record.validScope() || record.directProfile != issued.directProfile || record.artifact != issued.artifact || record.authorityScope != issued.authorityScope ||
 			record.allowReplacement != issued.allowReplacement || record.directUpstream != issued.directUpstream ||
 			record.lookupKey != issued.lookupKey || sha256.Sum256(record.artifactJSON) != issued.artifactHash {
 			return nil, ErrInvalidControlPlaneInput
@@ -95,6 +98,7 @@ func (record AuthorizationRecord) Encode() ([]byte, error) {
 		return nil, err
 	}
 	wire := authorizationRecordWire{
+		DirectProfile:  record.directProfile,
 		AuthorityScope: record.authorityScope,
 		SchemaVersion:  1, ArtifactBase64URL: base64.RawURLEncoding.EncodeToString(record.artifactJSON),
 		LookupKey: record.lookupKey, DirectUpstream: record.directUpstream,
@@ -123,6 +127,7 @@ func ParseAuthorizationRecord(encoded []byte) (AuthorizationRecord, error) {
 	}
 	record, err := newAuthorizationRecord(artifact, artifactJSON, wire.DirectUpstream, wire.AllowReplacement)
 	record.authorityScope = wire.AuthorityScope
+	record.directProfile = wire.DirectProfile
 	if err != nil || !record.validScope() || subtle.ConstantTimeCompare([]byte(record.lookupKey), []byte(wire.LookupKey)) != 1 {
 		return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 	}
@@ -130,7 +135,17 @@ func ParseAuthorizationRecord(encoded []byte) (AuthorizationRecord, error) {
 	return record, nil
 }
 
+func usesProfileCandidate(artifact *artifactv3.Artifact) bool {
+	return slices.ContainsFunc(artifact.Path.Candidates, func(candidate artifactv3.Candidate) bool {
+		return candidate.ID == "http-direct" || candidate.ID == "private-loopback"
+	})
+}
+
 func (record AuthorizationRecord) validScope() bool {
+	if record.directProfile != "" && (record.artifact == nil || record.artifact.Path.Kind != artifactv3.PathDirect ||
+		(record.directProfile != HTTPDirectProfile && record.directProfile != PrivateLoopbackProfile && record.directProfile != artifactv3.Profile)) {
+		return false
+	}
 	return record.artifact != nil && ((record.artifact.Path.Kind == artifactv3.PathDirect && record.authorityScope == "") || (record.artifact.Path.Kind == artifactv3.PathTunnel && leaseIDPattern.MatchString(record.authorityScope)))
 }
 
@@ -195,12 +210,14 @@ func (issued IssuedPrivateLoopbackArtifact) Format(state fmt.State, verb rune) {
 // RuntimeAuthorizationRequest is a validated opaque request received from the
 // flowersec-runtime HTTP authorizer callback.
 type RuntimeAuthorizationRequest struct {
-	decoded   *artifactv3.DecodedRequest
-	lookupKey string
-	carrier   artifactv3.Carrier
+	directProfile string
+	decoded       *artifactv3.DecodedRequest
+	lookupKey     string
+	carrier       artifactv3.Carrier
 }
 
 type runtimeAuthorizationRequestWire struct {
+	DirectProfile string `json:"direct_profile,omitempty"`
 	FSB3Base64URL string `json:"fsb5_base64url"`
 	Carrier       string `json:"carrier"`
 	RemoteAddress string `json:"remote_address"`
@@ -225,6 +242,10 @@ func ParseRuntimeAuthorizationRequest(encoded []byte) (RuntimeAuthorizationReque
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
 	carrier := artifactv3.Carrier(wire.Carrier)
+	if wire.DirectProfile != "" && (decoded.Request.PathKind != artifactv3.PathDirect || carrier != artifactv3.CarrierWebSocket ||
+		(wire.DirectProfile != HTTPDirectProfile && wire.DirectProfile != PrivateLoopbackProfile)) {
+		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
+	}
 	matchedCarrier := false
 	for _, candidate := range decoded.Request.Candidates {
 		if candidate.ID == decoded.Request.ChosenCandidateID && candidate.Carrier == carrier {
@@ -241,7 +262,7 @@ func ParseRuntimeAuthorizationRequest(encoded []byte) (RuntimeAuthorizationReque
 	if credential == "" {
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
-	return RuntimeAuthorizationRequest{decoded: decoded, lookupKey: artifactv3.CredentialLookupKey(credential), carrier: carrier}, nil
+	return RuntimeAuthorizationRequest{decoded: decoded, lookupKey: artifactv3.CredentialLookupKey(credential), carrier: carrier, directProfile: wire.DirectProfile}, nil
 }
 
 // LookupKey is the non-secret key used to retrieve the matching record before
@@ -347,6 +368,16 @@ func authorizeRuntimeAt(request RuntimeAuthorizationRequest, record Authorizatio
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
 	artifact := record.artifact
+	expectedProfile := record.directProfile
+	if expectedProfile == "" && usesProfileCandidate(artifact) {
+		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	if expectedProfile == artifactv3.Profile {
+		expectedProfile = ""
+	}
+	if request.directProfile != expectedProfile {
+		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput

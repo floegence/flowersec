@@ -745,8 +745,9 @@ func (s *engineSession) resetAllStreams() {
 	}
 	s.streamsMu.RUnlock()
 	for _, stream := range streams {
-		stream.peerReset(ErrSessionClosed)
+		stream.applyPeerReset(ErrSessionClosed)
 	}
+	s.cleanupEpochRoots()
 }
 
 func (s *engineSession) Inventory() (bool, int) {
@@ -813,6 +814,9 @@ func (s *engineSession) cleanupEpochRoots() {
 	minimumSend := s.controlSendEpoch
 	minimumReceive := s.controlRecvEpoch
 	s.cryptoMu.RUnlock()
+	if minimumSend == 0 && minimumReceive == 0 {
+		return
+	}
 	for _, stream := range s.snapshotStreams() {
 		if sendEpoch, needed := stream.minimumSendRootEpoch(); needed && sendEpoch < minimumSend {
 			minimumSend = sendEpoch

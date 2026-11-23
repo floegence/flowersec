@@ -219,7 +219,7 @@ func TestAcceptorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 				continue
 			}
 			switch field.Name {
-			case "AllowedOrigins", "CheckOrigin", "Listeners", "MaxInboundStreams", "MaxDirectSessions", "RPCFrameLimits", "MaxConcurrentRPCRequests", "Authorize", "Release", "ResolveHandlers", "OnSession":
+			case "AllowedOrigins", "CheckOrigin", "Listeners", "IngressEndpoints", "MaxInboundStreams", "MaxDirectSessions", "RPCFrameLimits", "MaxConcurrentRPCRequests", "Authorize", "Release", "ResolveHandlers", "OnSession":
 				continue
 			}
 			t.Fatalf("%s exposes an unexpected implementation field %s", typeOf, field.Name)

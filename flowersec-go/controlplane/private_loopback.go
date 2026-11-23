@@ -73,5 +73,6 @@ func (issuer *Issuer) IssuePrivateLoopbackDirect(options PrivateLoopbackIssueOpt
 	if err != nil {
 		return IssuedPrivateLoopbackArtifact{}, ErrInvalidControlPlaneInput
 	}
+	issued.bindDirectProfile(PrivateLoopbackProfile)
 	return IssuedPrivateLoopbackArtifact{artifactJSON: profileArtifact, issued: issued}, nil
 }

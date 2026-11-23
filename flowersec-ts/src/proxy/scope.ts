@@ -63,7 +63,7 @@ function optionalAppBasePath(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   const path = nonEmpty("appBasePath", value);
   if (!path.startsWith("/") || path.startsWith("//") || /[\u0000-\u0020]/u.test(path)) reject("appBasePath");
-  return path;
+  return normalizePrefixes("appBasePath", [path])[0]!;
 }
 
 function httpStrings(name: string, value: unknown): readonly string[] | undefined {

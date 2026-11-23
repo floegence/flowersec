@@ -254,10 +254,16 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
         if (!reservation) return new Response("proxy service unavailable", { status: 503 });
         try {
           let busy = false;
-          const requestBody = await boundedBody(request.body, config.maxRequestBodyBytes, bytes => {
+          let requestBody: ArrayBuffer | null;
+          if (request.body === undefined) {
+            if (!reservation.grow(config.maxRequestBodyBytes)) return new Response("proxy service unavailable", { status: 503 });
+            const blob = await request.blob();
+            requestBody = blob.size > config.maxRequestBodyBytes ? null : await blob.arrayBuffer();
+          } else requestBody = await boundedBody(request.body, config.maxRequestBodyBytes, bytes => {
             busy = !reservation.grow(bytes);
             return !busy;
           });
+          if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
           if (busy) return new Response("proxy service unavailable", { status: 503 });
           if (requestBody === null) return new Response("proxy request too large", { status: 413 });
           body = requestBody;

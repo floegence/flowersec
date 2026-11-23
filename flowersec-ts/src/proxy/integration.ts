@@ -1,8 +1,9 @@
 import { connectV3, type SessionOptionsV3 } from "../browser/connectSessionV3.js";
-import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
+import { leaseScopeV3, type ArtifactLeaseV3 } from "../v3/artifactLease.js";
 import type { Session } from "../public/contract.js";
 
-import { createProxyRuntime } from "./runtime.js";
+import { createScopedProxyRuntime } from "./runtime.js";
+import { assertProxyRuntimeScope, PROXY_RUNTIME_SCOPE } from "./scope.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
 import type { ProxyRuntime, ProxyRuntimeOptions } from "./types.js";
 import {
@@ -29,15 +30,27 @@ export type ProxyBrowserHandle = Readonly<{
   dispose(): Promise<void>;
 }>;
 
+function proxyAuthority(lease: ArtifactLeaseV3) {
+  const entry = leaseScopeV3(lease, PROXY_RUNTIME_SCOPE.name);
+  if (!entry) return undefined;
+  if (entry.scope_version !== PROXY_RUNTIME_SCOPE.version) throw new TypeError("unsupported proxy scope version");
+  return assertProxyRuntimeScope(entry.payload);
+}
+
 export async function connectProxyBrowser(
   lease: ArtifactLeaseV3,
   options: ProxyBrowserConnectOptions = {},
 ): Promise<ProxyBrowserHandle> {
+  const authority = proxyAuthority(lease);
+  if (authority && options.serviceWorker && (authority.mode !== "service_worker" ||
+      options.serviceWorker.scriptUrl !== authority.serviceWorker.scriptUrl || options.serviceWorker.scope !== authority.serviceWorker.scope)) {
+    throw new TypeError("service worker does not match the proxy scope");
+  }
   const session = await connectV3(lease, options.connect);
   let runtime: ProxyRuntime | undefined;
   try {
     if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
-    runtime = createProxyRuntime({ session, ...options.runtime });
+    runtime = createScopedProxyRuntime({ ...options.runtime, session }, authority);
     return Object.freeze({
       session,
       runtime,
@@ -64,10 +77,15 @@ export async function connectProxyControllerBrowser(
   lease: ArtifactLeaseV3,
   options: ProxyControllerBrowserConnectOptions,
 ): Promise<ProxyControllerBrowserHandle> {
+  const authority = proxyAuthority(lease);
+  const allowedOrigins = Object.freeze([...options.controller.allowedOrigins]);
+  if (authority && (authority.mode !== "controller_bridge" || allowedOrigins.some(origin => !authority.controllerBridge.allowedOrigins.includes(origin)))) {
+    throw new TypeError("controller origins do not match the proxy scope");
+  }
   const base = await connectProxyBrowser(lease, options);
   let controller: ProxyControllerWindowHandle | undefined;
   try {
-    controller = registerProxyControllerWindow({ runtime: base.runtime, ...options.controller });
+    controller = registerProxyControllerWindow({ ...options.controller, allowedOrigins, runtime: base.runtime });
     return Object.freeze({
       session: base.session,
       runtime: base.runtime,

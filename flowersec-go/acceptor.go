@@ -7,12 +7,16 @@ package flowersec
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +32,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/protocolv3"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v7/internal/rpc"
 	session "github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/transportsecurity"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -57,6 +62,7 @@ type AcceptorOptions struct {
 	// acceptor. WebSocket adapters are served by Handler; raw QUIC and
 	// WebTransport adapters are served by Serve.
 	Listeners                []DirectListener
+	IngressEndpoints         map[DirectListener]string
 	MaxInboundStreams        uint16
 	MaxDirectSessions        uint16
 	RPCFrameLimits           RPCFrameLimits
@@ -70,6 +76,7 @@ type AcceptorOptions struct {
 }
 
 type Acceptor struct {
+	ingresses   map[carrier.Kind]string
 	options     AcceptorOptions
 	resources   carrierws.ResourcePolicy
 	directSlots chan struct{}
@@ -92,6 +99,7 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 	}
 	listeners := make([]registeredAcceptorListener, 0, len(options.Listeners))
 	seen := make(map[string]struct{}, len(options.Listeners))
+	ingresses := make(map[carrier.Kind]string, len(options.IngressEndpoints))
 	for _, registered := range options.Listeners {
 		listener, ok := registered.(registeredAcceptorListener)
 		if !ok || listener.acceptorPath() != carrier.PathDirect {
@@ -102,9 +110,19 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 			return nil, ErrInvalidAcceptor
 		}
 		seen[key] = struct{}{}
+		if endpoint, exists := options.IngressEndpoints[registered]; exists {
+			normalized, err := artifactv3.NormalizeDirectEndpoint(artifactv3.Carrier(listener.acceptorCarrier()), endpoint)
+			if err != nil {
+				return nil, ErrInvalidAcceptor
+			}
+			ingresses[listener.acceptorCarrier()] = normalized
+		}
 		listeners = append(listeners, listener)
 	}
-	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions), listeners: listeners}
+	if len(ingresses) != len(options.IngressEndpoints) {
+		return nil, ErrInvalidAcceptor
+	}
+	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions), listeners: listeners, ingresses: ingresses}
 	return acceptor, nil
 }
 
@@ -224,7 +242,17 @@ func (direct *acceptedDirect) serveNative(ctx context.Context, native carrier.Se
 		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission stream unavailable"})
 		return err
 	}
-	decoded, err := admissionv3.Serve(admissionContext, admission, direct.acceptor.reasons(), direct.authorize(string(native.Kind()), remoteAddress))
+	observed, ok := native.(interface {
+		LocalAddr() net.Addr
+		TLSState() tls.ConnectionState
+	})
+	if !ok {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "missing listener identity"})
+		return ErrInvalidAcceptor
+	}
+	state := observed.TLSState()
+	ingress := directIngress{local: observed.LocalAddr(), state: &state, configured: direct.acceptor.ingresses[native.Kind()]}
+	decoded, err := admissionv3.Serve(admissionContext, admission, direct.acceptor.reasons(), direct.authorize(string(native.Kind()), remoteAddress, ingress))
 	if err != nil {
 		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
 		return err
@@ -408,7 +436,11 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	} else if mode == webSocketAdmissionHTTP {
 		serveAdmission = websocketadmission.ServeHTTPDirect
 	}
-	decoded, err := serveAdmission(ctx, connection, acceptor.reasons(), direct.authorize("websocket", request.RemoteAddr))
+	ingress := directIngress{local: connection.LocalAddr(), state: request.TLS, authority: request.Host, mode: mode}
+	if mode == webSocketAdmissionTLS {
+		ingress.configured = acceptor.ingresses[carrier.KindWebSocket]
+	}
+	decoded, err := serveAdmission(ctx, connection, acceptor.reasons(), direct.authorize("websocket", request.RemoteAddr, ingress))
 	if err != nil {
 		_ = connection.Close()
 		return
@@ -478,12 +510,87 @@ func (direct *acceptedDirect) serve(ctx, establishCtx context.Context, transport
 	return err
 }
 
-func (direct *acceptedDirect) authorize(observedCarrier, remoteAddress string) admissionv3.Authorize {
+type directIngress struct {
+	local                 net.Addr
+	state                 *tls.ConnectionState
+	authority, configured string
+	mode                  webSocketAdmissionMode
+}
+
+func (ingress directIngress) match(decoded *artifactv3.DecodedRequest, kind artifactv3.Carrier) (string, bool) {
+	if ingress.local == nil || decoded == nil || decoded.Request.PathKind != artifactv3.PathDirect {
+		return "", false
+	}
+	localHost, localPort, err := net.SplitHostPort(ingress.local.String())
+	if err != nil {
+		return "", false
+	}
+	for _, candidate := range decoded.Request.Candidates {
+		if candidate.ID != decoded.Request.ChosenCandidateID || candidate.Carrier != kind {
+			continue
+		}
+		endpoint, err := url.Parse(candidate.NormalizedURL)
+		if err != nil {
+			return "", false
+		}
+		port := endpoint.Port()
+		if port == "" {
+			port = "443"
+		}
+		if ingress.configured != "" {
+			if candidate.NormalizedURL != ingress.configured {
+				return "", false
+			}
+		} else {
+			if localPort != port {
+				return "", false
+			}
+			host := endpoint.Hostname()
+			localIP, candidateIP := net.ParseIP(localHost), net.ParseIP(host)
+			localMatch := localIP != nil && ((candidateIP != nil && localIP.Equal(candidateIP)) || (host == "localhost" && localIP.IsLoopback()))
+			if !localMatch {
+				if ingress.state == nil || len(ingress.state.LocalCertificate) == 0 || !strings.EqualFold(ingress.state.ServerName, host) {
+					return "", false
+				}
+				leaf, err := x509.ParseCertificate(ingress.state.LocalCertificate[0])
+				if err != nil || len(leaf.DNSNames) != 1 || !strings.EqualFold(leaf.DNSNames[0], host) {
+					return "", false
+				}
+			}
+		}
+		if ingress.mode != webSocketAdmissionTLS {
+			if kind != artifactv3.CarrierWebSocket || len(decoded.Request.Candidates) != 1 || candidate.TLS.Mode != artifactv3.TLSModeCA {
+				return "", false
+			}
+			profile, id, validate := controlplane.HTTPDirectProfile, "http-direct", httpdirectv1.ValidateEndpoint
+			if ingress.mode == webSocketAdmissionPrivate {
+				profile, id, validate = controlplane.PrivateLoopbackProfile, "private-loopback", privateloopbackv1.ValidateEndpoint
+			}
+			_, binding, err := validate("ws://" + ingress.authority + WebSocketDirectPath)
+			normalized, normalizeErr := artifactv3.NormalizeDirectEndpoint(kind, binding)
+			return profile, err == nil && normalizeErr == nil && normalized == candidate.NormalizedURL && candidate.ID == id
+		}
+		if ingress.authority != "" {
+			normalized, err := artifactv3.NormalizeDirectEndpoint(kind, "wss://"+ingress.authority+WebSocketDirectPath)
+			if err != nil || normalized != candidate.NormalizedURL {
+				return "", false
+			}
+		}
+		return "", transportsecurity.MatchesDirectIngress(decoded, kind, candidate.NormalizedURL, ingress.state, time.Now())
+	}
+	return "", false
+}
+
+func (direct *acceptedDirect) authorize(observedCarrier, remoteAddress string, ingress directIngress) admissionv3.Authorize {
 	return func(ctx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv3.PathDirect {
 			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 		}
-		request, err := runtimeAuthorizationRequest(candidate, observedCarrier, remoteAddress)
+		profile, matches := ingress.match(candidate, artifactv3.Carrier(observedCarrier))
+		if !matches {
+			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
+		}
+		request, err := runtimeAuthorizationRequestForProfile(candidate, observedCarrier, remoteAddress, profile)
 		if err != nil {
 			return artifactv3.AdmissionResponse{}, err
 		}
@@ -589,14 +696,20 @@ type acceptorTransportContext struct {
 type acceptorTransportContextKey struct{}
 
 func runtimeAuthorizationRequest(decoded *artifactv3.DecodedRequest, observedCarrier, remoteAddress string) (controlplane.RuntimeAuthorizationRequest, error) {
+	return runtimeAuthorizationRequestForProfile(decoded, observedCarrier, remoteAddress, "")
+}
+
+func runtimeAuthorizationRequestForProfile(decoded *artifactv3.DecodedRequest, observedCarrier, remoteAddress, profile string) (controlplane.RuntimeAuthorizationRequest, error) {
 	if decoded == nil || len(decoded.Raw) == 0 || observedCarrier == "" || remoteAddress == "" {
 		return controlplane.RuntimeAuthorizationRequest{}, ErrInvalidAcceptor
 	}
 	encoded, err := json.Marshal(struct {
+		DirectProfile string `json:"direct_profile,omitempty"`
 		FSB3Base64URL string `json:"fsb5_base64url"`
 		Carrier       string `json:"carrier"`
 		RemoteAddress string `json:"remote_address"`
 	}{
+		DirectProfile: profile,
 		FSB3Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
 		Carrier:       observedCarrier,
 		RemoteAddress: remoteAddress,

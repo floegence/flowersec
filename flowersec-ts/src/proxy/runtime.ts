@@ -20,6 +20,8 @@ import type {
   ProxyRuntimeOptions,
   ProxyRequestInit,
   ProxyRuntimePathPolicy,
+  ProxyRuntimeScope,
+  ProxyRuntimeScopeLimits,
 } from "./types.js";
 
 const PROXY_HTTP_STREAM_KIND = "flowersec-proxy/http1";
@@ -271,6 +273,27 @@ function publicFailure(error: unknown): Readonly<{ status: number; code: string;
 }
 
 export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
+  return createScopedProxyRuntime(options);
+}
+
+export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority?: ProxyRuntimeScope): ProxyRuntime {
+  if (authority) {
+    const grantedHeaders = authority.http?.extraRequestHeaders ?? [];
+    const limits = Object.fromEntries(Object.entries(authority.limits ?? {}).map(([key, ceiling]) => {
+      const configured = options[key as keyof ProxyRuntimeScopeLimits];
+      return [key, typeof configured === "number" && configured > 0 ? Math.min(configured, ceiling) : ceiling];
+    }));
+    options = { ...options, ...limits, extraRequestHeaders: options.extraRequestHeaders === undefined ? grantedHeaders :
+      [...normalizeHeaderNames(options.extraRequestHeaders)].filter(name => grantedHeaders.includes(name)) };
+  }
+  const checkAuthority = (kind: "http" | "websocket", path: string) => {
+    const base = authority?.appBasePath;
+    if (!base) return;
+    const candidate = pathName(path);
+    if (candidate === base || candidate.startsWith(base.endsWith("/") ? base : `${base}/`)) return;
+    if (kind === "http" && authority?.http?.additionalPathPrefixes?.some(prefix => candidate.startsWith(prefix))) return;
+    throw new ProxyPolicyError("proxy path outside acquisition scope");
+  };
   if (options.session === null || typeof options.session !== "object" || typeof options.session.openStream !== "function") {
     throw new TypeError("proxy runtime requires a Session");
   }
@@ -318,6 +341,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(request.path);
     enforcePathPolicy("http", path, pathPolicy);
+    checkAuthority("http", path);
     const headers = filterHeaders(request.headers, BASE_REQUEST_HEADERS, requestExtra);
     const eventRequested = headers.some(({ name, value }) => name === "accept" && acceptsEventStream(value));
     if (eventRequested && activeEvents >= maxConcurrentEventStreams) throw new SessionError("resource_exhausted");
@@ -496,6 +520,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(input);
     enforcePathPolicy("websocket", path, pathPolicy);
+    checkAuthority("websocket", path);
     const stream = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
       ...(openOptions.signal === undefined ? {} : { signal: openOptions.signal }),
       metadata: createStreamMetadata({ protocol: "flowersec.proxy.websocket", version: 2 }),

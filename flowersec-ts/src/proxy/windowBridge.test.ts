@@ -340,7 +340,8 @@ class FailingDuplexStream implements ByteStream {
   async close(): Promise<void> {}
 }
 
-function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
+function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined,
+  openWebSocketStream: ProxyRuntime["openWebSocketStream"] = async () => ({ stream, protocol: "" })): Readonly<{
   app: ReturnType<typeof registerProxyAppWindow>;
   controller: ReturnType<typeof registerProxyControllerWindow>;
 }> {
@@ -356,7 +357,7 @@ function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatch
     },
     async fetch() { return new Response(); },
     dispatchFetch,
-    async openWebSocketStream() { return { stream, protocol: "" }; },
+    openWebSocketStream,
     dispose() {},
   } satisfies ProxyRuntime;
   const controller = registerProxyControllerWindow({
@@ -382,6 +383,25 @@ async function nextMessage(port: MessagePort): Promise<Record<string, unknown>> 
     port.addEventListener("message", (event) => resolve(event.data as Record<string, unknown>), { once: true });
   });
 }
+
+it("withdraws a pending window handshake when its owner is disposed", async () => {
+  const stream = new FailingDuplexStream("blocked");
+  let finish!: () => void;
+  let remoteSignal: AbortSignal | undefined;
+  const harness = bridgeHarness(stream, undefined, async (_path, options) => {
+    remoteSignal = options?.signal;
+    await new Promise<void>(resolve => { finish = resolve; });
+    return { stream, protocol: "" };
+  });
+  try {
+    const opened = harness.app.runtime.openWebSocketStream("/socket");
+    harness.app.dispose();
+    await expect(opened).rejects.toMatchObject({ code: "closed" });
+    await waitFor(() => remoteSignal?.aborted === true);
+    finish();
+    await waitFor(() => stream.resetCalled);
+  } finally { harness.app.dispose(); harness.controller.dispose(); }
+});
 
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {

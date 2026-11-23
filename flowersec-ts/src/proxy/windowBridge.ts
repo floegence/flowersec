@@ -292,14 +292,18 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
           settled = true;
           clearTimeout(timer);
           openOptions.signal?.removeEventListener("abort", abort);
+          lifetime.signal.removeEventListener("abort", close);
           if (error !== undefined) { channel.port1.close(); reject(error); }
           else resolve(opened!);
         };
-        const abort = () => {
-          channel.port1.postMessage({ type: "reset" } satisfies BridgeMessage);
-          finish(new SessionError("canceled"));
+        const cancel = (error: SessionError) => {
+          if (settled) return;
+          try { channel.port1.postMessage({ type: "reset" } satisfies BridgeMessage); } finally { finish(error); }
         };
-        const timer = setTimeout(() => finish(new SessionError("timeout")), 10_000);
+        const abort = () => cancel(new SessionError("canceled"));
+        const close = () => cancel(new SessionError("closed"));
+        const timer = setTimeout(() => cancel(new SessionError("timeout")), 10_000);
+        lifetime.signal.addEventListener("abort", close, { once: true });
         channel.port1.onmessage = (event) => {
           if (event.data?.type !== WEBSOCKET_ACK_MESSAGE) return;
           if (event.data.ok !== true) {

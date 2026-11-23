@@ -82,8 +82,8 @@
     {
       "path": "flowersec-go/acceptor.go",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 20,
-      "matching_lines": 48
+      "first_matching_line": 24,
+      "matching_lines": 57
     },
     {
       "path": "flowersec-go/acceptor_listener.go",
@@ -149,7 +149,7 @@
       "path": "flowersec-go/controlplane/authorization.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 16,
-      "matching_lines": 40
+      "matching_lines": 46
     },
     {
       "path": "flowersec-go/controlplane/endpoint_set.go",
@@ -167,7 +167,7 @@
       "path": "flowersec-go/controlplane/issue.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 17,
-      "matching_lines": 29
+      "matching_lines": 30
     },
     {
       "path": "flowersec-go/controlplane/issuer_vector.go",
@@ -443,7 +443,7 @@
       "path": "flowersec-go/internal/transportsecurity/tunnel_ingress.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 10,
-      "matching_lines": 7
+      "matching_lines": 10
     },
     {
       "path": "flowersec-go/internal/transporttest/adaptive.go",
@@ -683,7 +683,7 @@
       "path": "flowersec-rust/src/session_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 31,
-      "matching_lines": 984
+      "matching_lines": 990
     },
     {
       "path": "flowersec-rust/src/tls_v3.rs",
@@ -1007,7 +1007,7 @@
       "path": "flowersec-ts/src/proxy/integration.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 6
+      "matching_lines": 8
     },
     {
       "path": "flowersec-ts/src/public/sessionHandlers.ts",
@@ -1043,7 +1043,7 @@
       "path": "flowersec-ts/src/v3/artifactLease.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 35
+      "matching_lines": 37
     },
     {
       "path": "flowersec-ts/src/v3/browserRuntime.ts",

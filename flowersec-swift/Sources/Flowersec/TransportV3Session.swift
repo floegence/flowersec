@@ -2162,7 +2162,7 @@ private actor TransportV3ByteStream: ByteStream {
   private let readPermit = TransportV3ReadPermit()
   private let writePermit = TransportV3ReadPermit()
   private var writeOperationHeld = false
-  private var queuedWriters: [CheckedContinuation<Void, Error>] = []
+  private var queuedWriters: [(id: UUID, waiter: CheckedContinuation<Void, Error>)] = []
   fileprivate var queuedWriteCount: Int { queuedWriters.count }
   private let suite: TransportCipherSuiteV3
   private let h3: Data
@@ -2299,10 +2299,11 @@ private actor TransportV3ByteStream: ByteStream {
     guard !localFIN else { throw TransportV3SessionError.streamReset }
     guard !data.isEmpty else { return 0 }
     var offset = data.startIndex
+    try Task.checkCancellation()
     while offset < data.endIndex {
       let count = min(TransportV3Crypto.maxDataBytes, data.endIndex - offset)
       do {
-        try Task.checkCancellation()
+        if offset != data.startIndex { try Task.checkCancellation() }
         try await writeRecord(.data, payload: Data(data[offset..<(offset + count)]))
       } catch let withdrawn as RPCWriteAdmission.Withdrawn {
         throw withdrawn
@@ -2399,17 +2400,32 @@ private actor TransportV3ByteStream: ByteStream {
   }
 
   private func acquireWriteOperation() async throws {
+    try Task.checkCancellation()
     if let terminal { throw terminal }
     if writeOperationHeld {
-      try await withCheckedThrowingContinuation { queuedWriters.append($0) }
+      let id = UUID()
+      try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { queuedWriters.append((id, $0)) }
+      } onCancel: {
+        Task { await self.cancelQueuedWriter(id) }
+      }
+      if Task.isCancelled {
+        releaseWriteOperation()
+        throw CancellationError()
+      }
     } else {
       writeOperationHeld = true
     }
   }
 
+  private func cancelQueuedWriter(_ id: UUID) {
+    guard let index = queuedWriters.firstIndex(where: { $0.id == id }) else { return }
+    queuedWriters.remove(at: index).waiter.resume(throwing: CancellationError())
+  }
+
   private func releaseWriteOperation() {
     if queuedWriters.isEmpty { writeOperationHeld = false }
-    else { queuedWriters.removeFirst().resume() }
+    else { queuedWriters.removeFirst().waiter.resume() }
   }
 
   private func recordTerminal(_ error: TransportV3SessionError) {
@@ -2420,7 +2436,7 @@ private actor TransportV3ByteStream: ByteStream {
     wakeCapacityWaiters()
     let waiters = queuedWriters
     queuedWriters.removeAll()
-    for waiter in waiters { waiter.resume(throwing: error) }
+    for entry in waiters { entry.waiter.resume(throwing: error) }
   }
 
   private func beginSendRekeyOwned(

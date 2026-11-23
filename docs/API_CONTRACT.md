@@ -341,6 +341,8 @@ Each proxy WebSocket message is encoded as one bounded header-and-payload buffer
 
 The validated proxy scope may declare bounded `http.additionalPathPrefixes` and `http.extraRequestHeaders`. Additional HTTP paths require an explicit `appBasePath`; composition permits that base plus the declared paths while retaining the base-only WebSocket policy. Header names use the same forbidden-header validation as the runtime, and absent HTTP additions grant no extra access. These declarations are immutable acquisition authority, not page-message overrides.
 
+The browser composition helpers read this scope from the lease. A host path policy may narrow the grant but cannot widen it. The base covers the named path and its descendants, not sibling paths with a similar name. The controller bridge also requires its configured origins to be a subset of the scoped origins.
+
 
 ## Swift
 

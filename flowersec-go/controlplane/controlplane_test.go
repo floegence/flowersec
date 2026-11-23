@@ -16,6 +16,29 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/artifactv3"
 )
 
+func TestDirectProfileSurvivesStorageAndRequiresMatchingIngress(t *testing.T) {
+	issued, err := NewIssuer().IssueHTTPDirect(HTTPDirectIssueOptions{Session: SessionOptions{ChannelID: "profile"}, Endpoint: "ws://localhost:8080/flowersec/v5/direct", RendezvousGroupID: "group", ListenerAudience: "listener", UpstreamAddress: "127.0.0.1:9000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := issued.AuthorizationRecord().Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := ParseAuthorizationRecord(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := runtimeRequestForCandidate(t, record, "http-direct")
+	for _, profile := range []string{"", PrivateLoopbackProfile, HTTPDirectProfile} {
+		request.directProfile = profile
+		decision, err := AuthorizeRuntime(request, record, "lease")
+		if (err == nil && decision.Allowed()) != (profile == HTTPDirectProfile) {
+			t.Fatalf("profile %q: allow=%v error=%v", profile, decision.Allowed(), err)
+		}
+	}
+}
+
 func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x42}, 128)), now)

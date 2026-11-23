@@ -99,6 +99,13 @@ type IssuedArtifact struct {
 	record AuthorizationRecord
 }
 
+func (issued *IssuedArtifact) bindDirectProfile(profile string) {
+	issued.record.directProfile = profile
+	if issued.record.issued != nil {
+		issued.record.issued.directProfile = profile
+	}
+}
+
 // ArtifactJSON returns a defensive copy suitable for the artifact acquisition
 // response body consumed by ParseArtifact.
 func (issued IssuedArtifact) ArtifactJSON() []byte {
@@ -155,7 +162,11 @@ func (issuer *Issuer) IssueDirect(options DirectIssueOptions) (IssuedArtifact, e
 			ListenerAudience: options.ListenerAudience, RoutingToken: credential, Candidates: candidates,
 		},
 	}
-	return issuedArtifact(artifact, options.Metadata, options.UpstreamAddress, "", false)
+	issued, err := issuedArtifact(artifact, options.Metadata, options.UpstreamAddress, "", false)
+	if err == nil && usesProfileCandidate(&artifact) {
+		issued.bindDirectProfile(artifactv3.Profile)
+	}
+	return issued, err
 }
 
 // IssueTunnelPair creates complementary artifacts with independent one-time

@@ -197,8 +197,8 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           const reason = frame.payload.length > 2 ? decoder.decode(frame.payload.subarray(2)) : "";
           const peerInitiated = this.readyState === ProxyWebSocket.OPEN;
           this.readyState = ProxyWebSocket.CLOSING;
-          if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
           if (peerInitiated) {
+            this.closeTimer = setTimeout(() => this.fail(), closeHandshakeTimeoutMs);
             this.writes = this.writes.then(async () => await writeFrame(stream, 8, frame.payload, maxFrameBytes));
           }
           await this.writes;

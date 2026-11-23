@@ -207,6 +207,18 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     XCTAssertEqual(received, payloads)
   }
 
+  func testSmallFramesRespectFrameCountAndPreserveOrder() async throws {
+    let state = ProxyWebSocketInboundState(maxBufferedBytes: 4096, maxBufferedFrames: 2)
+    for byte: UInt8 in [1, 2] {
+      XCTAssertTrue(state.push(ProxyWebSocketFrame(operation: .binary, payload: Data([byte]))))
+    }
+    XCTAssertFalse(state.push(ProxyWebSocketFrame(operation: .binary, payload: Data())))
+    for byte: UInt8 in [1, 2] {
+      let frame = try await state.receive()
+      XCTAssertEqual(frame.payload, Data([byte]))
+    }
+  }
+
   func testConnectionClosesWhenBufferedInboundFramesExceedBudget() async throws {
     let payloads = (0..<96).map { Data(repeating: UInt8($0), count: 4) }
     let server = try LocalWebSocketServer(

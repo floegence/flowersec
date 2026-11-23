@@ -30,6 +30,19 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("record stream ownership", () => {
+  test("withdraws reset streams not yet delivered to accept", async () => {
+    const [local, remote] = createMemoryCarrierPairV3({ kind: "websocket", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    const [client, server] = await Promise.all([establishSessionV3(local, config("client")), establishSessionV3(remote, config("server"))]);
+    try {
+      for (let index = 0; index < 12; index++) {
+        await (await client.openStream("withdrawn")).reset();
+        await client.probeLiveness();
+      }
+      await client.openStream("current");
+      expect((await server.acceptStream()).kind).toBe("current");
+    } finally { await Promise.all([client.close(), server.close()]); }
+  });
+
   test.each([CipherSuiteV3.ChaCha20Poly1305, CipherSuiteV3.AES256GCM])("snapshots raw Buffer writes and reads fragmented records with suite %i", async suite => {
     const [local, remote] = createMemoryCarrierPairV3({ kind: "websocket", path: "direct", inboundBidirectionalStreamCapacity: 10 });
     const [client, server] = await Promise.all([

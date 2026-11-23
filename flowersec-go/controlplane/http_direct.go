@@ -56,5 +56,6 @@ func (issuer *Issuer) IssueHTTPDirect(options HTTPDirectIssueOptions) (IssuedHTT
 	if err != nil {
 		return IssuedHTTPDirectArtifact{}, err
 	}
+	issued.bindDirectProfile(HTTPDirectProfile)
 	return IssuedHTTPDirectArtifact{artifactJSON: artifact, issued: issued}, nil
 }

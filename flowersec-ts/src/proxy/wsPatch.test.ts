@@ -265,6 +265,23 @@ describe("WebSocket v2 proxy patch", () => {
     expect(writtenOpcodes(stream.writes).filter((opcode) => opcode === 8)).toHaveLength(1);
   });
 
+  it.each([false, true])("bounds queued writes after peer close (local close: %s)", async localClose => {
+    installBrowserGlobals();
+    const stream = new ControlledStream(true);
+    let resume!: (count: number) => void;
+    stream.write = () => new Promise<number>(resolve => { resume = resolve; });
+    installWebSocketPatch({ runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) }, shouldProxy: () => true, closeHandshakeTimeoutMs: 20 });
+    const socket = new WebSocket("wss://app.example/socket");
+    await new Promise<void>(resolve => socket.addEventListener("open", () => resolve()));
+    const closed = new Promise<CloseEvent>(resolve => socket.addEventListener("close", resolve));
+    socket.send("blocked");
+    if (localClose) socket.close();
+    stream.push(frame(8, u16be(1000)));
+    await expect(closed).resolves.toMatchObject({ code: 1006, wasClean: false });
+    expect(stream.resetCalled).toBe(true);
+    resume(0);
+  });
+
   it("proxies same-origin frames while preserving native cross-origin sockets", async () => {
     installBrowserGlobals();
     const stream = new ControlledStream();

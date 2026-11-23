@@ -2373,6 +2373,16 @@ final class TransportV3SessionTests: XCTestCase {
     }
     await gate.waitUntilBlocked()
     if operation == .write {
+      let withdrawn = Task { try await stream.write(Data([3])) }
+      let waiting = await waitUntil { await clientSession.queuedStreamWriteCountForTesting(id: 1) == 1 }
+      XCTAssertTrue(waiting)
+      withdrawn.cancel()
+      let removed = await waitUntil { await clientSession.queuedStreamWriteCountForTesting(id: 1) == 0 }
+      XCTAssertTrue(removed)
+      if removed {
+        do { _ = try await withdrawn.value; XCTFail("canceled writer returned success") }
+        catch { XCTAssertEqual(error as? SessionError, .canceled) }
+      }
       let writeDone = CompletionProbe(), finDone = CompletionProbe()
       let queuedWrite = Task {
         let result = await Task { _ = try await stream.write(Data([2])) }.result
