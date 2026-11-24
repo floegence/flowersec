@@ -204,6 +204,22 @@ describe("proxy service worker generator", () => {
     await expect(within(response.text())).resolves.toBe("ok");
   });
 
+  it.each(["text/html; charset=GBK", "text/html"])("preserves non-UTF-8 HTML bytes with %s", async contentType => {
+    const original = Uint8Array.of(0xc4, 0xe3, 0xba, 0xc3);
+    const worker = generatedWorker(async () => ({
+      id: "client",
+      postMessage(_message: unknown, [port]: MessagePort[]) {
+        port!.postMessage({ type: "flowersec-proxy:response_meta", status: 200, headers: [{ name: "content-type", value: contentType }] });
+        port!.postMessage({ type: "flowersec-proxy:response_chunk", data: original.buffer });
+        port!.postMessage({ type: "flowersec-proxy:response_end" });
+        port!.close();
+      },
+    }), { injectHTML: { mode: "external_script", scriptUrl: "/inject.js" } });
+    const response = await worker.fetch(new Request("https://app.example/page"));
+    expect(response.headers.get("content-type")).toBe(contentType);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(original);
+  });
+
   it("bounds a stalled response body only when an inactivity timeout is configured", async () => {
     const remoteMessages: unknown[] = [];
     let remotePort: MessagePort | undefined;

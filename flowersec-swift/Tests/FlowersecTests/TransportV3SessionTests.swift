@@ -24,6 +24,26 @@ extension TransportV3CarrierStream {
 }
 
 final class TransportV3SessionTests: XCTestCase {
+  func testResetDiscardsPartiallyReadRecord() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    let (clientSession, serverSession) = try await (client, server)
+    let receiver = try await OpaqueSessionV3(clientSession).openStream(kind: "partial")
+    let sender = try await serverSession.acceptStream().stream
+    _ = try await sender.write(Data([1, 2, 3]))
+    let prefix = try await receiver.read(maxBytes: 1)
+    XCTAssertEqual(prefix, Data([1]))
+    try await receiver.reset()
+    do {
+      _ = try await receiver.read(maxBytes: 1)
+      XCTFail("reset returned buffered data or EOF")
+    } catch { XCTAssertEqual(error as? SessionError, .streamReset) }
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testCancelPublicReadReleasesOnlyItsStream() async throws {
     let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
     let configs = try makeConfigs()

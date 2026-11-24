@@ -501,11 +501,15 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
 
       const injection = config.injectHTML;
       if (response.body === null || injection === null || pathMatches(url.pathname, injection.excludePathPrefixes ?? [])) return response;
-      if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("text/html")) return response;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.split(";", 1)[0]?.trim().toLowerCase() !== "text/html") return response;
+      const charset = /;\s*charset\s*=\s*(?:"([^"]*)"|([^;\s]*))/iu.exec(contentType);
+      if (charset && !/^utf-?8$/iu.test(charset[1] ?? charset[2] ?? "")) return response;
       const bytes = await boundedBody(response.body, config.maxInjectHTMLBytes);
       if (bytes === null) return new Response("proxy HTML response too large", { status: 502 });
-      const decoder = new TextDecoder();
-      let html = decoder.decode(bytes);
+      let html: string;
+      try { html = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+      catch { return new Response(bytes, response); }
       const runtimeGlobal = injection.runtimeGlobal ?? "__flowersecProxyRuntime";
       let markup: string;
       if ((injection.mode ?? "inline_module") === "inline_module") {

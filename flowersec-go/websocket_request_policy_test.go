@@ -74,6 +74,9 @@ func TestWebSocketHTTPServerRequestPolicy(t *testing.T) {
 					}
 					if enforce {
 						options.AuthorizeWebSocketRequest = func(r *http.Request) bool {
+							if _, ok := r.Context().Deadline(); !ok {
+								t.Error("policy ran outside the admission deadline")
+							}
 							policies.Add(1)
 							return r.Host == authority
 						}
@@ -111,8 +114,8 @@ func TestWebSocketHTTPServerRequestPolicy(t *testing.T) {
 						t.Fatalf("unauthenticated requests reached session authorization %d times", got)
 					}
 					before := policies.Load()
-					if enforce && before != 3 {
-						t.Fatalf("request policy calls = %d, want 3", before)
+					if enforce && before != 2 {
+						t.Fatalf("request policy calls = %d, want 2", before)
 					}
 					client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLS}, Timeout: time.Second}
 					defer client.CloseIdleConnections()

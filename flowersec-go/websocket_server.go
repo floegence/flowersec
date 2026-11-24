@@ -106,12 +106,16 @@ func newWebSocketHTTPServer(options WebSocketHTTPServerOptions, transport http.H
 	if options.ApplicationHandler != nil || options.AuthorizeWebSocketRequest != nil {
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == WebSocketDirectPath || r.URL.Path == WebSocketTunnelPath {
-				if direct, ok := options.Handler.(*webSocketBoundary); ok && direct.direct != nil && r.URL.Path == WebSocketDirectPath && options.AuthorizeWebSocketRequest != nil {
-					direct.direct.handleDirectWithPolicy(w, r, options.AuthorizeWebSocketRequest)
-					return
-				}
-				if options.AuthorizeWebSocketRequest != nil && !options.AuthorizeWebSocketRequest(r) {
-					http.Error(w, "request rejected", http.StatusForbidden)
+				if policy := options.AuthorizeWebSocketRequest; policy != nil {
+					boundary, _ := options.Handler.(*webSocketBoundary)
+					switch {
+					case boundary != nil && boundary.direct != nil && r.URL.Path == WebSocketDirectPath:
+						boundary.direct.handleDirectWithPolicy(w, r, policy)
+					case boundary != nil && boundary.tunnel != nil && r.URL.Path == WebSocketTunnelPath:
+						boundary.tunnel(w, r, policy)
+					default:
+						http.Error(w, "request rejected", http.StatusForbidden)
+					}
 					return
 				}
 				transport.ServeHTTP(w, r)
@@ -395,6 +399,7 @@ type webSocketBoundary struct {
 	handler http.Handler
 	enabled bool
 	direct  *Acceptor
+	tunnel  func(http.ResponseWriter, *http.Request, func(*http.Request) bool)
 }
 
 func (boundary *webSocketBoundary) ServeHTTP(writer http.ResponseWriter, request *http.Request) {

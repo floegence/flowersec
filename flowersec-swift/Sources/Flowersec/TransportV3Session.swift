@@ -2280,13 +2280,14 @@ private actor TransportV3ByteStream: ByteStream {
 
   func read(maxBytes: Int) async throws -> Data? {
     guard maxBytes > 0 else { throw SessionError.operationFailed }
+    if let terminal { throw terminal }
     if !readBuffer.isEmpty { return consumeReadBuffer(maxBytes: maxBytes) }
     if remoteFIN { return nil }
     guard session.applicationIO.enter() else { throw terminal ?? TransportV3SessionError.closed }
     defer { session.applicationIO.leave() }
     while readBuffer.isEmpty {
-      if remoteFIN { return nil }
       if let terminal { throw terminal }
+      if remoteFIN { return nil }
       do {
         _ = try await processNextRecord(stopWhenApplicationReadable: true)
       } catch let error as TransportV3SessionError {
@@ -2297,6 +2298,7 @@ private actor TransportV3ByteStream: ByteStream {
         throw terminal ?? TransportV3SessionError.streamReset
       }
     }
+    if let terminal { throw terminal }
     return consumeReadBuffer(maxBytes: maxBytes)
   }
 
@@ -2458,6 +2460,7 @@ private actor TransportV3ByteStream: ByteStream {
     sendMaterial = nil
     receiveMaterial = nil
     terminal = error
+    readBuffer = Data()
     wakeCapacityWaiters()
     let waiters = queuedWriters
     queuedWriters.removeAll()
@@ -2580,6 +2583,7 @@ private actor TransportV3ByteStream: ByteStream {
     }
     do {
       let (type, payload) = try await readRecordUnlocked()
+      if let terminal { throw terminal }
       switch type {
       case .data:
         readBuffer.append(payload)

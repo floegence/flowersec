@@ -42,3 +42,10 @@ func TestProxyWebSocketFrameRejectsPartialWrite(t *testing.T) {
 		t.Fatalf("partial frame reported success: %v", err)
 	}
 }
+
+func TestProxyFrameLimitBeforeAllocation(t *testing.T) {
+	_, _, err := readProxyWebSocketFrame(bytes.NewReader([]byte{2, 255, 255, 255, 255}), 1024)
+	if !errors.Is(err, ErrInvalidProxyServer) {
+		t.Fatalf("unexpected frame limit error: %v", err)
+	}
+}

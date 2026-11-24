@@ -124,10 +124,13 @@ func (runtime *TunnelRuntime) webSocketBoundaryFor(listener registeredAcceptorLi
 		return &webSocketBoundary{}
 	}
 	mux := http.NewServeMux()
+	handle := func(w http.ResponseWriter, r *http.Request, policy func(*http.Request) bool) {
+		runtime.handleWebSocket(w, r, endpoint, policy)
+	}
 	mux.HandleFunc(WebSocketTunnelPath, func(w http.ResponseWriter, r *http.Request) {
-		runtime.handleWebSocket(w, r, endpoint)
+		handle(w, r, nil)
 	})
-	return &webSocketBoundary{handler: mux, enabled: true}
+	return &webSocketBoundary{handler: mux, enabled: true, tunnel: handle}
 }
 
 func (runtime *TunnelRuntime) Serve(ctx context.Context) error {
@@ -215,14 +218,31 @@ func (runtime *TunnelRuntime) serveNative(ctx context.Context, native carrier.Se
 	return runtime.coordinator.ServeOwnedUntil(context.WithValue(ctx, acceptorTransportContextKey{}, acceptorTransportContext{carrier: string(native.Kind()), remoteAddress: remote}), leg, inboundDeadline(ctx))
 }
 
-func (runtime *TunnelRuntime) handleWebSocket(writer http.ResponseWriter, request *http.Request, endpoint string) {
+func (runtime *TunnelRuntime) handleWebSocket(writer http.ResponseWriter, request *http.Request, endpoint string, policy func(*http.Request) bool) {
 	deadline := time.Now().Add(inboundAdmissionTimeout)
-	if request.Method != http.MethodGet || !runtime.allowedOrigin(request) || carrierws.ValidateServerRequest(request) != nil {
+	if request.Method != http.MethodGet || !gorillaws.IsWebSocketUpgrade(request) || carrierws.ValidateServerRequest(request) != nil || !runtime.allowedOrigin(request) {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
+	release, ok := runtime.coordinator.TryReserveAdmission()
+	if !ok {
+		http.Error(writer, "admission busy", http.StatusServiceUnavailable)
+		return
+	}
+	defer release()
+	if policy != nil {
+		ctx, cancel := context.WithDeadline(request.Context(), deadline)
+		allowed := func() bool {
+			defer cancel()
+			return policy(request.WithContext(ctx))
+		}()
+		if !allowed {
+			http.Error(writer, "request rejected", http.StatusForbidden)
+			return
+		}
+	}
 	remaining := time.Until(deadline)
-	if remaining <= 0 {
+	if remaining <= 0 || request.Context().Err() != nil {
 		http.Error(writer, "admission timed out", http.StatusRequestTimeout)
 		return
 	}
@@ -237,7 +257,7 @@ func (runtime *TunnelRuntime) handleWebSocket(writer http.ResponseWriter, reques
 	}
 	ctx := context.WithValue(request.Context(), acceptorTransportContextKey{}, acceptorTransportContext{carrier: "websocket", remoteAddress: request.RemoteAddr})
 	ctx = transportsecurity.WithTunnelIngress(ctx, artifactv3.CarrierWebSocket, endpoint, request.TLS)
-	if err := runtime.coordinator.ServeOwnedUntil(ctx, leg, deadline); err != nil {
+	if err := runtime.coordinator.ServeReservedOwnedUntil(ctx, leg, deadline, release); err != nil {
 		_ = connection.Close()
 	}
 }

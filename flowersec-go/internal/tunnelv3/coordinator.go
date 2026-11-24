@@ -269,7 +269,7 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 // ServeUntil includes the caller's carrier setup in the admission deadline.
 // After admission, ctx alone controls the lifetime of the paired leg.
 func (coordinator *Coordinator) ServeUntil(ctx context.Context, pending PendingLeg, admissionDeadline time.Time) error {
-	return coordinator.serveUntil(ctx, pending, admissionDeadline, nil, nil)
+	return coordinator.serveUntil(ctx, pending, admissionDeadline, nil, nil, nil)
 }
 
 // AdmitUntil transfers a registered leg to the coordinator. Admission failures
@@ -279,19 +279,23 @@ func (coordinator *Coordinator) AdmitUntil(ctx context.Context, pending PendingL
 	if onEnd == nil {
 		return ErrInvalidConfig
 	}
-	return coordinator.serveUntil(ctx, pending, admissionDeadline, nil, onEnd)
+	return coordinator.serveUntil(ctx, pending, admissionDeadline, nil, onEnd, nil)
 }
 
 // ServeOwnedUntil keeps the caller's leg alive through its last callback and
 // lease release. An HTTP server tracking this handler can therefore drain its
 // own upgraded connections independently of other listeners on the relay.
 func (coordinator *Coordinator) ServeOwnedUntil(ctx context.Context, pending PendingLeg, admissionDeadline time.Time) error {
-	var workers sync.WaitGroup
-	defer workers.Wait()
-	return coordinator.serveUntil(ctx, pending, admissionDeadline, &workers, nil)
+	return coordinator.ServeReservedOwnedUntil(ctx, pending, admissionDeadline, nil)
 }
 
-func (coordinator *Coordinator) serveUntil(ctx context.Context, pending PendingLeg, admissionDeadline time.Time, owner *sync.WaitGroup, onEnd func(error)) error {
+func (coordinator *Coordinator) ServeReservedOwnedUntil(ctx context.Context, pending PendingLeg, admissionDeadline time.Time, releaseAdmission func()) error {
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	return coordinator.serveUntil(ctx, pending, admissionDeadline, &workers, nil, releaseAdmission)
+}
+
+func (coordinator *Coordinator) serveUntil(ctx context.Context, pending PendingLeg, admissionDeadline time.Time, owner *sync.WaitGroup, onEnd func(error), releaseAdmission func()) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -302,9 +306,12 @@ func (coordinator *Coordinator) serveUntil(ctx context.Context, pending PendingL
 	if workers == nil {
 		workers = &coordinator.cleanupWorkers
 	}
-	releaseAdmission, acquired := coordinator.acquireAdmission()
-	if !acquired {
-		return errors.Join(ErrCapacity, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonCapacity))
+	if releaseAdmission == nil {
+		var acquired bool
+		releaseAdmission, acquired = coordinator.TryReserveAdmission()
+		if !acquired {
+			return errors.Join(ErrCapacity, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonCapacity))
+		}
 	}
 	var lease Lease
 	release := func() {
@@ -429,7 +436,7 @@ func (coordinator *Coordinator) authorizeWithContext(ctx context.Context, decode
 	}
 }
 
-func (coordinator *Coordinator) acquireAdmission() (func(), bool) {
+func (coordinator *Coordinator) TryReserveAdmission() (func(), bool) {
 	select {
 	case coordinator.admissions <- struct{}{}:
 		var once sync.Once

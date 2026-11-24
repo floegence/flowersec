@@ -46,10 +46,10 @@ export async function connectProxyBrowser(
       options.serviceWorker.scriptUrl !== authority.serviceWorker.scriptUrl || options.serviceWorker.scope !== authority.serviceWorker.scope)) {
     throw new TypeError("service worker does not match the proxy scope");
   }
+  if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
   const session = await connectV3(lease, options.connect);
   let runtime: ProxyRuntime | undefined;
   try {
-    if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
     runtime = createScopedProxyRuntime({ ...options.runtime, session }, authority);
     return Object.freeze({
       session,

@@ -387,9 +387,9 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 
 func (acceptor *Acceptor) handleDirectWithPolicy(writer http.ResponseWriter, request *http.Request, policy func(*http.Request) bool) {
 	acceptor.handleDirectWithAdmission(writer, request, func(candidate *http.Request) bool {
-		return candidate != nil && candidate.Method == http.MethodGet && carrierws.ValidateServerRequest(candidate) == nil
+		return candidate != nil && candidate.Method == http.MethodGet && gorillaws.IsWebSocketUpgrade(candidate) && carrierws.ValidateServerRequest(candidate) == nil
 	}, func(candidate *http.Request) bool {
-		return (policy == nil || policy(candidate)) && acceptor.allowedOrigin(candidate)
+		return acceptor.allowedOrigin(candidate) && (policy == nil || policy(candidate))
 	}, webSocketAdmissionTLS)
 }
 

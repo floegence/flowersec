@@ -1397,7 +1397,13 @@ impl TaskRuntime {
         admission_deadline: Instant,
     ) -> Result<(), TunnelRuntimeError> {
         let key = AuthorityKey::from(leg.claims.as_ref());
-        if let Some(active) = self.active_pair_for_key(&key).await {
+        // Keep pending removal and active publication in one registration transaction.
+        let mut pending = loop {
+            let pending = self.state.pending.lock().await;
+            let Some(active) = self.active_pair_for_key(&key).await else {
+                break pending;
+            };
+            drop(pending);
             let (local, peer) = if leg.claims.role == 1 {
                 (&active.client_endpoint, &active.server_endpoint)
             } else {
@@ -1417,11 +1423,10 @@ impl TaskRuntime {
                 return Err(TunnelRuntimeError::Rejected);
             }
             self.replace_active_pair(active, admission_deadline).await;
-        }
+        };
         let generation_id = self.state.next_pending_id.fetch_add(1, Ordering::Relaxed);
         let (ownership, transferred) = tokio::sync::oneshot::channel();
         let (peer, pending_capacity, replacement_denied, replaced, incoming_mismatch) = {
-            let mut pending = self.state.pending.lock().await;
             if let Some(entry) = pending.get(&key) {
                 let pending_leg = &entry.value;
                 if !mirrored_claims_match(pending_leg.claims.as_ref(), leg.claims.as_ref())
@@ -1479,48 +1484,43 @@ impl TaskRuntime {
             }
         };
         if incoming_mismatch {
+            drop(pending);
             self.reject_leg(&leg, FSA5_REJECT, "pair_mismatch", admission_deadline)
                 .await;
             return Err(TunnelRuntimeError::Rejected);
         }
         if replacement_denied {
+            drop(pending);
             self.reject_leg(&leg, FSA5_REJECT, "replacement_denied", admission_deadline)
                 .await;
             return Err(TunnelRuntimeError::Rejected);
         }
-        if let Some(replaced) = replaced {
-            let _ = send_fsa3(
-                replaced.admission.as_ref(),
-                FSA5_REJECT,
-                "replaced",
-                &self.options.admission_reasons,
-                admission_deadline,
-                &self.state.closed,
-            )
-            .await;
-            replaced.carrier.abort();
-            release_bounded(
-                self.authorizer.as_ref(),
-                &replaced.lease_id,
-                admission_deadline,
-            )
-            .await;
-        }
         if pending_capacity {
-            let _ = send_fsa3(
-                leg.admission.as_ref(),
-                FSA5_RETRY,
-                "capacity",
-                &self.options.admission_reasons,
-                admission_deadline,
-                &self.state.closed,
-            )
-            .await;
-            leg.carrier.abort();
-            release_bounded(self.authorizer.as_ref(), &leg.lease_id, admission_deadline).await;
+            drop(pending);
+            self.reject_leg(&leg, FSA5_RETRY, "capacity", admission_deadline)
+                .await;
             return Err(TunnelRuntimeError::Capacity);
         }
         let Some(peer) = peer else {
+            drop(pending);
+            if let Some(replaced) = replaced {
+                let _ = send_fsa3(
+                    replaced.admission.as_ref(),
+                    FSA5_REJECT,
+                    "replaced",
+                    &self.options.admission_reasons,
+                    admission_deadline,
+                    &self.state.closed,
+                )
+                .await;
+                replaced.carrier.abort();
+                release_bounded(
+                    self.authorizer.as_ref(),
+                    &replaced.lease_id,
+                    admission_deadline,
+                )
+                .await;
+            }
             let expiry_deadline = Instant::now()
                 + leg
                     .expires_at
@@ -1577,6 +1577,7 @@ impl TaskRuntime {
         };
 
         if !pair_claims_match(&peer, &leg) {
+            drop(pending);
             self.reject_legs(
                 &peer,
                 &leg,
@@ -1588,6 +1589,7 @@ impl TaskRuntime {
             return Err(TunnelRuntimeError::Rejected);
         }
         if peer.expires_at <= SystemTime::now() || leg.expires_at <= SystemTime::now() {
+            drop(pending);
             self.reject_legs(
                 &peer,
                 &leg,
@@ -1608,6 +1610,7 @@ impl TaskRuntime {
             }
         };
         if active_capacity {
+            drop(pending);
             self.reject_legs(&peer, &leg, FSA5_RETRY, "capacity", admission_deadline)
                 .await;
             return Err(TunnelRuntimeError::Capacity);
@@ -1644,6 +1647,7 @@ impl TaskRuntime {
             .lock()
             .await
             .insert(pair_id, active_pair.clone());
+        drop(pending);
         for (carrier, mux_client) in [(&client, false), (&server, true)] {
             if carrier.kind() == CarrierKind::Wss
                 && carrier.set_multiplexer_client(mux_client).is_err()
@@ -2291,16 +2295,11 @@ async fn copy_control_stream(
     first_fin: &OnceLock<SessionRole>,
     source_role: SessionRole,
 ) -> io::Result<()> {
-    let mut buffer = vec![0_u8; 64 * 1024];
-    loop {
-        let count = source.read(&mut buffer).await?;
-        if count == 0 {
-            first_fin.get_or_init(|| source_role);
-            eof.cancel();
-            return target.close_write().await;
-        }
-        write_all(target, &buffer[..count]).await?;
-    }
+    copy_direction(source, target, || {
+        first_fin.get_or_init(|| source_role);
+        eof.cancel();
+    })
+    .await
 }
 
 async fn bridge_stream_direction(
@@ -2376,13 +2375,26 @@ async fn copy_stream(
     source: Arc<dyn CarrierStreamV3>,
     target: Arc<dyn CarrierStreamV3>,
 ) -> io::Result<()> {
-    let mut buffer = vec![0_u8; 64 * 1024];
+    copy_direction(source.as_ref(), target.as_ref(), || {}).await
+}
+
+async fn copy_direction(
+    source: &dyn CarrierStreamV3,
+    target: &dyn CarrierStreamV3,
+    on_fin: impl FnOnce(),
+) -> io::Result<()> {
+    const BULK: usize = 64 * 1024;
+    let mut buffer = vec![0_u8; 1024];
     loop {
         let count = source.read(&mut buffer).await?;
         if count == 0 {
+            on_fin();
             return target.close_write().await;
         }
-        write_all(target.as_ref(), &buffer[..count]).await?;
+        write_all(target, &buffer[..count]).await?;
+        if count == buffer.len() && count < BULK {
+            buffer.resize(BULK, 0);
+        }
     }
 }
 
@@ -4409,7 +4421,8 @@ mod tests {
                     .await
             })
         };
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        wait_for_pending(&runtime).await;
+        let capacity = runtime.state.active_pairs.lock().await;
         let second_task = {
             let runtime = runtime.clone();
             tokio::spawn(async move {
@@ -4429,23 +4442,24 @@ mod tests {
                     .await
             })
         };
-        wait_for_active_pair(runtime.as_ref()).await;
+        first_task.await.unwrap().unwrap();
         let (incoming, _) = crate::session_v3::memory_carrier_pair_v3();
-        let result = runtime
-            .register_leg(
-                test_leg(
-                    "denied-lease",
-                    1,
-                    "endpoint-first",
-                    "endpoint-second",
-                    SystemTime::now() + Duration::from_secs(1),
-                    false,
-                    incoming,
-                ),
-                Instant::now() + Duration::from_secs(1),
-            )
-            .await;
-        assert_eq!(result, Err(TunnelRuntimeError::Rejected));
+        let registration = runtime.register_leg(
+            test_leg(
+                "denied-lease",
+                1,
+                "endpoint-first",
+                "endpoint-second",
+                SystemTime::now() + Duration::from_secs(1),
+                false,
+                incoming,
+            ),
+            Instant::now() + Duration::from_secs(1),
+        );
+        tokio::pin!(registration);
+        assert!(futures_util::poll!(&mut registration).is_pending());
+        drop(capacity);
+        assert_eq!(registration.await, Err(TunnelRuntimeError::Rejected));
         assert_eq!(runtime.state.active_carriers.lock().await.len(), 1);
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 1);
         runtime.state.closed.cancel();
@@ -4453,7 +4467,6 @@ mod tests {
             pair.client.abort();
             pair.server.abort();
         }
-        let _ = first_task.await;
         let _ = second_task.await;
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 3);
     }

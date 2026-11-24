@@ -82,6 +82,29 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("checks worker availability before connecting with a single-use lease", async () => {
+    const connector = vi.spyOn(browserConnector, "connectV3").mockResolvedValue(new FakeSession([]));
+    const lease = createArtifactLeaseV3Internal({ scoped: [] } as unknown as ArtifactV3, async () => {});
+    vi.stubGlobal("navigator", {});
+    try {
+      await expect(connectProxyBrowser(lease, { serviceWorker: { scriptUrl: "/sw.js" } })).rejects.toThrow("unavailable");
+      expect(connector).not.toHaveBeenCalled();
+      const handle = await connectProxyBrowser(lease);
+      await handle.dispose();
+    } finally { connector.mockRestore(); vi.unstubAllGlobals(); }
+  });
+
+  it.each(["http", "websocket"])("bounds outbound %s metadata before writing it", async kind => {
+    const stream = new FakeStream([]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxJsonFrameBytes: 64 });
+    const path = `/${"a".repeat(128)}`;
+    try {
+      await expect(kind === "http" ? runtime.fetch(path) : runtime.openWebSocketStream(path)).rejects.toBeDefined();
+      expect(stream.writes).toHaveLength(0);
+      expect(stream.resetCalled).toBe(true);
+    } finally { runtime.dispose(); }
+  });
+
   it("enforces acquisition paths even with a broader host policy", async () => {
     const session = new FakeSession([]);
     const connector = vi.spyOn(browserConnector, "connectV3").mockResolvedValue(session);

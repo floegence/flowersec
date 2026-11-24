@@ -132,6 +132,7 @@ func (p *HTTPSProxy) DialContext(ctx context.Context, network, address string) (
 		ctx = context.Background()
 	}
 	start := int(p.last.Load()) % len(p.routes)
+	failure := ErrProxyConnection
 	for offset := range p.routes {
 		index := (start + offset) % len(p.routes)
 		conn, err := p.dialRoute(ctx, address, p.routes[index])
@@ -142,8 +143,11 @@ func (p *HTTPSProxy) DialContext(ctx context.Context, network, address string) (
 		if ctx.Err() != nil {
 			return nil, proxyError(ctx)
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			failure = err
+		}
 	}
-	return nil, ErrProxyConnection
+	return nil, failure
 }
 
 func (p *HTTPSProxy) dialRoute(parent context.Context, address string, route proxyRoute) (net.Conn, error) {
@@ -206,6 +210,9 @@ func (p *HTTPSProxy) dialRoute(parent context.Context, address string, route pro
 func proxyError(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return errors.Join(ErrProxyConnection, err)
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return errors.Join(ErrProxyConnection, context.DeadlineExceeded)
 	}
 	return ErrProxyConnection
 }

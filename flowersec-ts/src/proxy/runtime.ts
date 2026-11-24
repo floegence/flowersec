@@ -408,7 +408,7 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
         v: PROXY_WIRE_VERSION, request_id: requestID, method: request.method.toUpperCase(), path, headers,
         ...(requestOrigin === undefined ? {} : { external_origin: requestOrigin }),
         ...(timeoutMs === 0 ? {} : { timeout_ms: timeoutMs }),
-      });
+      }, maxJsonFrameBytes);
       const [response] = await Promise.all([
         readJsonFrame(reader, maxJsonFrameBytes).then((value) => {
           const meta = value as ResponseMeta;
@@ -566,7 +566,7 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
         conn_id: randomID(),
         path,
         headers,
-      });
+      }, maxJsonFrameBytes);
       const reader = new ProxyByteReader(stream, { signal });
       const response = await readJsonFrame(reader, maxJsonFrameBytes) as WebSocketOpenResponse;
       if (response.v !== PROXY_WIRE_VERSION || response.ok !== true || (response.protocol !== undefined && typeof response.protocol !== "string")) {

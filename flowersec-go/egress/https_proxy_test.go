@@ -295,6 +295,20 @@ func TestHTTPSProxyCancellationClosesHandshake(t *testing.T) {
 	}
 }
 
+func TestHTTPSProxyRouteTimeoutPreservesDeadline(t *testing.T) {
+	proxy, trust := proxyFixture(t, func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	})
+	route, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URL: proxy.URL, TLSConfig: trust, ConnectTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = route.DialContext(t.Context(), "tcp", "cloud.invalid:443")
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, egress.ErrProxyConnection) || t.Context().Err() != nil {
+		t.Fatalf("route timeout lost its classification: %v", err)
+	}
+}
+
 func TestHTTPSProxyPreservesBytesBufferedAfterConnect(t *testing.T) {
 	proxy, trust := proxyFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 		conn, _, err := w.(http.Hijacker).Hijack()

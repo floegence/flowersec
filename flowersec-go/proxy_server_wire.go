@@ -260,8 +260,8 @@ func readProxyWebSocketFrame(reader io.Reader, maximum int) (byte, []byte, error
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
 		return 0, nil, err
 	}
-	length := int(binary.BigEndian.Uint32(header[1:]))
-	if length > maximum {
+	length := int64(binary.BigEndian.Uint32(header[1:]))
+	if length > int64(maximum) {
 		return 0, nil, ErrInvalidProxyServer
 	}
 	payload := make([]byte, length)
