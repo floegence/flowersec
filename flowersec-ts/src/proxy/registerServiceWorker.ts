@@ -42,23 +42,23 @@ export async function registerServiceWorkerAndEnsureControl(options: RegisterSer
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000 || !Number.isSafeInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 5) {
     throw new TypeError("invalid service worker control policy");
   }
-  const registration = await serviceWorker.register(scriptUrl, { scope });
-  await serviceWorker.ready;
-  const matches = () => matchesServiceWorkerRegistration(registration, serviceWorker.controller, { scriptUrl, scope });
-  if (matches()) return;
-
-  const controlled = await new Promise<boolean>((resolve) => {
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
+  const controlled = await new Promise<boolean>((resolve, reject) => {
+    let registration: ServiceWorkerRegistration | undefined;
+    const cleanup = () => {
       clearTimeout(timer);
       serviceWorker.removeEventListener("controllerchange", onChange);
-      resolve(value);
     };
-    const onChange = () => { if (matches()) finish(true); };
+    const onChange = () => {
+      if (matchesServiceWorkerRegistration(registration, serviceWorker.controller, { scriptUrl, scope })) {
+        cleanup(); resolve(true);
+      }
+    };
+    const timer = setTimeout(() => { cleanup(); resolve(false); }, timeoutMs);
     serviceWorker.addEventListener("controllerchange", onChange);
-    const timer = setTimeout(() => finish(matches()), timeoutMs);
+    void serviceWorker.register(scriptUrl, { scope }).then(result => {
+      registration = result;
+      onChange();
+    }).catch(error => { cleanup(); reject(error); });
   });
   if (controlled) return;
 

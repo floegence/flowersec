@@ -439,11 +439,15 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 }
 
 
-it("keeps session fetch streaming and credited across the authenticated window bridge", async () => {
+it.each(["controller", "app"])("keeps window fetch credited and cancels it on %s disposal", async (owner) => {
   let credits = 0;
   let abortReceived!: () => void;
   const aborted = new Promise<void>(resolve => { abortReceived = resolve; });
-  const harness = bridgeHarness(new DuplexStream(), (request, port) => {
+  const harness = bridgeHarness(new DuplexStream(), (request, port, signal) => {
+    signal?.addEventListener("abort", () => {
+      port.postMessage({ type: "flowersec-proxy:response_error", code: "canceled" });
+      abortReceived(); port.close();
+    }, { once: true });
     expect(usesServiceWorkerResponseFlowControl(request)).toBe(true);
     port.onmessage = event => {
       if (event.data.type === "flowersec-proxy:abort") { abortReceived(); port.close(); }
@@ -463,7 +467,7 @@ it("keeps session fetch streaming and credited across the authenticated window b
     const reader = response.body!.getReader();
     await expect(reader.read()).resolves.toMatchObject({ value: Uint8Array.of(42) });
     expect(credits).toBe(1);
-    harness.app.dispose();
+    harness[owner as "app" | "controller"].dispose();
     await expect(reader.read()).rejects.toThrow();
     await within(aborted);
   } finally { harness.app.dispose(); harness.controller.dispose(); }

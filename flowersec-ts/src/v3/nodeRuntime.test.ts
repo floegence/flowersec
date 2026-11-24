@@ -266,19 +266,19 @@ describe("transport v5 Node TLS verifier and WebSocket production path", () => {
     } finally { agent.destroy(); await closeServer(server); }
   });
 
-  test("admits independent HTTPS origins while another route is pending", async () => {
+  test.each([1, 2])("honors %i concurrent HTTPS routes per origin while dialing", async (maxSockets) => {
     const started: string[] = [];
     const agent = createConnectionPathAgent({ connectionPath: { connect: async ({ hostname, signal }) => {
       started.push(hostname);
       return await new Promise<never>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
     } } });
     agent.maxTotalSockets = 2;
-    agent.maxSockets = 1;
+    agent.maxSockets = maxSockets;
     const calls = ["first.invalid", "first.invalid", "second.invalid", "third.invalid"].map(host =>
       new Promise(resolve => httpsGet(`https://${host}/`, { agent }).once("error", resolve)));
     try {
       await new Promise(resolve => setImmediate(resolve));
-      expect(started).toEqual(["first.invalid", "second.invalid"]);
+      expect(started).toEqual(["first.invalid", maxSockets === 1 ? "second.invalid" : "first.invalid"]);
     } finally { agent.destroy(); await Promise.all(calls); }
   });
 

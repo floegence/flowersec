@@ -57,7 +57,7 @@ export type ProxyRequestInit = RequestInit & Readonly<{ sessionBound?: boolean }
 export type ProxyRuntime = Readonly<{
   limits: ProxyRuntimeLimits;
   fetch(input: RequestInfo | URL, init?: ProxyRequestInit): Promise<Response>;
-  dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void;
+  dispatchFetch(request: ProxyFetchRequest, port: MessagePort, signal?: AbortSignal): void;
   openWebSocketStream(
     path: string,
     options?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>,

@@ -3,6 +3,7 @@ package flowersec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,6 +33,11 @@ func TestDynamicNotificationsShareInboundRouter(t *testing.T) {
 	}
 	defer client.Close()
 	server := source.takeGeneration(t, 0).waitSession(t)
+	var applicationError *RPCError
+	var result json.RawMessage
+	if err := server.RPC().Call(context.Background(), 902, "request", &result); !errors.As(err, &applicationError) || applicationError.Code != 404 || registered.Load() != 0 {
+		t.Fatalf("call on notification registration: error=%v handler calls=%d", err, registered.Load())
+	}
 	received := make(chan json.RawMessage, 2)
 	panicking := client.RPC().OnNotify(902, func(context.Context, json.RawMessage) { panic("isolated") })
 	defer panicking()

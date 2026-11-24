@@ -305,7 +305,7 @@ func TestRPCHandlersFreezeSharedNamespaceWithoutReplacingOriginal(t *testing.T) 
 	if secondSnapshot := handlers.freeze(); secondSnapshot != firstSnapshot {
 		t.Fatal("repeated freeze returned a different snapshot")
 	}
-	handler := firstSnapshot.lookup(1)
+	handler := firstSnapshot.lookup(1, false)
 	if handler == nil {
 		t.Fatal("frozen registry lost the original handler")
 	}

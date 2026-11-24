@@ -79,7 +79,7 @@ class ConnectionPathAgent extends Agent {
   readonly #timeout: number;
   readonly #lifetime = new AbortController();
   readonly #requests: Array<{ request: ClientRequest; options: RequestOptions }> = [];
-  readonly #opening = new Map<string, number>();
+  readonly #routes = new Map<string, number>();
   #openingCount = 0;
 
   addRequest(request: ClientRequest, options: RequestOptions): void {
@@ -97,7 +97,7 @@ class ConnectionPathAgent extends Agent {
       const origin = this.#origin(options);
       if (!request.destroyed && this.#openingCount > 0 &&
           (this.totalSocketCount + this.#openingCount >= this.maxTotalSockets ||
-           (Number.isFinite(this.maxSockets) && this.#opening.has(origin)))) {
+           (this.#routes.get(origin) ?? 0) >= this.maxSockets)) {
         index++;
         continue;
       }
@@ -123,12 +123,17 @@ class ConnectionPathAgent extends Agent {
   override createConnection(options: RequestOptions, callback?: (err: Error | null, stream: Duplex) => void): Duplex | undefined {
     if (callback === undefined) throw new Error("Connection path Agent requires an asynchronous callback");
     const origin = this.#origin(options);
-    this.#opening.set(origin, (this.#opening.get(origin) ?? 0) + 1);
+    this.#routes.set(origin, (this.#routes.get(origin) ?? 0) + 1);
     this.#openingCount++;
+    const release = () => {
+      const remaining = this.#routes.get(origin)! - 1;
+      if (remaining === 0) this.#routes.delete(origin);
+      else this.#routes.set(origin, remaining);
+      if (this.#requests.length) queueMicrotask(() => this.#drain());
+    };
     const complete = (error: Error | null, socket: Duplex): void => {
-      const remaining = this.#opening.get(origin)! - 1;
-      if (remaining === 0) this.#opening.delete(origin);
-      else this.#opening.set(origin, remaining);
+      if (error) release();
+      else socket.once("close", release);
       this.#openingCount--;
       callback(error, socket);
       if (this.#requests.length) queueMicrotask(() => this.#drain());

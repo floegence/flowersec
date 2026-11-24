@@ -36,7 +36,7 @@ async function readRequestBody(request: Request, maxBodyBytes: number, intake?: 
     // Request.body. Blob size is checked before copying bytes into the carrier;
     // the ordinary streaming path retains its incremental budget enforcement.
     try {
-      if (reservation && !reservation.grow(maxBodyBytes)) throw new SessionError("resource_exhausted");
+      if (reservation && !await reservation.waitForBudget(maxBodyBytes, request.signal)) throw new SessionError("resource_exhausted");
       const blob = await request.blob();
       request.signal.throwIfAborted();
       if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");

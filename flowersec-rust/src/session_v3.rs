@@ -3115,6 +3115,7 @@ struct EncryptedStreamV3 {
     remote_fin: AtomicBool,
     reset: AtomicBool,
     application_reset_changed: Notify,
+    incoming_reset: Option<CancellationToken>,
     reset_changed: Notify,
     reset_cleanup_done: AtomicBool,
     reset_cleanup_changed: Notify,
@@ -3463,6 +3464,7 @@ async fn open_stream_with_capacity_v3(
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
         application_reset_changed: Notify::new(),
+        incoming_reset: None,
         reset_changed: Notify::new(),
         reset_cleanup_done: AtomicBool::new(false),
         reset_cleanup_changed: Notify::new(),
@@ -3751,6 +3753,9 @@ impl EncryptedStreamV3 {
             return;
         }
         self.application_reset_changed.notify_waiters();
+        if let Some(reset) = &self.incoming_reset {
+            reset.cancel();
+        }
         let Some(session) = session.filter(|s| !s.canceled.is_cancelled()) else {
             let cause = self
                 .session
@@ -4595,7 +4600,9 @@ async fn accept_one_stream_v3(
     // rekey may observe the ACK as soon as it is written and must include this
     // stream in its key-update barrier.
     session.peer_ledger.lock().await.mark_terminal(id)?;
+    let reset = CancellationToken::new();
     let stream = Arc::new(EncryptedStreamV3 {
+        incoming_reset: Some(reset.clone()),
         session: Arc::downgrade(&session),
         send_material: StreamMaterialSlot::default(),
         recv_material: StreamMaterialSlot::default(),
@@ -4669,7 +4676,8 @@ async fn accept_one_stream_v3(
             StreamMetadata::from_validated(metadata),
             Box::new(StreamHandleV3(stream)),
         )
-        .with_handler_tasks(session.io_tasks.clone()),
+        .with_handler_tasks(session.io_tasks.clone())
+        .with_reset_signal(reset),
     );
     if tokio::select! {
         biased;

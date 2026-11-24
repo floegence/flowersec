@@ -128,6 +128,32 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
   const worker = self as any;
   let runtimeClientId = "";
   const registrations = new Set<string>();
+  const watches = new Map<string, { lost: Set<() => void>; timer: ReturnType<typeof setInterval> }>();
+  const watchClient = (id: string, onLost: () => void) => {
+    let watch = watches.get(id);
+    if (!watch) {
+      const lost = new Set<() => void>();
+      let checking = false;
+      const timer = setInterval(async () => {
+        if (checking) return;
+        checking = true;
+        try {
+          if (await worker.clients.get(id)) return;
+        } catch { /* Unreachable client. */ }
+        finally { checking = false; }
+        for (const notify of lost) notify();
+      }, 250);
+      watch = { lost, timer };
+      watches.set(id, watch);
+    }
+    watch.lost.add(onLost);
+    return () => {
+      if (watch.lost.delete(onLost) && !watch.lost.size) {
+        clearInterval(watch.timer);
+        watches.delete(id);
+      }
+    };
+  };
   const restricted = !!(config.runtimeRegistrationDigest || config.runtimeClientPathPrefix);
   const matchesToken = async (value: unknown): Promise<boolean> => {
     if (!config.runtimeRegistrationDigest) return true;
@@ -320,7 +346,9 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
           let busy = false;
           let requestBody: ArrayBuffer | null;
           if (request.body === undefined) {
-            if (!reservation.grow(config.maxRequestBodyBytes)) return new Response("proxy service unavailable", { status: 503 });
+            if (!await reservation.waitForBudget(config.maxRequestBodyBytes, request.signal).catch(() => false)) {
+              return request.signal.aborted ? new Response("proxy request canceled", { status: 499 }) : new Response("proxy service unavailable", { status: 503 });
+            }
             const blob = await request.blob();
             requestBody = blob.size > config.maxRequestBodyBytes ? null : await blob.arrayBuffer();
           } else requestBody = await boundedBody(request.body, config.maxRequestBodyBytes, bytes => {
@@ -348,7 +376,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
         const cleanup = () => {
           clearTimeout(metadataTimer);
           clearTimeout(bodyInactivityTimer);
-          clearInterval(runtimeWatchdog);
+          stopWatching();
           request.signal.removeEventListener("abort", requestAborted);
           channel.port1.close();
         };
@@ -373,13 +401,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
           () => finishError(504, "proxy response timed out", true),
           config.responseMetadataTimeoutMs,
         );
-        const runtimeWatchdog = setInterval(() => {
-          void worker.clients.get(target.id).then((current: any) => {
-            if (current != null || finished) return;
-            forgetTarget();
-            finishError(503, "proxy runtime unavailable", true);
-          }).catch(() => finishError(503, "proxy runtime unavailable", true));
-        }, 250);
+        const stopWatching = watchClient(target.id, () => {
+          forgetTarget();
+          finishError(503, "proxy runtime unavailable", true);
+        });
         request.signal.addEventListener("abort", requestAborted, { once: true });
         const handleMessage = (message: MessageEvent) => {
           const value = message.data as Record<string, unknown> | null;

@@ -75,8 +75,8 @@ type InboundHandler func(ctx context.Context, typeID uint32, notification bool, 
 
 // Router dispatches RPC requests by type ID.
 type Router struct {
-	mu                  sync.RWMutex         // Guards handler registrations.
-	lookup              func(uint32) Handler // Immutable deployment methods, shared by sessions.
+	mu                  sync.RWMutex               // Guards handler registrations.
+	lookup              func(uint32, bool) Handler // Immutable deployment methods, shared by sessions.
 	inbound             InboundHandler
 	handlers            map[uint32]Handler // Handlers keyed by type ID.
 	notify              map[uint32]map[*routerNotification]struct{}
@@ -92,7 +92,7 @@ func NewRouter() *Router {
 	return &Router{}
 }
 
-func NewRouterWithLookup(lookup func(uint32) Handler) *Router {
+func NewRouterWithLookup(lookup func(uint32, bool) Handler) *Router {
 	return &Router{lookup: lookup}
 }
 
@@ -178,7 +178,7 @@ func (r *Router) handle(ctx context.Context, env receivedEnvelope, payload json.
 	r.mu.RLock()
 	h := r.handlers[typeID]
 	if h == nil && r.lookup != nil {
-		h = r.lookup(typeID)
+		h = r.lookup(typeID, env.RequestId == 0)
 	}
 	r.mu.RUnlock()
 	if h == nil {

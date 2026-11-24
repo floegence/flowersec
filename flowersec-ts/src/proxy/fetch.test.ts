@@ -52,6 +52,14 @@ describe("portable proxy request bodies", () => {
     expect(request.method).toBe("POST");
   });
 
+  it("admits overlapping small uploads without streams within one byte budget", async () => {
+    bodyWithoutStreams();
+    const intake = new BodyIntake(2, 4);
+    const upload = () => prepareProxyFetch("/api", { method: "POST", body: "{}" }, undefined, 4, intake);
+    const results = await Promise.all([upload(), upload()]);
+    expect(results.map(result => result.request.body?.byteLength)).toEqual([2, 2]);
+  });
+
   it("keeps empty GET requests bodyless without Request.body", async () => {
     bodyWithoutStreams();
     expect((await prepareProxyFetch("/api")).request.body).toBeUndefined();

@@ -1,4 +1,5 @@
 import { prepareProxyFetch } from "./fetch.js";
+import { raceWithSignal } from "../utils/abort.js";
 import { BodyIntake } from "./bodyIntake.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
@@ -338,7 +339,8 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
 
   // One transaction owns admission, framing, cancellation and response backpressure
   // for direct fetch and both browser bridges. It never reconnects a request.
-  async function execute(request: ProxyFetchRequest, signal?: AbortSignal, sessionBound = false): Promise<Response> {
+  const requestDuration = timeoutMs || SDK_DEFAULTS.proxy.defaultTimeoutMs;
+  async function execute(request: ProxyFetchRequest, signal?: AbortSignal, sessionBound = false, deadline = performance.now() + requestDuration): Promise<Response> {
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(request.path);
     enforcePathPolicy("http", path, pathPolicy);
@@ -388,9 +390,11 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
       const body = request.body === undefined ? new Uint8Array() : new Uint8Array(request.body);
       if (body.length > maxBodyBytes) throw new SessionError("resource_exhausted");
       // Persistent requests never queue behind an occupied finite-request slot.
+      const remaining = deadline - performance.now();
+      if (!sessionBound && remaining <= 0) throw new SessionError("timeout");
+      arm(remaining);
       release = await admission.acquire(body.length, controller.signal, eventRequested);
       controller.signal.throwIfAborted();
-      arm(timeoutMs || SDK_DEFAULTS.proxy.defaultTimeoutMs);
       stream = await options.session.openStream(PROXY_HTTP_STREAM_KIND, {
         signal: controller.signal,
         metadata: createStreamMetadata({ protocol: "flowersec.proxy.http", version: 2 }),
@@ -458,15 +462,21 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
   async function fetchSession(input: RequestInfo | URL, init?: ProxyRequestInit): Promise<Response> {
     if (disposed) throw new SessionError("closed");
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const prepared = await prepareProxyFetch(input, { ...init,
-      signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]),
-    }, externalOrigin, maxBodyBytes, intake);
     if (init?.sessionBound !== undefined && typeof init.sessionBound !== "boolean") throw new TypeError("sessionBound must be a boolean");
-    return execute(prepared.request, prepared.signal, init?.sessionBound === true);
+    const sessionBound = init?.sessionBound === true;
+    const deadline = performance.now() + requestDuration;
+    const preparation = new AbortController();
+    const owner = AbortSignal.any([preparation.signal, lifetime.signal, ...(signal ? [signal] : [])]);
+    const timer = sessionBound ? undefined : setTimeout(() => preparation.abort(new SessionError("timeout")), requestDuration);
+    try {
+      const prepared = await raceWithSignal(prepareProxyFetch(input, { ...init, signal: owner }, externalOrigin, maxBodyBytes, intake), owner);
+      return execute(prepared.request, prepared.signal, sessionBound, deadline);
+    } finally { clearTimeout(timer); }
   }
 
-  function dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void {
+  function dispatchFetch(request: ProxyFetchRequest, port: MessagePort, owner?: AbortSignal): void {
     const controller = new AbortController();
+    const signal = owner ? AbortSignal.any([controller.signal, owner]) : controller.signal;
     const flowControlled = usesServiceWorkerResponseFlowControl(request) || request.headers.some(
       ({ name, value }) => name.toLowerCase() === "accept" && acceptsEventStream(value),
     );
@@ -480,7 +490,7 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
     void (async () => {
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
-        const response = await execute(request, controller.signal);
+        const response = await execute(request, signal);
         port.postMessage({ type: "flowersec-proxy:response_meta", status: response.status,
           headers: Array.from(response.headers, ([name, value]) => ({ name, value })) });
         reader = response.body?.getReader();
@@ -488,10 +498,10 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
         const wake = () => { controller.abort(new SessionError("canceled")); creditWake?.(); };
         const read = async () => {
           while (!credit) {
-            controller.signal.throwIfAborted();
+            signal.throwIfAborted();
             await new Promise<void>((resolve) => { creditWake = resolve; });
           }
-          controller.signal.throwIfAborted();
+          signal.throwIfAborted();
           credit = !flowControlled;
           return reader!.read();
         };

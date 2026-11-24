@@ -140,6 +140,16 @@ describe("proxy service worker generator", () => {
     expect(lookups).toBeGreaterThanOrEqual(2);
   });
 
+  it("shares a single liveness lookup across requests to the same client", async () => {
+    const target = { id: "client", postMessage() {} };
+    let lookups = 0;
+    const worker = generatedWorker(async () => ++lookups <= 2 ? target : undefined, { responseMetadataTimeoutMs: 1_000 });
+    const fetch = () => worker.fetch(new Request("https://app.example/api"));
+    const responses = await within(Promise.all([fetch(), fetch()]), 700);
+    expect(responses.map(response => response.status)).toEqual([503, 503]);
+    expect(lookups).toBe(3);
+  });
+
   it("bounds the first response metadata wait and aborts the remote stream", async () => {
     const remoteMessages: unknown[] = [];
     let remotePort: MessagePort | undefined;

@@ -160,13 +160,7 @@ func rawIssuedAdmission(t *testing.T, issued controlplane.IssuedArtifact) []byte
 
 func dialAdmissionWebSocket(t *testing.T, serverURL, path, subprotocol string, roots *x509.CertPool) *gorillaws.Conn {
 	t.Helper()
-	dialer := gorillaws.Dialer{
-		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
-		Subprotocols:    []string{subprotocol},
-	}
-	header := make(http.Header)
-	header.Set("Origin", "https://consumer.example")
-	connection, response, err := dialer.Dial("wss"+strings.TrimPrefix(serverURL, "https")+path, header)
+	connection, response, err := tryAdmissionWebSocket(serverURL, path, subprotocol, roots)
 	if err != nil {
 		if response != nil {
 			t.Fatalf("WebSocket dial returned HTTP %d: %v", response.StatusCode, err)
@@ -175,6 +169,16 @@ func dialAdmissionWebSocket(t *testing.T, serverURL, path, subprotocol string, r
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 	return connection
+}
+
+func tryAdmissionWebSocket(serverURL, path, subprotocol string, roots *x509.CertPool) (*gorillaws.Conn, *http.Response, error) {
+	dialer := gorillaws.Dialer{
+		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+		Subprotocols:    []string{subprotocol},
+	}
+	header := make(http.Header)
+	header.Set("Origin", "https://consumer.example")
+	return dialer.Dial("wss"+strings.TrimPrefix(serverURL, "https")+path, header)
 }
 
 func assertExpiredAdmissionAndClose(t *testing.T, connection *gorillaws.Conn, rawFSB3 []byte) {

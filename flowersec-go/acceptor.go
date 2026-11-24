@@ -280,7 +280,7 @@ func (acceptor *Acceptor) Handler() http.Handler {
 	if direct {
 		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
 	}
-	return &webSocketBoundary{handler: mux, enabled: direct}
+	return &webSocketBoundary{handler: mux, enabled: direct, direct: acceptor}
 }
 
 // PrivateLoopbackHandler returns the direct WebSocket boundary for an
@@ -382,9 +382,15 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 }
 
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
+	acceptor.handleDirectWithPolicy(writer, request, nil)
+}
+
+func (acceptor *Acceptor) handleDirectWithPolicy(writer http.ResponseWriter, request *http.Request, policy func(*http.Request) bool) {
 	acceptor.handleDirectWithAdmission(writer, request, func(candidate *http.Request) bool {
 		return candidate != nil && candidate.Method == http.MethodGet && carrierws.ValidateServerRequest(candidate) == nil
-	}, acceptor.allowedOrigin, webSocketAdmissionTLS)
+	}, func(candidate *http.Request) bool {
+		return (policy == nil || policy(candidate)) && acceptor.allowedOrigin(candidate)
+	}, webSocketAdmissionTLS)
 }
 
 func (acceptor *Acceptor) handleDirectWithAdmission(
@@ -400,6 +406,12 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
+	if !acceptor.acquireDirect() {
+		http.Error(writer, "admission busy", http.StatusServiceUnavailable)
+		return
+	}
+	direct := &acceptedDirect{acceptor: acceptor}
+	defer direct.finish(request.Context())
 	ctx, cancel := context.WithDeadline(request.Context(), deadline)
 	defer cancel()
 	if !authorizeRequest(request.WithContext(ctx)) {
@@ -421,12 +433,6 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	if err != nil {
 		return
 	}
-	if !acceptor.acquireDirect() {
-		_ = connection.Close()
-		return
-	}
-	direct := &acceptedDirect{acceptor: acceptor}
-	defer direct.finish(request.Context())
 	serveAdmission := websocketadmission.Serve
 	if mode == webSocketAdmissionPrivate {
 		serveAdmission = websocketadmission.ServePrivateLoopback

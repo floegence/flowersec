@@ -92,7 +92,7 @@ class ControlledStream implements ByteStream {
     return count;
   }
 
-  async closeWrite(): Promise<void> {}
+  async closeWrite(): Promise<void> { this.read = async () => null; }
   async reset(): Promise<void> { this.resetCalled = true; }
   async close(): Promise<void> { this.closed = true; }
 }
@@ -305,6 +305,12 @@ describe("WebSocket v2 proxy patch", () => {
     let objectListenerCalls = 0;
     const objectListener = { handleEvent: () => { objectListenerCalls++; } };
     socket.addEventListener("message", objectListener);
+    let singleCalls = 0;
+    let canceledCalls = 0;
+    const subscription = new AbortController();
+    socket.addEventListener("message", () => { singleCalls++; }, { once: true });
+    socket.addEventListener("message", () => { canceledCalls++; }, { signal: subscription.signal });
+    subscription.abort();
     socket.addEventListener("message", (event) => messages.push((event as MessageEvent).data));
     socket.onmessage = () => { throw new Error("application listener failure"); };
     await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
@@ -333,6 +339,8 @@ describe("WebSocket v2 proxy patch", () => {
     expect(messages[0]).toBe("reply");
     expect(new Uint8Array(messages[1] as ArrayBuffer)).toEqual(new Uint8Array([9, 7]));
     expect(objectListenerCalls).toBe(2);
+    expect(singleCalls).toBe(1);
+    expect(canceledCalls).toBe(0);
     socket.removeEventListener("message", objectListener);
     socket.dispatchEvent(new MessageEvent("message", { data: "local" }));
     expect(objectListenerCalls).toBe(2);

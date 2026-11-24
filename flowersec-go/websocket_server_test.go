@@ -165,8 +165,12 @@ func TestWebSocketHTTPServerDisablesTLS13ResumptionAcrossConnections(t *testing.
 
 func TestWebSocketHTTPServerCloseTerminatesSilentAdmissionAndReleasesCapacity(t *testing.T) {
 	var authorizations atomic.Int32
+	var originChecks atomic.Int32
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins:    []string{"https://consumer.example"},
+		CheckOrigin: func(request *http.Request) bool {
+			originChecks.Add(1)
+			return request.Header.Get("Origin") == "https://consumer.example"
+		},
 		MaxDirectSessions: 1,
 		Release:           func(context.Context, string) { t.Error("silent admission released a lease") },
 		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
@@ -186,12 +190,9 @@ func TestWebSocketHTTPServerCloseTerminatesSilentAdmissionAndReleasesCapacity(t 
 	t.Cleanup(server.Close)
 
 	silent := dialAdmissionWebSocket(t, server.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
-	capacityProbe := dialAdmissionWebSocket(t, server.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
-	_ = capacityProbe.SetReadDeadline(time.Now().Add(time.Second))
-	if _, _, readErr := capacityProbe.ReadMessage(); readErr == nil {
-		t.Fatal("capacity probe remained open while the silent admission owned the only direct slot")
-	} else if networkErr, ok := readErr.(net.Error); ok && networkErr.Timeout() {
-		t.Fatal("silent admission did not acquire the direct slot before shutdown")
+	assertDirectUpgradeBusy(t, server.URL, roots)
+	if originChecks.Load() != 1 {
+		t.Fatal("busy upgrade reached the origin callback")
 	}
 
 	closeDone := make(chan error, 1)
@@ -568,15 +569,19 @@ func assertBoundedServerClose(t *testing.T, server *flowersec.WebSocketHTTPServe
 func assertDirectCapacityHeld(t *testing.T, acceptor *flowersec.Acceptor, serverTLS *tls.Config, roots *x509.CertPool) {
 	t.Helper()
 	replacement := newWebSocketTestServer(t, acceptor.Handler(), serverTLS)
-	connection := dialAdmissionWebSocket(t, replacement.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
-	_ = connection.SetReadDeadline(time.Now().Add(time.Second))
-	_, _, err := connection.ReadMessage()
-	if err == nil {
-		t.Fatal("capacity probe received an admission response without a request")
+	assertDirectUpgradeBusy(t, replacement.URL, roots)
+}
+
+func assertDirectUpgradeBusy(t *testing.T, serverURL string, roots *x509.CertPool) {
+	t.Helper()
+	connection, response, err := tryAdmissionWebSocket(serverURL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
+	if connection != nil {
+		_ = connection.Close()
 	}
-	if networkErr, ok := err.(net.Error); ok && networkErr.Timeout() {
-		t.Fatal("new admission used capacity retained by the original callback")
+	if err == nil || response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("busy direct upgrade: response=%v err=%v", response, err)
 	}
+	_ = response.Body.Close()
 }
 
 func assertDirectCapacityReusable(t *testing.T, acceptor *flowersec.Acceptor, serverTLS *tls.Config, roots *x509.CertPool) {
@@ -588,13 +593,15 @@ func assertDirectCapacityReusable(t *testing.T, acceptor *flowersec.Acceptor, se
 	t.Cleanup(replacement.Close)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		connection := dialAdmissionWebSocket(t, replacement.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
-		_ = connection.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		_, _, readErr := connection.ReadMessage()
-		_ = connection.Close()
-		if networkErr, ok := readErr.(net.Error); ok && networkErr.Timeout() {
+		connection, response, dialErr := tryAdmissionWebSocket(replacement.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
+		if dialErr == nil {
+			_ = connection.Close()
 			return
 		}
+		if response == nil || response.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("direct upgrade: response=%v err=%v", response, dialErr)
+		}
+		_ = response.Body.Close()
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("direct admission capacity was not released after server shutdown")

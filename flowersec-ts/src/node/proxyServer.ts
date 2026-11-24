@@ -427,7 +427,7 @@ export class ProxyServer {
       else socket.close();
       await socketClosed;
       signal.removeEventListener("abort", terminate);
-      await stream.close().catch(() => undefined);
+      if (!opened || signal.aborted) await stream.close().catch(() => undefined);
     }
   }
 }
@@ -641,15 +641,21 @@ async function relayWebSocket(
     }
     return "downstream_close";
   })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const winner = await Promise.race([upstream, downstream]);
-    if (winner === "downstream_close") {
-      await Promise.race([upstream, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
-    }
+    await Promise.race([
+      winner === "downstream_close" ? upstream : downstream,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("WebSocket close timed out")), 1_000); }),
+    ]);
+    await stream.closeWrite();
+  } catch (error) {
+    await stream.reset().catch(() => undefined);
+    throw error;
   } finally {
+    clearTimeout(timer);
     done = true;
     try { socket.close(); } catch { /* cleanup */ }
-    await stream.close().catch(() => undefined);
     await Promise.allSettled([writeChain, downstream]);
   }
 }

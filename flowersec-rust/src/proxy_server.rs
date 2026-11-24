@@ -335,7 +335,11 @@ impl StreamHandler for ProxyHandler {
             operation_for_close.cancel();
         });
         let result = match self.protocol {
-            Protocol::Http => serve_http(&self.inner, incoming.stream(), operation.clone()).await,
+            Protocol::Http => tokio::select! {
+                biased;
+                _ = incoming.wait_for_reset() => Err(ProxyServerError::Closed),
+                result = serve_http(&self.inner, incoming.stream(), operation.clone()) => result,
+            },
             Protocol::WebSocket => {
                 serve_websocket(&self.inner, incoming.stream(), operation.clone()).await
             }
@@ -2574,6 +2578,15 @@ mod tests {
 
     #[tokio::test]
     async fn close_cancels_active_http_request_and_releases_permit() {
+        check_http_cancellation(true).await;
+    }
+
+    #[tokio::test]
+    async fn stream_reset_releases_http_permit_while_upstream_is_silent() {
+        check_http_cancellation(false).await;
+    }
+
+    async fn check_http_cancellation(close_server: bool) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
@@ -2602,6 +2615,8 @@ mod tests {
             inner: server.inner.clone(),
             protocol: Protocol::Http,
         };
+        let reset = CancellationToken::new();
+        let stream_reset = reset.clone();
         let operation = tokio::spawn(async move {
             handler
                 .handle(
@@ -2609,14 +2624,19 @@ mod tests {
                         HTTP_KIND,
                         crate::StreamMetadata::empty(),
                         Box::new(stream),
-                    ),
+                    )
+                    .with_reset_signal(stream_reset),
                     CancellationToken::new(),
                 )
                 .await
         });
         accepted_rx.await.expect("request reached upstream");
-        server.close().await;
-        assert!(operation.is_finished());
+        if close_server {
+            server.close().await;
+            assert!(operation.is_finished());
+        } else {
+            reset.cancel();
+        }
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), operation)
                 .await
@@ -2625,6 +2645,7 @@ mod tests {
             Err(SessionError::OperationFailed)
         );
         assert_eq!(server.inner.permits.available_permits(), 2);
+        server.close().await;
         let rejected = ProxyHandler {
             inner: server.inner.clone(),
             protocol: Protocol::Http,

@@ -168,18 +168,22 @@ test("preserves the initial WebSocket snapshot while acknowledging the connectio
   const handlers = new StreamHandlers();
   server.register(handlers);
   const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.endsWith("/ws"))!;
-  let endRead!: (value: null) => void;
-  const pendingRead = new Promise<null>(resolve => { endRead = resolve; });
+  let endRead!: (value: Uint8Array | null) => void;
+  const pendingRead = new Promise<Uint8Array | null>(resolve => { endRead = resolve; });
   const exchange = proxyExchange(kind, { conn_id: "snapshot", path: "/", headers: [] }, () => pendingRead);
-  vi.spyOn(exchange.incoming.stream, "close").mockImplementation(async () => { endRead(null); });
+  const reset = vi.spyOn(exchange.incoming.stream, "reset").mockImplementation(async () => { endRead(null); });
+  const close = vi.spyOn(exchange.incoming.stream, "close").mockImplementation(async () => { endRead(null); });
   const write = exchange.incoming.stream.write.bind(exchange.incoming.stream);
-  vi.spyOn(exchange.incoming.stream, "write").mockImplementationOnce(async bytes => {
-    await new Promise(resolve => setTimeout(resolve, 10));
+  vi.spyOn(exchange.incoming.stream, "write").mockImplementation(async bytes => {
+    if (!exchange.replies.length) await new Promise(resolve => setTimeout(resolve, 10));
+    if (bytes[0] === 8) setImmediate(() => endRead(Uint8Array.of(8, 0, 0, 0, 0)));
     return write(bytes);
   });
   try {
     await handle(exchange.incoming, {});
     expect(Buffer.concat(exchange.replies).toString()).toContain("initial snapshot");
+    expect(reset).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
   } finally {
     endRead(null);
     await server.close();

@@ -131,6 +131,17 @@ describe("proxy browser control", () => {
     expect(container.registerCalls).toEqual([{ scriptUrl: "/proxy-sw.js", scope: "/app/" }]);
   });
 
+  it("bounds registration and activation before a worker is ready", async () => {
+    const container = new TestServiceWorkerContainer();
+    setGlobal("navigator", { serviceWorker: container });
+    setGlobal("location", { href: "https://app.example/workbench" });
+    Object.defineProperty(container, "ready", { value: new Promise(() => {}) });
+    const attempt = () => registerServiceWorkerAndEnsureControl({ scriptUrl: "/sw.js", controllerTimeoutMs: 5, maxRepairAttempts: 0 });
+    await expect(attempt()).rejects.toThrow("did not take control");
+    container.register = () => new Promise(() => {});
+    await expect(attempt()).rejects.toThrow("did not take control");
+  });
+
   it("bounds registration policy and repairs only within the configured attempt limit", async () => {
     const container = new TestServiceWorkerContainer();
     const replacements: string[] = [];

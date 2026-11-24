@@ -33,16 +33,21 @@ type RPCNotificationHandler func(context.Context, json.RawMessage) error
 
 type rpcHandlerRegistry struct {
 	mu       sync.RWMutex
-	methods  map[uint32]internalrpc.Handler
+	methods  map[uint32]registeredRPCHandler
 	snapshot *rpcHandlerSnapshot
 }
 
+type registeredRPCHandler struct {
+	handler      internalrpc.Handler
+	notification bool
+}
+
 type rpcHandlerSnapshot struct {
-	lookup func(uint32) internalrpc.Handler
+	lookup func(uint32, bool) internalrpc.Handler
 }
 
 func newRPCHandlerRegistry() *rpcHandlerRegistry {
-	return &rpcHandlerRegistry{methods: make(map[uint32]internalrpc.Handler)}
+	return &rpcHandlerRegistry{methods: make(map[uint32]registeredRPCHandler)}
 }
 
 func (registry *rpcHandlerRegistry) valid() bool {
@@ -53,7 +58,7 @@ func (registry *rpcHandlerRegistry) handleRPC(typeID uint32, handler RPCHandler)
 	if !registry.valid() || typeID == 0 || handler == nil {
 		return ErrInvalidHandlerRegistration
 	}
-	return registry.register(typeID, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+	return registry.register(typeID, false, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
 		response, rpcErr := handler(ctx, append(json.RawMessage(nil), request...))
 		if rpcErr != nil {
 			return nil, validRPCWireError(rpcErr)
@@ -70,7 +75,7 @@ func (registry *rpcHandlerRegistry) handleNotification(typeID uint32, handler RP
 	if !registry.valid() || typeID == 0 || handler == nil {
 		return ErrInvalidHandlerRegistration
 	}
-	return registry.register(typeID, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+	return registry.register(typeID, true, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
 		if err := handler(ctx, append(json.RawMessage(nil), request...)); err != nil {
 			return nil, internalRPCError()
 		}
@@ -78,7 +83,7 @@ func (registry *rpcHandlerRegistry) handleNotification(typeID uint32, handler RP
 	})
 }
 
-func (registry *rpcHandlerRegistry) register(typeID uint32, handler internalrpc.Handler) error {
+func (registry *rpcHandlerRegistry) register(typeID uint32, notification bool, handler internalrpc.Handler) error {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 	if registry.snapshot != nil {
@@ -87,7 +92,7 @@ func (registry *rpcHandlerRegistry) register(typeID uint32, handler internalrpc.
 	if _, exists := registry.methods[typeID]; exists {
 		return ErrHandlerAlreadyExists
 	}
-	registry.methods[typeID] = handler
+	registry.methods[typeID] = registeredRPCHandler{handler: handler, notification: notification}
 	return nil
 }
 
@@ -101,7 +106,13 @@ func (registry *rpcHandlerRegistry) freeze() *rpcHandlerSnapshot {
 		return registry.snapshot
 	}
 	methods := registry.methods
-	registry.snapshot = &rpcHandlerSnapshot{lookup: func(id uint32) internalrpc.Handler { return methods[id] }}
+	registry.snapshot = &rpcHandlerSnapshot{lookup: func(id uint32, notification bool) internalrpc.Handler {
+		entry := methods[id]
+		if entry.notification && !notification {
+			return nil
+		}
+		return entry.handler
+	}}
 	return registry.snapshot
 }
 

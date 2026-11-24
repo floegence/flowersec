@@ -438,7 +438,7 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     if (event.data?.type === FETCH_MESSAGE && event.data.version === 2) {
       const request = event.data.request as ProxyFetchRequest;
       if (event.data.responseFlowControl === "chunk_credit_v2") enableResponseFlowControl(request);
-      options.runtime.dispatchFetch(request, port);
+      options.runtime.dispatchFetch(request, port, httpLifetime.signal);
       return;
     }
     if (event.data?.type === WEBSOCKET_OPEN_MESSAGE && event.data.version === 2) {
@@ -474,10 +474,12 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
       })();
     }
   };
+  const httpLifetime = new AbortController();
   target.addEventListener("message", onMessage);
   return Object.freeze({
     dispose: () => {
       disposed = true;
+      httpLifetime.abort(new SessionError("canceled"));
       target.removeEventListener("message", onMessage);
       for (const controller of active) controller.abort(new SessionError("closed"));
     },

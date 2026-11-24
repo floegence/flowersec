@@ -370,6 +370,7 @@ pub struct IncomingStream {
     metadata: StreamMetadata,
     stream: Box<dyn ByteStream>,
     handler_tasks: Option<tokio_util::task::TaskTracker>,
+    reset_signal: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl IncomingStream {
@@ -384,12 +385,25 @@ impl IncomingStream {
             metadata,
             stream,
             handler_tasks: None,
+            reset_signal: None,
         }
     }
 
     pub(crate) fn with_handler_tasks(mut self, tasks: tokio_util::task::TaskTracker) -> Self {
         self.handler_tasks = Some(tasks);
         self
+    }
+
+    pub(crate) fn with_reset_signal(mut self, reset: tokio_util::sync::CancellationToken) -> Self {
+        self.reset_signal = Some(reset);
+        self
+    }
+
+    pub(crate) async fn wait_for_reset(&self) {
+        match &self.reset_signal {
+            Some(signal) => signal.cancelled().await,
+            None => std::future::pending().await,
+        }
     }
 
     pub(crate) fn begin_handler(

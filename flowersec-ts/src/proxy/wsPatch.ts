@@ -24,28 +24,6 @@ async function readFrame(reader: ProxyByteReader, maximum: number): Promise<Read
   return { opcode: header[0]!, payload: await reader.readExactly(length) };
 }
 
-type EventListenerLike = EventListenerOrEventListenerObject | ((event: Event) => void);
-
-class EventListeners {
-  private readonly values = new Map<string, Set<EventListenerLike>>();
-  add(type: string, listener: EventListenerLike): void {
-    const entries = this.values.get(type) ?? new Set<EventListenerLike>();
-    entries.add(listener);
-    this.values.set(type, entries);
-  }
-  remove(type: string, listener: EventListenerLike): void { this.values.get(type)?.delete(listener); }
-  dispatch(type: string, event: Event, target: unknown): void {
-    for (const listener of this.values.get(type) ?? []) {
-      try {
-        if (typeof listener === "function") listener.call(target, event);
-        else listener.handleEvent(event);
-      } catch {
-        // Event listener failures do not corrupt the transport state.
-      }
-    }
-  }
-}
-
 export type WebSocketPatchOptions = Readonly<{
   runtime: Pick<ProxyRuntime, "limits" | "openWebSocketStream">;
   shouldProxy?: (url: URL) => boolean;
@@ -76,7 +54,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     return url.hostname === location.hostname && remotePort === localPort;
   });
 
-  class ProxyWebSocket {
+  class ProxyWebSocket extends EventTarget {
     static readonly CONNECTING = 0;
     static readonly OPEN = 1;
     static readonly CLOSING = 2;
@@ -97,22 +75,18 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     onerror: ((event: Event) => void) | null = null;
     onclose: ((event: CloseEvent) => void) | null = null;
 
-    private readonly listeners = new EventListeners();
     private readonly abort = new AbortController();
     private stream: ByteStream | undefined;
     private writes: Promise<void> = Promise.resolve();
     private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(input: string | URL, protocols?: string | string[]) {
+      super();
       const url = new URL(String(input), globalThis.location?.href);
       if (!shouldProxy(url)) return new NativeWebSocket(input, protocols) as unknown as ProxyWebSocket;
       this.url = url.toString();
       void this.connect(url, protocols);
     }
-
-    addEventListener(type: string, listener: EventListenerLike): void { this.listeners.add(type, listener); }
-    removeEventListener(type: string, listener: EventListenerLike): void { this.listeners.remove(type, listener); }
-    dispatchEvent(event: Event): boolean { this.listeners.dispatch(event.type, event, this); return !event.defaultPrevented; }
 
     send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
       if (this.readyState !== ProxyWebSocket.OPEN || this.stream === undefined) throw new DOMException("WebSocket is not open", "InvalidStateError");
@@ -219,7 +193,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     private emit(type: "open" | "message" | "error" | "close", event: Event): void {
       const callback = this[`on${type}`] as ((event: Event) => void) | null;
       try { callback?.call(this, event); } catch { /* User event handlers are isolated. */ }
-      this.listeners.dispatch(type, event, this);
+      this.dispatchEvent(event);
     }
 
     private fail(): void {
@@ -244,7 +218,17 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
-      void stream?.close().catch(() => stream.reset().catch(() => undefined));
+      if (stream) void this.finishStream(stream);
+    }
+
+    private async finishStream(stream: ByteStream): Promise<void> {
+      const timer = setTimeout(() => { void stream.reset().catch(() => undefined); }, closeHandshakeTimeoutMs);
+      try {
+        await stream.closeWrite();
+        if (await stream.read() !== null) await stream.reset();
+        else await stream.close();
+      } catch { await stream.reset().catch(() => undefined); }
+      finally { clearTimeout(timer); }
     }
   }
 

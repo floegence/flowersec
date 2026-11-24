@@ -483,6 +483,20 @@ class FetchResponseStream extends FakeStream {
 }
 
 describe("session fetch", () => {
+  it("applies a finite deadline during upload preparation and admission", async () => {
+    const stream = new FetchResponseStream("text/plain", []);
+    const session = new FakeSession([stream]);
+    const runtime = createProxyRuntime({ session, timeoutMs: 30, maxConcurrentHttpStreams: 1 });
+    try {
+      const source = new ReadableStream<Uint8Array>({});
+      const upload = { method: "POST", body: source, duplex: "half" };
+      await expect(runtime.fetch("/upload", upload)).rejects.toMatchObject({ code: "timeout" });
+      const held = await runtime.fetch("/slow", { sessionBound: true });
+      await expect(runtime.fetch("/queued")).rejects.toMatchObject({ code: "timeout" });
+      expect(session.opens).toHaveLength(1);
+      await held.body?.cancel();
+    } finally { runtime.dispose(); }
+  });
   it("returns a standard streaming Response and exempts confirmed events from the cumulative body limit", async () => {
     const stream = new FetchResponseStream("text/event-stream; charset=utf-8", [new Uint8Array(8), new Uint8Array(8)]);
     const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxBodyBytes: 8 });
@@ -584,18 +598,20 @@ it("consumes more than 64 MiB of events without accumulating a lifetime response
   } finally { runtime.dispose(); }
 });
 
-it("requires consumer credit for event dispatch and releases a stalled bridge on disposal", async () => {
+it.each(["runtime", "bridge"])("requires consumer credit for event dispatch and releases a stalled bridge on %s disposal", async (scope) => {
   const stream = new FetchResponseStream("text/event-stream", [Uint8Array.of(1)]);
   const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
   const channel = new MessageChannel(); channel.port2.start();
+  const owner = new AbortController();
   try {
     const metadata = nextPortMessage(channel.port2);
-    runtime.dispatchFetch({ id: "events", method: "GET", path: "/events", headers: [{ name: "accept", value: "text/event-stream" }] }, channel.port1);
+    runtime.dispatchFetch({ id: "events", method: "GET", path: "/events", headers: [{ name: "accept", value: "text/event-stream" }] }, channel.port1, owner.signal);
     await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta" });
     await eventLoopTurn();
     expect(stream.readCalls).toBe(1);
     const error = nextPortMessage(channel.port2);
-    runtime.dispose();
+    if (scope === "bridge") owner.abort();
+    else runtime.dispose();
     await expect(error).resolves.toMatchObject({ type: "flowersec-proxy:response_error" });
     expect(stream.resetCalled).toBe(true);
   } finally { runtime.dispose(); channel.port2.close(); }
