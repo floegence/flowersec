@@ -851,7 +851,7 @@
       "path": "flowersec-swift/Sources/Flowersec/TransportV3Session.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 5,
-      "matching_lines": 384
+      "matching_lines": 386
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",

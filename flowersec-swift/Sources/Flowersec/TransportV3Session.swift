@@ -526,7 +526,11 @@ actor TransportV3Session {
         defer { writeDeadline.cancel() }
         try await sendControl(.ping, payload: payload)
       }
-      return try await waiter.wait(until: deadline)
+      try Task.checkCancellation()
+      guard ContinuousClock.now < deadline else { throw TransportV3SessionError.livenessFailed }
+      let roundTrip = try await waiter.wait(until: deadline)
+      guard roundTrip < config.deadlines.liveness else { throw TransportV3SessionError.livenessFailed }
+      return roundTrip
     } catch {
       pings.removeValue(forKey: nonce)
       if error is CancellationError { throw CancellationError() }
