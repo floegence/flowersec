@@ -227,7 +227,9 @@ export class ProxyServer {
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let httpPermit = false;
     let reservedBytes = 0;
+    const upload: Uint8Array<ArrayBuffer>[] = [];
     const releaseUpload = () => {
+      upload.length = 0;
       this.#bufferedBodyBytes -= reservedBytes;
       reservedBytes = 0;
     };
@@ -281,7 +283,7 @@ export class ProxyServer {
         const origin = new URL(externalOrigin);
         headers["x-forwarded-proto"] = origin.protocol.slice(0, -1);
       }
-      let body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
+      const bodyLength = await readBody(reader, upload, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
         const available = this.#config.maxBufferedBody - this.#bufferedBodyBytes;
         const growth = Math.min(preferred, available);
         if (growth < minimum) return 0;
@@ -289,7 +291,7 @@ export class ProxyServer {
         this.#bufferedBodyBytes += growth;
         return growth;
       });
-      if (typeof body === "string") { await writeHTTPError(stream, requestID, body); return; }
+      if (typeof bodyLength === "string") { await writeHTTPError(stream, requestID, bodyLength); return; }
       // A peer reset cancels the upstream even when it has no next event to write.
       // A FIN only closes request writes and is valid during response streaming.
       peerWatch = reader.remainingStream().read({ signal }).then((chunk) => {
@@ -298,22 +300,21 @@ export class ProxyServer {
       const requestInit: RequestInit & { duplex?: "half" } = {
         method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
       };
-      if (body.byteLength > 0) {
-        headers["content-length"] = String(body.byteLength);
-        let upload: Uint8Array<ArrayBuffer> | undefined = body;
-        body = new Uint8Array(0);
+      if (bodyLength > 0) {
+        headers["content-length"] = String(bodyLength);
+        upload.reverse();
         requestInit.duplex = "half";
         requestInit.body = new ReadableStream<Uint8Array<ArrayBuffer>>({
           pull(controller) {
-            if (upload) {
-              controller.enqueue(upload);
-              upload = undefined;
+            const block = upload.pop();
+            if (block) {
+              controller.enqueue(block);
             } else {
               controller.close();
               releaseUpload();
             }
           },
-          cancel() { upload = undefined; releaseUpload(); },
+          cancel: releaseUpload,
         }, { highWaterMark: 0 });
       }
       let responseStarted = false;
@@ -546,25 +547,33 @@ async function writeChunk(stream: ByteStream, chunk: Uint8Array, signal?: AbortS
   new DataView(bytes.buffer).setUint32(0, chunk.length, false); bytes.set(chunk, 4);
   await writeAll(stream, bytes, signal === undefined ? {} : { signal });
 }
-async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number, reserve: (minimum: number, preferred: number) => number): Promise<Uint8Array<ArrayBuffer> | "request_body_invalid" | "resource_exhausted"> {
-  let buffer = new Uint8Array(0);
+async function readBody(reader: ProxyByteReader, blocks: Uint8Array<ArrayBuffer>[], maxChunk: number, maxBody: number, reserve: (minimum: number, preferred: number) => number): Promise<number | "request_body_invalid" | "resource_exhausted"> {
+  let block = new Uint8Array(0);
+  let used = 0;
   let total = 0;
   try {
     while (true) {
       const header = await reader.readExactly(4); const length = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, false);
-      if (length === 0) return buffer.subarray(0, total);
-      if (length > maxChunk || length > maxBody - total) return "request_body_invalid";
-      const end = total + length;
-      if (end > buffer.length) {
-        const required = end - buffer.length;
-        const growth = reserve(required, Math.min(maxBody - buffer.length, Math.max(required, buffer.length)));
-        if (growth === 0) return "resource_exhausted";
-        const next = new Uint8Array(buffer.length + growth);
-        next.set(buffer);
-        buffer = next;
+      if (length === 0) {
+        if (used > 0) blocks.push(block.subarray(0, used));
+        return total;
       }
-      await reader.readInto(buffer.subarray(total, end));
-      total = end;
+      if (length > maxChunk || length > maxBody - total) return "request_body_invalid";
+      const fit = Math.min(length, block.length - used);
+      const required = length - fit;
+      if (required > 0) {
+        const preferred = Math.max(required, Math.min(64 * 1024, 2 * block.length));
+        const capacity = reserve(required, Math.min(maxBody - total - fit, preferred));
+        if (capacity === 0) return "resource_exhausted";
+        if (fit > 0) await reader.readInto(block.subarray(used));
+        if (block.length > 0) blocks.push(block);
+        block = new Uint8Array(capacity);
+        used = 0;
+      }
+      const count = required || length;
+      await reader.readInto(block.subarray(used, used + count));
+      used += count;
+      total += length;
     }
   } catch { return "request_body_invalid"; }
 }

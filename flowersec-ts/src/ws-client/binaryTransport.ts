@@ -34,6 +34,7 @@ export type WebSocketLike = {
 
 export type WebSocketLimits = Readonly<{
   maxInboundQueuedBytes: number;
+  maxInboundQueuedMessages: number;
   outboundLowWatermarkBytes: number;
   outboundHighWatermarkBytes: number;
   outboundHardLimitBytes: number;
@@ -42,6 +43,7 @@ export type WebSocketLimits = Readonly<{
 
 export const DEFAULT_WEB_SOCKET_LIMITS: WebSocketLimits = Object.freeze({
   maxInboundQueuedBytes: 4 * (1 << 20),
+  maxInboundQueuedMessages: 1024,
   outboundLowWatermarkBytes: 256 * 1024,
   outboundHighWatermarkBytes: 1 << 20,
   outboundHardLimitBytes: 4 * (1 << 20),
@@ -77,6 +79,7 @@ export class WebSocketBinaryTransport {
   // Serialize message handling to preserve arrival order across async Blob decoding.
   private messageChain: Promise<void> = Promise.resolve();
   private decodingBytes = 0;
+  private decodingMessages = 0;
   // Sticky error state to fail all future reads/writes.
   private error: unknown = null;
   // Tracks whether the close is initiated locally to avoid double-reporting.
@@ -224,16 +227,18 @@ export class WebSocketBinaryTransport {
     const size = source instanceof Uint8Array ? source.byteLength : source.size;
     if (size === 0) { this.failAndClose(new Error("empty websocket transport message")); return; }
     const charge = source instanceof Uint8Array ? size : 2 * size;
-    if (this.queueBytes + this.decodingBytes + charge > this.limits.maxInboundQueuedBytes) {
+    if (this.queueBytes + this.decodingBytes + charge > this.limits.maxInboundQueuedBytes ||
+        this.queue.length - this.queueHead + this.decodingMessages >= this.limits.maxInboundQueuedMessages) {
       this.failAndClose(new Error("ws recv buffer exceeded")); return;
     }
     this.decodingBytes += charge;
+    this.decodingMessages++;
     this.messageChain = this.messageChain.then(async () => {
       try {
         if (this.error != null) return;
         const bytes = source instanceof Uint8Array ? source : new Uint8Array(await source.arrayBuffer());
         if (this.error == null) this.push(bytes);
-      } finally { this.decodingBytes -= charge; }
+      } finally { this.decodingBytes -= charge; this.decodingMessages--; }
     }).catch(error => this.failAndClose(error instanceof Error ? error : new Error(String(error))));
   };
 
@@ -355,6 +360,7 @@ export class WebSocketBinaryTransport {
 function normalizeWebSocketLimits(input: Partial<WebSocketLimits> | undefined): WebSocketLimits {
   const limits: WebSocketLimits = {
     maxInboundQueuedBytes: input?.maxInboundQueuedBytes ?? DEFAULT_WEB_SOCKET_LIMITS.maxInboundQueuedBytes,
+    maxInboundQueuedMessages: input?.maxInboundQueuedMessages ?? DEFAULT_WEB_SOCKET_LIMITS.maxInboundQueuedMessages,
     outboundLowWatermarkBytes: input?.outboundLowWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundLowWatermarkBytes,
     outboundHighWatermarkBytes: input?.outboundHighWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHighWatermarkBytes,
     outboundHardLimitBytes: input?.outboundHardLimitBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHardLimitBytes,
@@ -363,7 +369,7 @@ function normalizeWebSocketLimits(input: Partial<WebSocketLimits> | undefined): 
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer`);
   }
-  if (limits.maxInboundQueuedBytes === 0 || limits.outboundHardLimitBytes === 0 || limits.outboundDrainTimeoutMs === 0) {
+  if (limits.maxInboundQueuedBytes === 0 || limits.maxInboundQueuedMessages === 0 || limits.outboundHardLimitBytes === 0 || limits.outboundDrainTimeoutMs === 0) {
     throw new TypeError("websocket hard limits and drain timeout must be positive");
   }
   if (limits.outboundLowWatermarkBytes > limits.outboundHighWatermarkBytes ||

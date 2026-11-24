@@ -155,6 +155,33 @@ test.each(["slots", "bytes"])("applies shared HTTP %s before reading body payloa
   } finally { finishBody(null); await active; await server.close(); }
 });
 
+test("forwards a fully validated upload in reserved blocks without coalescing them", async () => {
+  const origin = "http://127.0.0.1:1";
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBufferedRequestBodyBytes: 10 });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const received: Uint8Array[] = [];
+  const fetch = vi.fn(async (_target: URL, init: RequestInit) => {
+    expect(new Headers(init.headers).get("content-length")).toBe("10");
+    const reader = (init.body as ReadableStream<Uint8Array>).getReader();
+    for (let result = await reader.read(); !result.done; result = await reader.read()) received.push(result.value);
+    return new Response(null);
+  });
+  vi.stubGlobal("fetch", fetch);
+  try {
+    for (const extra of [true, false]) {
+      const frames = [u32be(2), Uint8Array.of(1, 2), u32be(1), Uint8Array.of(3), u32be(4), Uint8Array.of(4, 5, 6, 7), u32be(3), Uint8Array.of(8, 9, 10), ...(extra ? [u32be(1)] : [u32be(0)])];
+      const exchange = proxyExchange(kind, { method: "POST", path: "/", request_id: "blocks", headers: [] }, async () => frames.shift() ?? null);
+      await handle(exchange.incoming, {});
+      expect(Buffer.concat(exchange.replies).toString()).toContain(extra ? '"resource_exhausted"' : '"ok":true');
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(received.length).toBeGreaterThan(1);
+    expect(received.reduce((sum, block) => sum + block.buffer.byteLength, 0)).toBe(10);
+    expect([...Buffer.concat(received)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  } finally { vi.unstubAllGlobals(); await server.close(); }
+});
+
 test("releases upload capacity while a confirmed event response is still open", async () => {
   const origin = "http://127.0.0.1:1";
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBufferedRequestBodyBytes: 4 });

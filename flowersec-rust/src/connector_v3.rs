@@ -9,7 +9,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use futures_util::{StreamExt as _, stream::FuturesUnordered};
+use futures_util::{
+    FutureExt as _, StreamExt as _,
+    future::{BoxFuture, Shared},
+    stream::FuturesUnordered,
+};
 use rustls::pki_types::CertificateDer;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -312,7 +316,26 @@ pub(crate) trait CandidatePreparerV3: Send + Sync {
     ) -> CandidatePrepareFutureV3<'a>;
 }
 
-struct ProductionCandidatePreparerV3;
+type PlatformRootsV3 = Shared<BoxFuture<'static, Result<NativeTlsPolicyV3, CandidateFailureV3>>>;
+
+fn platform_roots_load(
+    load: impl FnOnce() -> Result<NativeTlsPolicyV3, crate::tls_v3::NativeTlsConfigErrorV3>
+    + Send
+    + 'static,
+) -> PlatformRootsV3 {
+    async move {
+        tokio::task::spawn_blocking(load)
+            .await
+            .map_err(|_| CandidateFailureV3::Unsupported)?
+            .map_err(|_| CandidateFailureV3::Unsupported)
+    }
+    .boxed()
+    .shared()
+}
+
+struct ProductionCandidatePreparerV3 {
+    platform_roots: PlatformRootsV3,
+}
 
 impl CandidatePreparerV3 for ProductionCandidatePreparerV3 {
     fn prepare<'a>(
@@ -323,13 +346,15 @@ impl CandidatePreparerV3 for ProductionCandidatePreparerV3 {
         deadline: tokio::time::Instant,
         cancellation: &'a CancellationToken,
     ) -> CandidatePrepareFutureV3<'a> {
-        Box::pin(prepare_candidate(
-            candidate,
-            plan,
-            options,
-            deadline,
-            cancellation,
-        ))
+        Box::pin(async move {
+            let tls = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(CandidateFailureV3::Canceled),
+                _ = tokio::time::sleep_until(deadline) => return Err(CandidateFailureV3::Timeout),
+                policy = client_tls_policy(candidate, options, &self.platform_roots) => policy?,
+            };
+            prepare_candidate(candidate, plan, options, tls, deadline, cancellation).await
+        })
     }
 }
 
@@ -351,7 +376,9 @@ pub async fn connect_v3_with_cancellation(
         lease,
         options,
         cancellation,
-        &ProductionCandidatePreparerV3,
+        &ProductionCandidatePreparerV3 {
+            platform_roots: platform_roots_load(NativeTlsPolicyV3::ca_with_platform_roots),
+        },
     )
     .await
 }
@@ -531,6 +558,7 @@ async fn prepare_candidate(
     candidate: &CanonicalCandidateV3,
     plan: &ConnectionPlanV3,
     options: &ConnectorOptions,
+    tls: NativeTlsPolicyV3,
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
 ) -> Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3> {
@@ -542,21 +570,20 @@ async fn prepare_candidate(
                 options
                     .websocket_origin()
                     .ok_or(CandidateFailureV3::Unsupported)?,
-                options,
+                tls,
                 deadline,
                 cancellation,
             )
             .await
         }
         CarrierWireV3::RawQuic => {
-            prepare_raw_quic(candidate, plan, options, deadline, cancellation).await
+            prepare_raw_quic(candidate, plan, tls, deadline, cancellation).await
         }
         CarrierWireV3::Webtransport => {
             let origin = options
                 .webtransport_origin
                 .as_deref()
                 .ok_or(CandidateFailureV3::Unsupported)?;
-            let tls = client_tls_policy(candidate, options)?;
             let capacity = carrier_inbound_stream_limit_v3(plan.session.max_inbound_streams)
                 .map_err(|_| CandidateFailureV3::InvalidArtifact)?;
             tokio::select! {
@@ -572,11 +599,11 @@ async fn prepare_websocket(
     candidate: &CanonicalCandidateV3,
     plan: &ConnectionPlanV3,
     origin: &str,
-    options: &ConnectorOptions,
+    tls: NativeTlsPolicyV3,
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
 ) -> Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3> {
-    let tls = client_tls_policy(candidate, options)?
+    let tls = tls
         .client_config(b"http/1.1")
         .map_err(|_| CandidateFailureV3::Unsupported)?;
     let subprotocol = match plan.path {
@@ -612,7 +639,7 @@ async fn prepare_websocket(
 async fn prepare_raw_quic(
     candidate: &CanonicalCandidateV3,
     plan: &ConnectionPlanV3,
-    options: &ConnectorOptions,
+    tls: NativeTlsPolicyV3,
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
 ) -> Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3> {
@@ -620,7 +647,6 @@ async fn prepare_raw_quic(
         PathKind::Direct => ALPN_DIRECT_V3,
         PathKind::Tunnel => ALPN_TUNNEL_V3,
     };
-    let tls = client_tls_policy(candidate, options)?;
     let capacity = carrier_inbound_stream_limit_v3(plan.session.max_inbound_streams)
         .map_err(|_| CandidateFailureV3::InvalidArtifact)?;
     raw_quic_v3::dial(
@@ -643,9 +669,10 @@ async fn prepare_raw_quic(
     })
 }
 
-fn client_tls_policy(
+async fn client_tls_policy(
     candidate: &CanonicalCandidateV3,
     options: &ConnectorOptions,
+    platform_roots: &PlatformRootsV3,
 ) -> Result<NativeTlsPolicyV3, CandidateFailureV3> {
     let tls_policy = match &candidate.tls {
         TlsPolicyWireV3::Pin { pins } => NativeTlsPolicyV3::pin(
@@ -654,7 +681,7 @@ fn client_tls_policy(
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         TlsPolicyWireV3::Ca {} if options.trust_roots_der().is_empty() => {
-            NativeTlsPolicyV3::ca_with_platform_roots()
+            return platform_roots.clone().await;
         }
         TlsPolicyWireV3::Ca {} => NativeTlsPolicyV3::ca_with_configured_roots(
             options
@@ -1717,6 +1744,45 @@ mod tests {
             admission_failure(AdmissionStatusV3::Retryable).code(),
             ConnectErrorCode::ConnectionFailed
         );
+    }
+
+    #[tokio::test]
+    async fn platform_roots_load_is_shared_and_does_not_hold_up_cancellation() {
+        let (started, wait_started) = tokio::sync::oneshot::channel();
+        let (release, wait_release) = std::sync::mpsc::channel();
+        let preparer = ProductionCandidatePreparerV3 {
+            platform_roots: platform_roots_load(move || {
+                started.send(()).unwrap();
+                wait_release.recv_timeout(Duration::from_secs(5)).unwrap();
+                Err(crate::tls_v3::NativeTlsConfigErrorV3::RootsUnavailable)
+            }),
+        };
+        let plan = artifact_with_candidates(vec![json!({
+            "carrier": "websocket", "id": "ca", "tls": {"mode": "ca"},
+            "url": "wss://127.0.0.1:443/flowersec/v5/direct", "wire_profile": "flowersec-direct/5"
+        })])
+        .connection_plan()
+        .unwrap();
+        let options = ConnectorOptions::new();
+        let cancellation = CancellationToken::new();
+        let prepare = preparer.prepare(
+            &plan.candidates[0],
+            &plan,
+            &options,
+            tokio::time::Instant::now() + Duration::from_secs(5),
+            &cancellation,
+        );
+        let cancel_after_start = async {
+            wait_started.await.unwrap();
+            cancellation.cancel();
+        };
+        let (result, ()) = tokio::join!(prepare, cancel_after_start);
+        assert!(matches!(result, Err(CandidateFailureV3::Canceled)));
+        release.send(()).unwrap();
+        let (first, second) =
+            tokio::join!(preparer.platform_roots.clone(), preparer.platform_roots);
+        assert!(matches!(first, Err(CandidateFailureV3::Unsupported)));
+        assert!(matches!(second, Err(CandidateFailureV3::Unsupported)));
     }
 
     #[test]

@@ -158,7 +158,10 @@ test("Rust native runtime owns carrier trust policy", () => {
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
   assert.match(connector, /pub fn new\(\) -> Self/u);
   assert.match(connector, /pub fn with_trust_roots_der\(/u);
-  assert.match(connector, /NativeTlsPolicyV3::ca_with_platform_roots\(\)/u);
+  assert.match(connector, /platform_roots_load\(NativeTlsPolicyV3::ca_with_platform_roots\)/u);
+  assert.match(connector, /TlsPolicyWireV3::Ca \{\} if options\.trust_roots_der\(\)\.is_empty\(\) => \{\s*return platform_roots\.clone\(\)\.await;/u);
+  assert.match(connector, /TlsPolicyWireV3::Ca \{\} => NativeTlsPolicyV3::ca_with_configured_roots\(/u);
+  assert.match(connector, /TlsPolicyWireV3::Pin \{ pins \} => NativeTlsPolicyV3::pin\(/u);
   assert.match(tls, /rustls_native_certs::load_native_certs\(\)/u);
 });
 

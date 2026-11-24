@@ -136,6 +136,29 @@ describe("WebSocketBinaryTransport", () => {
     await expect(read).resolves.toEqual(new Uint8Array([7, 8, 9]));
   });
 
+  test("shares message admission across the decode queue and unread messages", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedMessages: 2 } });
+    for (const value of [1, 2]) ws.emit("message", { data: Uint8Array.of(value) });
+    await flushAsync();
+    await expect(transport.readBinary()).resolves.toEqual(Uint8Array.of(1));
+    ws.emit("message", { data: Uint8Array.of(3) });
+    expect(ws.closed).toBe(false);
+    ws.emit("message", { data: Uint8Array.of(4) });
+    expect(ws.closed).toBe(true);
+    await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
+  });
+
+  test("returns message capacity when delivering to a waiting reader", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedMessages: 1 } });
+    for (const value of [1, 2, 3]) {
+      const read = transport.readBinary();
+      ws.emit("message", { data: Uint8Array.of(value) });
+      await expect(read).resolves.toEqual(Uint8Array.of(value));
+    }
+  });
+
   test("rejects text frames", async () => {
     const ws = new FakeWebSocket();
     const transport = new WebSocketBinaryTransport(ws);

@@ -39,7 +39,7 @@ pub(crate) enum NativeTlsConfigErrorV3 {
 #[derive(Clone, Debug)]
 pub(crate) enum NativeTlsPolicyV3 {
     Ca {
-        certificates: Vec<CertificateDer<'static>>,
+        certificates: Arc<[CertificateDer<'static>]>,
     },
     Pin {
         active_leaf_hashes: Vec<[u8; 32]>,
@@ -65,7 +65,9 @@ impl NativeTlsPolicyV3 {
         if roots.is_empty() {
             return Err(NativeTlsConfigErrorV3::RootsUnavailable);
         }
-        Ok(Self::Ca { certificates })
+        Ok(Self::Ca {
+            certificates: certificates.into(),
+        })
     }
 
     pub(crate) fn pin(

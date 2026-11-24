@@ -389,6 +389,7 @@ func TestProxyServerWebSocketUpstreamCloseJoinsAfterAcknowledgement(t *testing.T
 	if err := writeProxyWebSocketFrame(client, 8, payload, 1<<20); err != nil {
 		t.Fatal(err)
 	}
+	_ = client.Close()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -429,9 +430,108 @@ func TestProxyServerWebSocketDownstreamCloseReceivesReply(t *testing.T) {
 	if err != nil || opcode != 8 || string(reply) != string(payload) {
 		t.Fatalf("normal close reply: opcode=%d payload=%x err=%v", opcode, reply, err)
 	}
+	_ = harness.client.Close()
 	awaitProxyWebSocketRelayDone(t, harness.done)
 	if harness.stream.resets.Load() != 0 {
 		t.Fatal("unexpected reset after close acknowledgement")
+	}
+}
+
+func TestProxyServerWebSocketCloseReusesSessionCapacity(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err == nil {
+			defer connection.Close()
+			_, _, _ = connection.ReadMessage()
+		}
+	}))
+	defer upstream.Close()
+	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	serverTLS, roots := controllerNetworkTLS(t)
+	source := &webSocketHandlerRestartSource{serverTLS: serverTLS}
+	defer source.stopAll()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	lease, sourceErr := source.Acquire(ctx)
+	if sourceErr != nil {
+		t.Fatal(sourceErr)
+	}
+	client, err := Connect(ctx, lease, ConnectorOptions{Origin: "https://client.example", TrustRoots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer := source.takeGeneration(t, 0).waitSession(t)
+	handlers, err := NewStreamHandlers(StreamHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan struct{})
+	go func() { defer close(served); _ = handlers.Serve(ctx, client) }()
+	defer func() { cancel(); <-served }()
+	stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
+	defer stop()
+	for index := range 12 {
+		stream, err := peer.OpenStream(ctx, proxyWSStreamKind, EmptyStreamMetadata())
+		if err != nil {
+			t.Fatalf("open after %d completed streams: %v", index, err)
+		}
+		if err := writeProxyJSON(stream, proxyWebSocketOpen{Version: proxyWireVersion, ConnID: "reuse", Path: "/"}); err != nil {
+			t.Fatal(err)
+		}
+		var opened proxyWebSocketResponse
+		if err := readProxyJSON(stream, 1<<20, &opened); err != nil || !opened.OK {
+			t.Fatalf("proxy open: ok=%t err=%v", opened.OK, err)
+		}
+		if err := writeProxyWebSocketFrame(stream, 8, nil, 1<<20); err != nil {
+			t.Fatal(err)
+		}
+		if opcode, _, err := readProxyWebSocketFrame(stream, 1<<20); err != nil || opcode != 8 {
+			t.Fatalf("close reply: opcode=%d err=%v", opcode, err)
+		}
+		if err := stream.CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+		var trailing [1]byte
+		if count, err := stream.Read(trailing[:]); count != 0 || !errors.Is(err, io.EOF) {
+			t.Fatalf("unclean close: count=%d err=%v", count, err)
+		}
+	}
+}
+
+func TestProxyServerWebSocketRejectsUnfinishedStreamClose(t *testing.T) {
+	for _, scenario := range []string{"trailing data", "missing FIN"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) { _, _, _ = connection.ReadMessage() })
+			if err := writeProxyWebSocketFrame(harness.client, 8, nil, 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			if opcode, _, err := readProxyWebSocketFrame(harness.client, 1<<20); err != nil || opcode != 8 {
+				t.Fatalf("close reply: opcode=%d err=%v", opcode, err)
+			}
+			if scenario == "trailing data" {
+				if _, err := harness.client.Write([]byte{1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case err := <-harness.done:
+				if err == nil || harness.stream.resets.Load() != 1 {
+					t.Fatalf("expected a stream reset, got err=%v resets=%d", err, harness.stream.resets.Load())
+				}
+			case <-time.After(byteStreamCloseTimeout + 2*time.Second):
+				t.Fatal("unclosed stream retained its handler")
+			}
+		})
 	}
 }
 

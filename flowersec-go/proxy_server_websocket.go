@@ -31,8 +31,8 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 			<-resetDone
 		}
 	}()
-	intake := time.AfterFunc(server.config.maxTimeout, cancelOperation)
-	defer intake.Stop()
+	phaseTimer := time.AfterFunc(server.config.maxTimeout, cancelOperation)
+	defer phaseTimer.Stop()
 	open := proxyWebSocketOpen{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &open); err != nil {
 		server.writeWebSocketError(stream, "unknown", "invalid_ws_open_meta")
@@ -76,7 +76,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		return proxyResult{diagnostic: err, streamErr: err}
 	}
 
-	intake.Stop()
+	phaseTimer.Stop()
 	operationContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errorsCh := make(chan error, 2)
@@ -171,6 +171,10 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 			defer timer.Stop()
 			select {
 			case err = <-errorsCh:
+				if err == nil {
+					phaseTimer.Reset(byteStreamCloseTimeout)
+					err = finishProxyWebSocket(stream)
+				}
 				if err != nil {
 					closeBoth()
 				}
@@ -188,6 +192,21 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		}
 		return proxyResult{}
 	}
+}
+
+func finishProxyWebSocket(stream ByteStream) error {
+	if err := stream.CloseWrite(); err != nil {
+		return err
+	}
+	var trailing [1]byte
+	_, err := io.ReadFull(stream, trailing[:])
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return ErrInvalidProxyServer
+	}
+	return err
 }
 
 func proxyWebSocketClosePayload(code int, reason string) []byte {

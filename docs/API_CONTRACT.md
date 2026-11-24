@@ -490,6 +490,8 @@ Rust queues up to 128 RPC notifications. Pending and executing notifications sha
 
 Go and Rust WebSocket proxies bound the wait for an upstream close acknowledgement to one second. Node HTTP proxies accept at most one forwarded `Origin` header and check it against the supplied external origin.
 
+After exchanging WebSocket close frames, the Go proxy finishes its stream writes and waits up to five seconds for the peer's stream EOF. Unexpected trailing data, cancellation, or a missing FIN resets only that stream. TypeScript WebSocket transports bound messages awaiting decode and delivery together (1,024 messages and 4 MiB by default).
+
 Go, Node and Rust HTTP proxies derive `X-Forwarded-Proto` from the validated external origin. They omit it when the origin is absent, including when the request header allowlist contains it. Resetting an incoming Rust proxy stream releases its HTTP or WebSocket operation and its concurrency slot.
 
 Node WSS listeners bound concurrent TCP connections awaiting upgrade separately from queued carrier sessions. Each stage uses the listener's pending-session limit and timeout. Native WebTransport clients share the dial deadline across DNS and address attempts and stop on TLS authentication failures.

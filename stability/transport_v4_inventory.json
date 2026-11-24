@@ -640,8 +640,8 @@
     {
       "path": "flowersec-rust/src/connector_v3.rs",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 18,
-      "matching_lines": 242
+      "first_matching_line": 22,
+      "matching_lines": 259
     },
     {
       "path": "flowersec-rust/src/crypto_v3.rs",
