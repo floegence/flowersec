@@ -2,7 +2,7 @@ module example.com/flowersec/parity
 
 go 1.27.1
 
-require github.com/floegence/flowersec/flowersec-go/v7 v7.1.0
+require github.com/floegence/flowersec/flowersec-go/v7 v7.2.0
 
 require (
 	github.com/dunglas/httpsfv v1.1.1 // indirect

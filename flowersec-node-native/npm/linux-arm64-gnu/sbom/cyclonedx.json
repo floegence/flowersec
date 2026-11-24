@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:d815c81d-98f3-59e9-8bf0-d411b6e9d16d",
+  "serialNumber": "urn:uuid:c7044c7f-47a8-53bb-8fc0-e2b8d44c1b5a",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "7.1.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.1.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.1.0"
+      "version": "7.2.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.2.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.2.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "bb41dbded2330d2ef6c6081eccb4393584ba13c61899ccf36d005a67ecbee3d0"
+        "value": "8491c5d258b26f75b7238147d28b202679d550ce82b1a972c7fcc331f663e1e8"
       }
     ]
   },
@@ -4318,7 +4318,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.1.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@7.2.0",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http@1.5.0",

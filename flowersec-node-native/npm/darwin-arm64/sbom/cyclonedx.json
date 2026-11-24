@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:2ceeeec8-3ae1-59bc-8149-852bdab7b013",
+  "serialNumber": "urn:uuid:deb3bd88-9a3a-5889-89d4-7a6498f11043",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "version": "7.1.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.1.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.1.0"
+      "version": "7.2.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.2.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.2.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "bb41dbded2330d2ef6c6081eccb4393584ba13c61899ccf36d005a67ecbee3d0"
+        "value": "8491c5d258b26f75b7238147d28b202679d550ce82b1a972c7fcc331f663e1e8"
       }
     ]
   },
@@ -4318,7 +4318,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.1.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@7.2.0",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http@1.5.0",
