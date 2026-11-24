@@ -187,7 +187,7 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV3 {
   readonly inboundBidirectionalStreamCapacity: number;
   readonly unreliableDatagrams = undefined;
 
-  private readonly incoming = new IncomingStreamQueue();
+  private readonly incoming: IncomingStreamQueue;
   private readonly yamux: YamuxSession;
   private readonly termination = deferred<void>();
   private terminalError: Error | undefined;
@@ -211,6 +211,7 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV3 {
       close: () => transport.close(),
     };
     const policy = options.resourcePolicy ?? {};
+    this.incoming = new IncomingStreamQueue(this.inboundBidirectionalStreamCapacity);
     this.yamux = new YamuxSession(duplex, {
       client: options.client,
       limits: {
@@ -225,7 +226,8 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV3 {
         ...(policy.maxStreamReceiveBytes === undefined ? {} : { maxStreamReceiveBytes: policy.maxStreamReceiveBytes }),
         ...(policy.maxSessionReceiveBytes === undefined ? {} : { maxSessionReceiveBytes: policy.maxSessionReceiveBytes }),
       },
-      onIncomingStream: (stream) => this.incoming.push(new YamuxCarrierStreamAdapter(stream)),
+      onIncomingStream: (stream) => this.incoming.push(stream.id, new YamuxCarrierStreamAdapter(stream)),
+      onIncomingStreamClosed: (id) => this.incoming.remove(id),
       onTerminal: (error) => {
         const failure = error instanceof CarrierError
           ? error
@@ -332,18 +334,24 @@ class YamuxCarrierStreamAdapter implements CarrierStreamV3 {
 }
 
 class IncomingStreamQueue {
-  private readonly values: CarrierStreamV3[] = [];
+  private readonly values = new Map<number, CarrierStreamV3>();
   private readonly waiters = new Set<QueueWaiter>();
   private terminalError: Error | undefined;
 
-  push(value: CarrierStreamV3): void {
+  constructor(private readonly capacity: number) {}
+
+  remove(id: number): void { this.values.delete(id); }
+
+  push(id: number, value: CarrierStreamV3): void {
     if (this.terminalError !== undefined) {
       value.abort(this.terminalError);
       return;
     }
     const waiter = this.waiters.values().next().value;
-    if (waiter === undefined) this.values.push(value);
-    else {
+    if (waiter === undefined) {
+      if (this.values.size < this.capacity) this.values.set(id, value);
+      else void value.reset().catch(() => undefined);
+    } else {
       this.waiters.delete(waiter);
       waiter.deliver(value);
     }
@@ -352,8 +360,11 @@ class IncomingStreamQueue {
   shift(signal?: AbortSignal): Promise<CarrierStreamV3> {
     throwIfAborted(signal);
     if (this.terminalError !== undefined) return Promise.reject(this.terminalError);
-    const value = this.values.shift();
-    if (value !== undefined) return Promise.resolve(value);
+    const next = this.values.entries().next();
+    if (!next.done) {
+      this.values.delete(next.value[0]);
+      return Promise.resolve(next.value[1]);
+    }
     return new Promise((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
@@ -384,8 +395,8 @@ class IncomingStreamQueue {
   fail(error: Error): void {
     if (this.terminalError !== undefined) return;
     this.terminalError = error;
-    for (const stream of this.values) stream.abort(error);
-    this.values.length = 0;
+    for (const stream of this.values.values()) stream.abort(error);
+    this.values.clear();
     for (const waiter of this.waiters) waiter.fail(error);
     this.waiters.clear();
   }

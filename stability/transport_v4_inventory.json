@@ -578,6 +578,12 @@
       "matching_lines": 4
     },
     {
+      "path": "flowersec-go/proxy_server.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 17,
+      "matching_lines": 3
+    },
+    {
       "path": "flowersec-go/stream_handlers.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 8,

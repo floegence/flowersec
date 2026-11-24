@@ -14,6 +14,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/defaults"
 	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v7/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
 	"github.com/gorilla/websocket"
 )
 
@@ -194,6 +195,10 @@ func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 		case server.permits <- struct{}{}:
 			defer func() { <-server.permits }()
 			operationCtx, cancel := context.WithCancel(ctx)
+			if stream, ok := incoming.Stream.(*opaqueByteStreamV3); ok {
+				stopReset := sessionv3.OnStreamReset(stream.inner, cancel)
+				defer stopReset()
+			}
 			stop := context.AfterFunc(server.closeCtx, cancel)
 			defer func() {
 				stop()

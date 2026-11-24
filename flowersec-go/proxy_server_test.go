@@ -576,6 +576,83 @@ func TestProxyServerHTTPStreamResetCancelsUpstream(t *testing.T) {
 	}
 }
 
+func TestProxyServerSessionBoundResetAfterRequestFIN(t *testing.T) {
+	started, canceled := make(chan struct{}), make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+		close(canceled)
+	}))
+	defer upstream.Close()
+	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL, SessionBoundRequests: true, MaxConcurrentStreams: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	serverTLS, roots := controllerNetworkTLS(t)
+	source := &webSocketHandlerRestartSource{serverTLS: serverTLS}
+	defer source.stopAll()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lease, sourceErr := source.Acquire(ctx)
+	if sourceErr != nil {
+		t.Fatal(sourceErr)
+	}
+	client, err := Connect(ctx, lease, ConnectorOptions{Origin: "https://client.example", TrustRoots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer := source.takeGeneration(t, 0).waitSession(t)
+	stream, err := peer.OpenStream(ctx, proxyHTTPStreamKind, EmptyStreamMetadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := client.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyJSON(stream, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "half-close", Method: "GET", Path: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyTerminator(stream); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	handlers, err := NewStreamHandlers(StreamHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- handlers.freeze().streams[proxyHTTPStreamKind](context.Background(), incoming) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("half-closed request did not reach the upstream")
+	}
+	if err := stream.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	case <-ctx.Done():
+		t.Fatal("stream reset did not cancel the upstream after FIN")
+	}
+	select {
+	case err := <-finished:
+		if err != nil || len(proxy.permits) != 0 || len(proxy.httpPermits) != 0 {
+			t.Fatalf("proxy handler did not release admission: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("proxy handler did not finish")
+	}
+}
+
 func TestProxyServerCloseInterruptsPartialFrames(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string

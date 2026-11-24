@@ -39,6 +39,60 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test("pre-canceled consumers leave queued streams and data for the next reader", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    const receiver = projectSessionV3(server);
+    const canceled = { signal: AbortSignal.abort() };
+    try {
+      const sender = await client.openStream("queued");
+      await sender.write(Uint8Array.of(7));
+      await sender.closeWrite();
+      await nextTurn();
+      await expect(receiver.acceptStream(canceled)).rejects.toMatchObject({ code: "canceled" });
+      const incoming = await receiver.acceptStream();
+      await expect(incoming.stream.read(canceled)).rejects.toMatchObject({ code: "canceled" });
+      expect(await incoming.stream.read()).toEqual(Uint8Array.of(7));
+      expect(await incoming.stream.read()).toBeNull();
+    } finally { await Promise.allSettled([client.close(), server.close()]); }
+  });
+
+  test("a reset after HTTP request FIN cancels the upstream without ending the session", async () => {
+    const started = deferred<void>();
+    const disconnected = deferred<void>();
+    const upstream = createServer((_request, response) => {
+      response.once("close", () => disconnected.resolve());
+      started.resolve();
+    });
+    await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("missing upstream port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const proxy = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxConcurrentStreams: 1 });
+    const handlers = new StreamHandlers();
+    proxy.register(handlers);
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    try {
+      const stream = await client.openStream("flowersec-proxy/http1");
+      await writeJsonFrame(data => writeAll(stream, data), { v: 1, request_id: "half-close", method: "GET", path: "/", headers: [] });
+      await writeAll(stream, u32be(0));
+      await stream.closeWrite();
+      const incoming = await projectSessionV3(server).acceptStream();
+      const serving = freezeStreamHandlers(handlers).streams.get(incoming.kind)!(incoming, {});
+      await testDeadline(started.promise, "upstream request");
+      await stream.reset();
+      await testDeadline(Promise.all([disconnected.promise, serving]), "upstream cancellation after FIN");
+      expect(proxy.activeCount).toBe(0);
+      await client.probeLiveness();
+    } finally {
+      await proxy.close();
+      await Promise.allSettled([client.close(), server.close()]);
+      upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
   test("a peer reset cancels a pending upstream WebSocket upgrade and releases admission", async () => {
     const upgrade = deferred<void>();
     const disconnected = deferred<void>();

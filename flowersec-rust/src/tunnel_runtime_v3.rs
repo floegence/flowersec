@@ -1060,10 +1060,9 @@ struct TunnelState {
     pending: Mutex<HashMap<AuthorityKey, PendingEntry<Leg>>>,
     credentials: Mutex<CredentialIndex>,
     active_pairs: Mutex<usize>,
-    active_carriers: Mutex<HashMap<u64, ActivePair>>,
+    active_carriers: Mutex<HashMap<AuthorityKey, ActivePair>>,
     admission_permits: Arc<Semaphore>,
     next_pending_id: AtomicU64,
-    next_pair_id: AtomicU64,
     active_tasks: AtomicUsize,
     tasks_done: Notify,
     active_accepts: AtomicUsize,
@@ -1117,7 +1116,6 @@ impl TunnelState {
             active_carriers: Mutex::new(HashMap::new()),
             admission_permits: Arc::new(Semaphore::new(max_concurrent_admissions)),
             next_pending_id: AtomicU64::new(1),
-            next_pair_id: AtomicU64::new(1),
             active_tasks: AtomicUsize::new(0),
             tasks_done: Notify::new(),
             active_accepts: AtomicUsize::new(0),
@@ -1620,7 +1618,6 @@ impl TaskRuntime {
         } else {
             (leg.carrier.clone(), peer.carrier.clone())
         };
-        let pair_id = self.state.next_pair_id.fetch_add(1, Ordering::Relaxed);
         let active_pair = ActivePair {
             key: key.clone(),
             contract_hash: peer.claims.contract_hash.clone(),
@@ -1646,7 +1643,7 @@ impl TaskRuntime {
             .active_carriers
             .lock()
             .await
-            .insert(pair_id, active_pair.clone());
+            .insert(key, active_pair.clone());
         drop(pending);
         for (carrier, mux_client) in [(&client, false), (&server, true)] {
             if carrier.kind() == CarrierKind::Wss
@@ -1701,27 +1698,28 @@ impl TaskRuntime {
             matches!(forwarding, Ok(BridgeEnd::ControlClosed)),
         )
         .await;
-        self.state.active_carriers.lock().await.remove(&pair_id);
+        self.remove_active_pair(&active_pair).await;
         let release_deadline = Instant::now() + CONTROL_HALF_CLOSE_GRACE;
         self.finish_active_pair(active_pair, release_deadline).await;
         forwarding.map(|_| ()).map_err(map_io)
     }
 
     async fn active_pair_for_key(&self, key: &AuthorityKey) -> Option<ActivePair> {
-        self.state
-            .active_carriers
-            .lock()
-            .await
-            .values()
-            .find(|pair| &pair.key == key)
-            .cloned()
+        self.state.active_carriers.lock().await.get(key).cloned()
+    }
+
+    async fn remove_active_pair(&self, pair: &ActivePair) {
+        let mut carriers = self.state.active_carriers.lock().await;
+        if carriers
+            .get(&pair.key)
+            .is_some_and(|current| Arc::ptr_eq(&current.cleanup_claimed, &pair.cleanup_claimed))
+        {
+            carriers.remove(&pair.key);
+        }
     }
 
     async fn replace_active_pair(&self, active: ActivePair, deadline: Instant) {
-        {
-            let mut carriers = self.state.active_carriers.lock().await;
-            carriers.retain(|_, pair| !Arc::ptr_eq(&pair.cleanup_claimed, &active.cleanup_claimed));
-        }
+        self.remove_active_pair(&active).await;
         active.client.abort();
         active.server.abort();
         self.finish_active_pair(active, deadline).await;
@@ -1799,11 +1797,7 @@ impl TaskRuntime {
             tokio::join!(pair.client.close(), pair.server.close())
         })
         .await;
-        self.state
-            .active_carriers
-            .lock()
-            .await
-            .retain(|_, current| !Arc::ptr_eq(&current.cleanup_claimed, &pair.cleanup_claimed));
+        self.remove_active_pair(&pair).await;
         self.finish_active_pair(pair, deadline).await;
     }
 }
@@ -4221,7 +4215,13 @@ mod tests {
             .active_carriers
             .lock()
             .await
-            .insert(1, old_pair);
+            .insert(old_pair.key.clone(), old_pair.clone());
+        let retired_generation = ActivePair {
+            cleanup_claimed: Arc::new(AtomicBool::new(true)),
+            ..old_pair.clone()
+        };
+        runtime.remove_active_pair(&retired_generation).await;
+        assert!(runtime.active_pair_for_key(&old_pair.key).await.is_some());
         let replacement_client_accepted = Arc::new(AtomicBool::new(false));
         let replacement_client_opened = Arc::new(AtomicBool::new(false));
         let replacement_client_aborted = Arc::new(AtomicBool::new(false));

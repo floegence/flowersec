@@ -220,8 +220,8 @@ export class ProxyServer {
     const started = performance.now();
     const timeoutController = new AbortController();
     let timer = setTimeout(() => timeoutController.abort(), this.#config.maxTimeout);
-    const linked = linkSignals(parentSignal, timeoutController.signal);
-    const signal = linked.signal;
+    const resetSignal = incomingResetSignal(stream);
+    const signal = AbortSignal.any(resetSignal ? [parentSignal, timeoutController.signal, resetSignal] : [parentSignal, timeoutController.signal]);
     let reset: Promise<void> | undefined;
     let peerWatch: Promise<void> | undefined;
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -292,7 +292,7 @@ export class ProxyServer {
       if (typeof body === "string") { await writeHTTPError(stream, requestID, body); return; }
       // A peer reset cancels the upstream even when it has no next event to write.
       // A FIN only closes request writes and is valid during response streaming.
-      peerWatch = stream.read({ signal }).then((chunk) => {
+      peerWatch = reader.remainingStream().read({ signal }).then((chunk) => {
         if (chunk !== null) timeoutController.abort(new SessionError("canceled"));
       }, () => { timeoutController.abort(new SessionError("canceled")); });
       const requestInit: RequestInit & { duplex?: "half" } = {
@@ -364,7 +364,6 @@ export class ProxyServer {
       if (httpPermit) this.#httpCount--;
       signal.removeEventListener("abort", abort);
       timeoutController.abort();
-      linked.dispose();
       await responseReader?.cancel().catch(() => undefined);
       responseReader?.releaseLock();
       await peerWatch;
@@ -571,7 +570,6 @@ async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: numb
 }
 function normalizeTimeout(value: number | undefined, fallback: number, maximum: number): number | undefined { if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) return undefined; return Math.min(value === undefined || value === 0 ? fallback : value, maximum); }
 function validateOrigin(value: string | undefined, allowed: ReadonlySet<string>): string | undefined { if (value === undefined || value === "") return undefined; try { const origin = new URL(value); return origin.pathname === "/" && !origin.search && !origin.hash && origin.origin === value && allowed.has(origin.origin) ? origin.origin : undefined; } catch { return undefined; } }
-function linkSignals(parent: AbortSignal, timeout: AbortSignal): { signal: AbortSignal; dispose(): void } { const controller = new AbortController(); const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason); parent.addEventListener("abort", abort, { once: true }); timeout.addEventListener("abort", abort, { once: true }); if (parent.aborted) controller.abort(parent.reason); else if (timeout.aborted) controller.abort(timeout.reason); return { signal: controller.signal, dispose: () => { parent.removeEventListener("abort", abort); timeout.removeEventListener("abort", abort); } }; }
 function decodeHTTPMeta(value: unknown): HTTPMeta { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.request_id !== "string" || typeof value.method !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers) || (value.external_origin !== undefined && typeof value.external_origin !== "string") || (value.timeout_ms !== undefined && typeof value.timeout_ms !== "number")) throw new Error("invalid HTTP metadata"); return { v: value.v, request_id: value.request_id, method: value.method, path: value.path, headers: value.headers.filter(isHeader), ...(value.external_origin === undefined ? {} : { external_origin: value.external_origin }), ...(value.timeout_ms === undefined ? {} : { timeout_ms: value.timeout_ms }) }; }
 function decodeWSOpen(value: unknown): WSOpen { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.conn_id !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers)) throw new Error("invalid WS metadata"); return { v: value.v, conn_id: value.conn_id, path: value.path, headers: value.headers.filter(isHeader) }; }
 function isHeader(value: unknown): value is Header { return isRecord(value) && typeof value.name === "string" && typeof value.value === "string"; }

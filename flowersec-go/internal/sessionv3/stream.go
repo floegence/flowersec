@@ -58,6 +58,8 @@ type encryptedStream struct {
 
 	terminalMu  sync.RWMutex
 	terminalErr error
+	resetCtx    context.Context
+	cancelReset context.CancelFunc
 	releaseOnce sync.Once
 	release     func()
 }
@@ -1374,14 +1376,40 @@ func (s *encryptedStream) appendRecordLocked(destination []byte, typ protocolv3.
 	return destination, nil
 }
 
-func (s *encryptedStream) localReset(cause error) {
+func OnStreamReset(stream ByteStream, cancel context.CancelFunc) func() bool {
+	s, ok := stream.(*encryptedStream)
+	if !ok {
+		return func() bool { return true }
+	}
 	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
 	if s.terminalErr != nil {
-		s.terminalMu.Unlock()
-		return
+		cancel()
+		return func() bool { return false }
+	}
+	if s.resetCtx == nil {
+		s.resetCtx, s.cancelReset = context.WithCancel(context.Background())
+	}
+	return context.AfterFunc(s.resetCtx, cancel)
+}
+
+func (s *encryptedStream) markReset(cause error) bool {
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	if s.terminalErr != nil {
+		return false
 	}
 	s.terminalErr = cause
-	s.terminalMu.Unlock()
+	if s.cancelReset != nil {
+		s.cancelReset()
+	}
+	return true
+}
+
+func (s *encryptedStream) localReset(cause error) {
+	if !s.markReset(cause) {
+		return
+	}
 	s.stateMu.Lock()
 	confirmControl := s.state.RemoteHalfClosed()
 	s.state.Reset()
@@ -1447,13 +1475,9 @@ func (s *encryptedStream) peerReset(cause error) {
 }
 
 func (s *encryptedStream) applyPeerReset(cause error) {
-	s.terminalMu.Lock()
-	if s.terminalErr != nil {
-		s.terminalMu.Unlock()
+	if !s.markReset(cause) {
 		return
 	}
-	s.terminalErr = cause
-	s.terminalMu.Unlock()
 	s.stateMu.Lock()
 	s.state.Reset()
 	s.stateMu.Unlock()

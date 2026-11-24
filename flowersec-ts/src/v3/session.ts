@@ -2226,6 +2226,7 @@ class ByteQueue {
 
   async read(signal?: AbortSignal): Promise<Uint8Array | null> {
     while (true) {
+      throwIfAborted(signal);
       if (this.error !== undefined) throw this.error;
       if (this.head < this.chunks.length) {
         const chunk = this.chunks[this.head]!;
@@ -2343,6 +2344,7 @@ class AsyncQueue<T extends { id: bigint }> {
   }
 
   async shift(signal?: AbortSignal): Promise<T> {
+    throwIfAborted(signal);
     if (this.error !== undefined) throw this.error;
     const value = this.values.values().next().value;
     if (value !== undefined) { this.values.delete(value.id); return value; }

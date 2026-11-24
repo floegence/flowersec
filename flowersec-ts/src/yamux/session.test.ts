@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { YamuxSession } from "./session.js";
+import { createWebSocketCarrierSessionV3 } from "../v3/webSocketCarrier.js";
 import { encodeHeader, decodeHeader } from "./header.js";
 import { FLAG_ACK, FLAG_FIN, FLAG_RST, FLAG_SYN, TYPE_DATA, TYPE_GO_AWAY, TYPE_PING, TYPE_WINDOW_UPDATE } from "./constants.js";
 
@@ -60,6 +61,25 @@ async function tick(): Promise<void> {
 }
 
 describe("YamuxSession", () => {
+  test("carrier accept skips a reset stream but preserves a queued half-closed stream", async () => {
+    const conn = new QueueConn();
+    const carrier = createWebSocketCarrierSessionV3({
+      readBinary: () => conn.read(), writeBinary: chunk => conn.write(chunk),
+      flush: async () => {}, close: () => conn.close(),
+    }, { client: true, path: "tunnel", inboundBidirectionalStreamCapacity: 3 });
+    try {
+      conn.enqueue(encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 2, length: 0 }));
+      conn.enqueue(encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_RST, streamId: 2, length: 0 }));
+      conn.enqueue(encodeHeader({ type: TYPE_DATA, flags: FLAG_SYN | FLAG_FIN, streamId: 4, length: 1 }));
+      conn.enqueue(Uint8Array.of(7));
+      await tick();
+      const live = await carrier.acceptStream();
+      expect(await live.read()).toEqual(Uint8Array.of(7));
+      expect(await live.read()).toBeNull();
+      await live.closeWrite();
+    } finally { carrier.abort(); }
+  });
+
   test("responds to SYN ping with ACK", async () => {
     const conn = new QueueConn();
     const session = new YamuxSession(conn, { client: true });

@@ -60,6 +60,7 @@ export type YamuxSessionOptions = Readonly<{
   client: boolean;
   /** Optional callback for newly accepted inbound streams. */
   onIncomingStream?: (s: YamuxStream) => void;
+  onIncomingStreamClosed?: (streamId: number) => void;
   /** Maximum frame payload bytes accepted per stream frame. */
   maxFrameBytes?: number;
   /** Generic stream and receive-memory limits. */
@@ -80,6 +81,7 @@ export class YamuxSession {
   private readonly streams = new Map<number, YamuxStream>();
   // Callback for inbound streams created from SYN frames.
   private readonly onIncomingStream: ((s: YamuxStream) => void) | undefined;
+  private readonly onIncomingStreamClosed: YamuxSessionOptions["onIncomingStreamClosed"];
   // Maximum allowed DATA frame length.
   private readonly limits: ResolvedYamuxLimits;
   private readonly onDiagnostic: ((event: YamuxDiagnostic) => void) | undefined;
@@ -101,6 +103,7 @@ export class YamuxSession {
     this.conn = conn;
     this.reader = new ByteReader(() => this.conn.read());
     this.onIncomingStream = opts.onIncomingStream;
+    this.onIncomingStreamClosed = opts.onIncomingStreamClosed;
     this.limits = normalizeYamuxLimits({ ...opts.limits, ...(opts.maxFrameBytes === undefined ? {} : { maxFrameBytes: opts.maxFrameBytes }) });
     this.onDiagnostic = opts.onDiagnostic;
     this.onTerminal = opts.onTerminal;
@@ -209,7 +212,7 @@ export class YamuxSession {
     const stream = this.streams.get(streamId);
     if (stream != null) this.releaseReceiveBytes(stream.releaseBufferedReceiveBytes());
     this.streams.delete(streamId);
-    this.inboundStreams.delete(streamId);
+    if (this.inboundStreams.delete(streamId)) this.onIncomingStreamClosed?.(streamId);
     this.notifySendWindow(streamId);
   }
 
