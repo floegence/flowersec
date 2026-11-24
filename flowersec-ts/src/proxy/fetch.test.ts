@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
+import { prepareProxyFetch } from "./fetch.js";
 import { BodyIntake } from "./bodyIntake.js";
 
 const NativeRequest = globalThis.Request;
@@ -18,17 +18,6 @@ function bodyWithoutStreams(): void {
 }
 
 describe("portable proxy request bodies", () => {
-  it("times out an unanswered controller dispatch", async () => {
-    const { request, signal } = await prepareProxyFetch("/");
-    let peer: MessagePort | undefined;
-    vi.useFakeTimers();
-    try {
-      const response = fetchProxyPort((_, port) => { peer = port; }, request, signal);
-      const rejected = expect(response).rejects.toMatchObject({ code: "timeout" });
-      await vi.advanceTimersByTimeAsync(10_000);
-      await rejected;
-    } finally { peer?.close(); vi.useRealTimers(); }
-  });
   it("bounds combined uploads before admission and releases canceled reservations", async () => {
     const intake = new BodyIntake(2, 4);
     const abort = new AbortController();

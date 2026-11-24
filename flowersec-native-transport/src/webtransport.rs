@@ -314,6 +314,34 @@ pub async fn dial(
     trust: ClientTrust,
     capacity: u32,
 ) -> Result<Arc<Carrier>, DialFailure> {
+    dial_until(
+        raw,
+        origin,
+        trust,
+        capacity,
+        tokio::time::Instant::now() + Duration::from_secs(60),
+    )
+    .await
+    .map_err(|_| DialFailure::Connection)?
+}
+
+pub async fn dial_until(
+    raw: &str,
+    origin: &str,
+    trust: ClientTrust,
+    capacity: u32,
+    deadline: tokio::time::Instant,
+) -> Result<Result<Arc<Carrier>, DialFailure>, tokio::time::error::Elapsed> {
+    tokio::time::timeout_at(deadline, dial_inner(raw, origin, trust, capacity, deadline)).await
+}
+
+async fn dial_inner(
+    raw: &str,
+    origin: &str,
+    trust: ClientTrust,
+    capacity: u32,
+    deadline: tokio::time::Instant,
+) -> Result<Arc<Carrier>, DialFailure> {
     use DialFailure as Failure;
     let url = Url::parse(raw).map_err(|_| Failure::InvalidArtifact)?;
     if url.scheme() != "https"
@@ -349,13 +377,18 @@ pub async fn dial(
     let addresses = tokio::net::lookup_host((host, port))
         .await
         .map_err(|_| Failure::Connection)?;
-    for peer in addresses.take(16) {
+    let peers = addresses.take(16).collect::<Vec<_>>();
+    let url = &url;
+    let config = &config;
+    try_addresses(&peers, deadline, |peer| async move {
         let local = if peer.is_ipv4() {
             SocketAddr::from(([0; 4], 0))
         } else {
             SocketAddr::from(([0; 16], 0))
         };
-        let endpoint = Endpoint::client(local).map_err(|_| Failure::Connection)?;
+        let Ok(endpoint) = Endpoint::client(local) else {
+            return Ok(None);
+        };
         let conn = match endpoint
             .connect_with(config.clone(), peer, host)
             .map_err(|_| Failure::InvalidArtifact)?
@@ -372,7 +405,7 @@ pub async fn dial(
             {
                 return Err(Failure::Security);
             }
-            Err(_) => continue,
+            Err(_) => return Ok(None),
         };
         let mut guard = Pending::new(conn.clone());
         let controls = controls(&conn, true)
@@ -406,9 +439,32 @@ pub async fn dial(
         }
         let session = Carrier::new(conn, endpoint, None, capacity, controls, send, recv);
         guard.disarm();
-        return Ok(session);
+        Ok(Some(session))
+    })
+    .await
+}
+
+async fn try_addresses<T, F: Future<Output = Result<Option<T>, DialFailure>>>(
+    peers: &[SocketAddr],
+    deadline: tokio::time::Instant,
+    mut attempt: impl FnMut(SocketAddr) -> F,
+) -> Result<T, DialFailure> {
+    for (index, &peer) in peers.iter().enumerate() {
+        let left = peers.len() - index;
+        let result = if left == 1 {
+            attempt(peer).await
+        } else {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining / left as u32, attempt(peer)).await {
+                Ok(result) => result,
+                Err(_) => continue,
+            }
+        };
+        if let Some(value) = result? {
+            return Ok(value);
+        }
     }
-    Err(Failure::Connection)
+    Err(DialFailure::Connection)
 }
 
 fn put(bytes: &mut Vec<u8>, value: u64) {
@@ -954,6 +1010,38 @@ mod tests {
             .await
             .unwrap();
         (listener, client, server.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn fallback_reserves_time_for_a_second_address_and_stops_on_security_errors() {
+        let peers = [
+            SocketAddr::from(([127, 0, 0, 1], 10)),
+            SocketAddr::from(([127, 0, 0, 1], 11)),
+        ];
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        let reached = tokio::time::timeout_at(
+            deadline,
+            try_addresses(&peers, deadline, |peer| async move {
+                if peer == peers[0] {
+                    std::future::pending::<()>().await;
+                }
+                Ok(Some(peer))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(reached, peers[1]);
+        let denied = try_addresses(
+            &peers,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            |peer| async move {
+                assert_eq!(peer, peers[0]);
+                Err::<Option<()>, _>(DialFailure::Security)
+            },
+        )
+        .await;
+        assert_eq!(denied, Err(DialFailure::Security));
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 import { usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
@@ -403,6 +403,33 @@ async function nextMessage(port: MessagePort): Promise<Record<string, unknown>> 
     port.addEventListener("message", (event) => resolve(event.data as Record<string, unknown>), { once: true });
   });
 }
+
+it.each([4_000, 11_000])("shares the window fetch deadline with a %d ms upload", async (delay) => {
+  let complete!: (body: Blob) => void;
+  const body = new Promise<Blob>(resolve => { complete = resolve; });
+  const dispatch = vi.fn((_request: ProxyFetchRequest, port: MessagePort) => port.close());
+  const harness = bridgeHarness(new DuplexStream(), dispatch);
+  const OriginalRequest = Request;
+  class BlobRequest extends OriginalRequest {
+    constructor(input: RequestInfo | URL, init?: RequestInit) {
+      super(input, init);
+      Object.defineProperty(this, "body", { value: undefined });
+    }
+    override blob() { return body; }
+  }
+  vi.stubGlobal("Request", BlobRequest);
+  vi.useFakeTimers();
+  try {
+    const response = harness.app.runtime.fetch("/", { method: "POST", body: "upload" });
+    const rejected = expect(response).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(Math.min(delay, 10_000));
+    if (delay > 10_000) await rejected;
+    complete(new Blob(["upload"]));
+    await vi.advanceTimersByTimeAsync(Math.max(0, 10_000 - delay));
+    await rejected;
+    expect(dispatch).toHaveBeenCalledTimes(delay < 10_000 ? 1 : 0);
+  } finally { harness.app.dispose(); harness.controller.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); }
+});
 
 it("withdraws a pending window handshake when its owner is disposed", async () => {
   const stream = new FailingDuplexStream("blocked");

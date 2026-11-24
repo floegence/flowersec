@@ -334,15 +334,15 @@ impl StreamHandler for ProxyHandler {
             closed.cancelled().await;
             operation_for_close.cancel();
         });
-        let result = match self.protocol {
-            Protocol::Http => tokio::select! {
-                biased;
-                _ = incoming.wait_for_reset() => Err(ProxyServerError::Closed),
-                result = serve_http(&self.inner, incoming.stream(), operation.clone()) => result,
-            },
-            Protocol::WebSocket => {
-                serve_websocket(&self.inner, incoming.stream(), operation.clone()).await
-            }
+        let result = tokio::select! {
+            biased;
+            _ = incoming.wait_for_reset() => Err(ProxyServerError::Closed),
+            result = async {
+                match self.protocol {
+                    Protocol::Http => serve_http(&self.inner, incoming.stream(), operation).await,
+                    Protocol::WebSocket => serve_websocket(&self.inner, incoming.stream(), operation).await,
+                }
+            } => result,
         };
         close_task.abort();
         drop(permit);
@@ -2587,15 +2587,20 @@ mod tests {
 
     #[tokio::test]
     async fn close_cancels_active_http_request_and_releases_permit() {
-        check_http_cancellation(true).await;
+        check_proxy_cancellation(Protocol::Http, true).await;
     }
 
     #[tokio::test]
     async fn stream_reset_releases_http_permit_while_upstream_is_silent() {
-        check_http_cancellation(false).await;
+        check_proxy_cancellation(Protocol::Http, false).await;
     }
 
-    async fn check_http_cancellation(close_server: bool) {
+    #[tokio::test]
+    async fn stream_reset_releases_websocket_permit_during_establishment() {
+        check_proxy_cancellation(Protocol::WebSocket, false).await;
+    }
+
+    async fn check_proxy_cancellation(protocol: Protocol, close_server: bool) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
@@ -2612,29 +2617,33 @@ mod tests {
             format!("http://{address}").parse().expect("upstream URL"),
         ))
         .expect("proxy server");
-        let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "cancel", "method": "GET", "path": "/wait",
-                "headers": []
-            }));
-            input.extend_from_slice(&0u32.to_be_bytes());
-            input
-        }));
+        let (kind, input) = match protocol {
+            Protocol::Http => {
+                let mut input = frame_json(serde_json::json!({
+                    "v": 1, "request_id": "cancel", "method": "GET", "path": "/wait", "headers": []
+                }));
+                input.extend_from_slice(&0u32.to_be_bytes());
+                (HTTP_KIND, input)
+            }
+            Protocol::WebSocket => (
+                WEBSOCKET_KIND,
+                frame_json(serde_json::json!({
+                    "v": 1, "conn_id": "cancel", "path": "/wait", "headers": []
+                })),
+            ),
+        };
+        let stream = Arc::new(TestStream::new(input));
         let handler = ProxyHandler {
             inner: server.inner.clone(),
-            protocol: Protocol::Http,
+            protocol,
         };
         let reset = CancellationToken::new();
         let stream_reset = reset.clone();
         let operation = tokio::spawn(async move {
             handler
                 .handle(
-                    &IncomingStream::new(
-                        HTTP_KIND,
-                        crate::StreamMetadata::empty(),
-                        Box::new(stream),
-                    )
-                    .with_reset_signal(stream_reset),
+                    &IncomingStream::new(kind, crate::StreamMetadata::empty(), Box::new(stream))
+                        .with_reset_signal(stream_reset),
                     CancellationToken::new(),
                 )
                 .await

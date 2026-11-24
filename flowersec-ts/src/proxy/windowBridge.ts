@@ -1,6 +1,7 @@
 import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
 import { BodyIntake } from "./bodyIntake.js";
+import { raceWithSignal } from "../utils/abort.js";
 import { writeAll } from "./stream.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
@@ -282,8 +283,14 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
       if (disposed) throw new SessionError("closed");
       if (init?.sessionBound !== undefined && init.sessionBound !== false) throw new TypeError("sessionBound requires a controller-owned runtime");
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-      const prepared = await prepareProxyFetch(input, { ...init, signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]) }, target.location?.origin, limits.maxBodyBytes, intake);
-      return fetchProxyPort(dispatchFetch, prepared.request, AbortSignal.any([prepared.signal, lifetime.signal]), limits.maxChunkBytes);
+      const establishment = new AbortController();
+      const owner = AbortSignal.any([lifetime.signal, establishment.signal, ...(signal ? [signal] : [])]);
+      const timer = setTimeout(() => establishment.abort(new SessionError("timeout")), 10_000);
+      try {
+        const prepared = await raceWithSignal(prepareProxyFetch(input, { ...init, signal: owner }, target.location?.origin, limits.maxBodyBytes, intake), owner);
+        owner.throwIfAborted();
+        return await fetchProxyPort(dispatchFetch, prepared.request, owner, limits.maxChunkBytes);
+      } finally { clearTimeout(timer); }
     },
     dispatchFetch,
     openWebSocketStream: async (path, openOptions = {}) => {

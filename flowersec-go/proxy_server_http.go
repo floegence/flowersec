@@ -407,6 +407,7 @@ func proxyHex(value byte) (byte, bool) {
 }
 
 func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[string]struct{}) error {
+	request.Header.Del("X-Forwarded-Proto")
 	origins := request.Header.Values("Origin")
 	if len(origins) > 1 {
 		return ErrInvalidProxyServer
@@ -425,9 +426,7 @@ func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[str
 	if len(origins) == 1 && origins[0] != canonical {
 		return ErrInvalidProxyServer
 	}
-	if request.Header.Get("X-Forwarded-Proto") == "" {
-		request.Header.Set("X-Forwarded-Proto", origin.Scheme)
-	}
+	request.Header.Set("X-Forwarded-Proto", origin.Scheme)
 	return nil
 }
 

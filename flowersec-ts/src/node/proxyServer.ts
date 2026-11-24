@@ -268,6 +268,7 @@ export class ProxyServer {
       if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
       const requestHeaders = filterUpstreamHeaders(meta.headers, REQUEST_HEADERS, this.#config.requestHeaders, this.#config);
       const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
+      delete headers["x-forwarded-proto"];
       if (requestHeaders.filter(header => header.name === "origin").length > 1) {
         await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
       }

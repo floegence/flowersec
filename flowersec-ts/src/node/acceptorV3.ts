@@ -283,6 +283,8 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
       const running = listener.carrier === "websocket"
         ? await startNodeWebSocketListenerV3({
             ...listener,
+            maxPendingSessions: Math.min(options.maxPendingSessions ?? 1024, 1024),
+            ...(options.admissionTimeoutMs === undefined ? {} : { pendingSessionTimeoutMs: options.admissionTimeoutMs }),
             inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
           })
         : listener.carrier === "webtransport" ? await startNodeWebTransportListener({ ...listener, inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2 })

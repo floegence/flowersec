@@ -56,6 +56,7 @@ export async function startNodeWebSocketListenerV3(
   const sessions = new SessionQueueV3(maxPendingSessions, pendingSessionTimeoutMs);
   const sockets = new Set<any>();
   const networkSockets = new Set<Socket>();
+  const pendingUpgrades = new Map<string, ReturnType<typeof setTimeout>>();
   const wss = new WebSocketServer({
     noServer: true,
     perMessageDeflate: false,
@@ -63,8 +64,20 @@ export async function startNodeWebSocketListenerV3(
     handleProtocols(protocols: Set<string>) { return protocols.size === 1 && protocols.has(protocol) ? protocol : false; },
   });
   server.on("connection", (socket) => {
+    if (pendingUpgrades.size >= maxPendingSessions) {
+      socket.destroy();
+      return;
+    }
+    const key = connectionKey(socket);
+    const timer = setTimeout(() => socket.destroy(), pendingSessionTimeoutMs);
+    timer.unref();
+    pendingUpgrades.set(key, timer);
     networkSockets.add(socket);
-    socket.once("close", () => networkSockets.delete(socket));
+    socket.once("close", () => {
+      clearTimeout(timer);
+      if (pendingUpgrades.get(key) === timer) pendingUpgrades.delete(key);
+      networkSockets.delete(socket);
+    });
   });
   server.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
@@ -75,7 +88,12 @@ export async function startNodeWebSocketListenerV3(
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(request, socket, head, (webSocket: any) => wss.emit("connection", webSocket));
+    const key = connectionKey(request.socket);
+    wss.handleUpgrade(request, socket, head, (webSocket: any) => {
+      clearTimeout(pendingUpgrades.get(key));
+      pendingUpgrades.delete(key);
+      wss.emit("connection", webSocket);
+    });
   });
   wss.on("connection", (socket: any) => {
     sockets.add(socket);
@@ -136,6 +154,10 @@ export async function startNodeWebSocketListenerV3(
     for (const socket of networkSockets) socket.destroy();
     await graceful;
   }
+}
+
+function connectionKey(socket: Socket): string {
+  return `${socket.localAddress}/${socket.localPort}/${socket.remoteAddress}/${socket.remotePort}`;
 }
 
 function validateOptions(options: NodeWebSocketListenerOptionsV3): void {

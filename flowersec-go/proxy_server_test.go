@@ -162,6 +162,20 @@ func TestProxyExternalOriginRequiresSingleForwardedValue(t *testing.T) {
 	}
 }
 
+func TestProxyForwardedProtoUsesOnlyValidatedOrigin(t *testing.T) {
+	const origin = "https://app.example"
+	for external, want := range map[string]string{"": "", origin: "https"} {
+		request := &http.Request{Header: http.Header{"X-Forwarded-Proto": {"http", "https"}}}
+		if err := applyProxyExternalOrigin(request, external, map[string]struct{}{origin: {}}); err != nil {
+			t.Fatal(err)
+		}
+		values := request.Header.Values("X-Forwarded-Proto")
+		if (want == "" && len(values) != 0) || (want != "" && (len(values) != 1 || values[0] != want)) {
+			t.Fatalf("external origin %q produced %v", external, values)
+		}
+	}
+}
+
 func TestProxyWebSocketClosePayloadTruncatesAtUTF8Boundary(t *testing.T) {
 	reason := strings.Repeat("界", 100)
 	payload := proxyWebSocketClosePayload(websocket.CloseNormalClosure, reason)

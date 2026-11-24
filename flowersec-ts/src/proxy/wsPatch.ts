@@ -78,6 +78,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     private readonly abort = new AbortController();
     private stream: ByteStream | undefined;
     private writes: Promise<void> = Promise.resolve();
+    private pendingMessages = 0;
     private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(input: string | URL, protocols?: string | string[]) {
@@ -90,6 +91,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
 
     send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
       if (this.readyState !== ProxyWebSocket.OPEN || this.stream === undefined) throw new DOMException("WebSocket is not open", "InvalidStateError");
+      if (this.pendingMessages >= 1024) { this.fail(); return; }
       let opcode: number;
       let bytes: number;
       let source: Uint8Array | Blob;
@@ -111,8 +113,9 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
         this.fail();
         return;
       }
-      this.bufferedAmount += bytes;
       const snapshot = source instanceof Uint8Array && opcode === 2 ? source.slice() : source;
+      this.pendingMessages++;
+      this.bufferedAmount += bytes;
       const stream = this.stream;
       this.writes = this.writes.then(async () => {
         this.abort.signal.throwIfAborted();
@@ -120,7 +123,10 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
         await writeFrame(stream, opcode, payload, maxFrameBytes, { signal: this.abort.signal });
       })
         .catch(() => this.fail())
-        .finally(() => { this.bufferedAmount = Math.max(0, this.bufferedAmount - bytes); });
+        .finally(() => {
+          this.pendingMessages--;
+          this.bufferedAmount = Math.max(0, this.bufferedAmount - bytes);
+        });
     }
 
     close(code?: number, reason = ""): void {

@@ -163,6 +163,24 @@ function installBrowserGlobals(): void {
 }
 
 describe("WebSocket v2 proxy patch", () => {
+  it("bounds pending empty data messages and reuses drained slots", async () => {
+    installBrowserGlobals();
+    const stream = new ControlledStream(true);
+    let delivered = 0;
+    stream.write = async data => { delivered++; return data.length; };
+    installWebSocketPatch({ runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) } });
+    const socket = new WebSocket("wss://app.example/socket");
+    await new Promise<void>(resolve => socket.addEventListener("open", () => resolve(), { once: true }));
+    for (let count = 0; count < 1024; count++) socket.send("");
+    await waitFor(() => delivered === 1024);
+    for (let count = 0; count < 1024; count++) socket.send(new Uint8Array());
+    expect(socket.bufferedAmount).toBe(0);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    socket.send("");
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
+    expect(stream.resetCalled).toBe(true);
+  });
+
   it("keeps each outbound frame in one stream write without a header-only encrypted record", async () => {
     installBrowserGlobals();
     class FullWriteStream extends ControlledStream {

@@ -104,14 +104,14 @@ pub fn connect(options: WebTransportConnectOptions) -> Result<WebTransportSessio
         _ => return Err(failure("invalid_tls_policy")),
     };
     Ok(WebTransportSessionOperation(Operation::new(async move {
-        let carrier = tokio::time::timeout(
-            Duration::from_millis(options.handshake_timeout_ms.into()),
-            wt::dial(
-                &options.url,
-                &options.origin,
-                trust,
-                options.inbound_bidirectional_stream_capacity,
-            ),
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_millis(options.handshake_timeout_ms.into());
+        let carrier = wt::dial_until(
+            &options.url,
+            &options.origin,
+            trust,
+            options.inbound_bidirectional_stream_capacity,
+            deadline,
         )
         .await
         .map_err(|_| failure("handshake_timeout"))?

@@ -335,6 +335,8 @@ A Service Worker container dispatches to one proxy runtime at a time. Dispose th
 
 Disposing a controller-window bridge cancels its active HTTP requests, event subscriptions, and WebSockets. For finite runtime fetches, the request deadline starts before upload preparation and includes the wait for a stream slot. On browsers that expose uploads only as blobs, admitted uploads share the intake byte budget and can be canceled while waiting for space. Worker registration and controller takeover share the configured `controllerTimeoutMs` deadline.
 
+App-window fetch shares a ten-second deadline between upload preparation and receipt of response metadata. A timed-out Blob read holds its reservation until it settles. Each patched browser WebSocket allows up to 1,024 outstanding data messages, including empty messages, in addition to its payload byte limit. Exceeding either limit closes that WebSocket.
+
 When restricting worker registration with `runtimeRegistrationToken`, generate a high-entropy secret and provision it to the trusted controller window. The published worker verifies registration and recovery against a SHA-256 digest. Proxy servers and the browser runtime forward `Content-Security-Policy` and `X-Content-Type-Options` by default. Sites using HTML injection must authorize the injected script under their document policy.
 
 TypeScript application stream writes reserve session-wide snapshot capacity before copying input (4 MiB and 256 outstanding writes). A large write can return a partial count; continue with its remaining suffix. Insufficient capacity returns `resource_exhausted`. An asynchronous RPC notification subscriber may await closing its own session; shutdown no longer waits for application subscriber code after subscriptions have been removed.
@@ -483,6 +485,10 @@ Canceling a pending Swift public byte-stream read ends that stream and reports `
 Rust queues up to 128 RPC notifications. Pending and executing notifications share an encoded-byte budget of the larger of 128 MiB and one configured maximum frame. Exceeding the byte budget has the same outcome as overflowing the notification queue.
 
 Go and Rust WebSocket proxies bound the wait for an upstream close acknowledgement to one second. Node HTTP proxies accept at most one forwarded `Origin` header and check it against the supplied external origin.
+
+Go, Node and Rust HTTP proxies derive `X-Forwarded-Proto` from the validated external origin. They omit it when the origin is absent, including when the request header allowlist contains it. Resetting an incoming Rust proxy stream releases its HTTP or WebSocket operation and its concurrency slot.
+
+Node WSS listeners bound concurrent TCP connections awaiting upgrade separately from queued carrier sessions. Each stage uses the listener's pending-session limit and timeout. Native WebTransport clients share the dial deadline across DNS and address attempts and stop on TLS authentication failures.
 
 ## Explicit Go HTTPS egress
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { connect as connectTCP } from "node:net";
 import { connect as connectTLS } from "node:tls";
+import type * as WsModule from "ws";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
@@ -533,6 +534,36 @@ describe("Node production server runtime Flowersec/5", () => {
       acceptedSocket?.terminate();
       await listener.close();
     }
+  });
+
+  test.each(["direct", "tunnel"] as const)("reuses the %s upgrade slot while an accepted session stays open", async path => {
+    const listener = await startNodeWebSocketListenerV3({
+      host: "127.0.0.1", port: 0, path, tls: { certificate: leafCertificate, privateKey: leafKey },
+      allowedOrigins: ["https://app.example"], inboundBidirectionalStreamCapacity: 3,
+      maxPendingSessions: 1, pendingSessionTimeoutMs: 500,
+    });
+    const port = listener.address().port;
+    const { WebSocket } = createRequire(import.meta.url)("ws") as typeof WsModule;
+    const connect = () => new WebSocket(`wss://localhost:${port}/flowersec/v5/${path}`, [`flowersec.${path}.v5`], { ca: rootCertificate, origin: "https://app.example" });
+    const first = connect();
+    try {
+      await once(first, "open");
+      await listener.accept();
+      const pending = connectTLS({ host: "127.0.0.1", port, ca: rootCertificate, servername: "localhost" });
+      try {
+        await once(pending, "secureConnect");
+        const expired = once(pending, "close");
+        const overflow = connect();
+        await expect(once(overflow, "open")).rejects.toBeDefined();
+        await expired;
+      } finally { pending.destroy(); }
+      const second = connect();
+      try {
+        await once(second, "open");
+        await listener.accept();
+        expect(first.readyState).toBe(WebSocket.OPEN);
+      } finally { second.terminate(); }
+    } finally { first.terminate(); await listener.close(); }
   });
 
   test("force-closes a WebSocket peer that does not answer the close frame", async () => {

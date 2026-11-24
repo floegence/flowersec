@@ -562,7 +562,7 @@ async fn prepare_candidate(
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(CandidateFailureV3::Canceled),
-                result = tokio::time::timeout_at(deadline, crate::webtransport_v5::dial(&candidate.normalized_url, origin, tls, capacity)) => result.map_err(|_| CandidateFailureV3::Timeout)?,
+                result = tokio::time::timeout_at(deadline, crate::webtransport_v5::dial(&candidate.normalized_url, origin, tls, capacity, deadline)) => result.map_err(|_| CandidateFailureV3::Timeout)?,
             }
         }
     }

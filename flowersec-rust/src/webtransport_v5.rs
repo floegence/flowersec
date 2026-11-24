@@ -65,6 +65,7 @@ pub(crate) async fn dial(
     origin: &str,
     policy: NativeTlsPolicyV3,
     capacity: u32,
+    deadline: tokio::time::Instant,
 ) -> Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3> {
     let trust = match policy {
         NativeTlsPolicyV3::Ca { certificates } => native::ClientTrust::Ca(
@@ -77,8 +78,9 @@ pub(crate) async fn dial(
             native::ClientTrust::Pin(active_leaf_hashes)
         }
     };
-    let inner = native::dial(url, origin, trust, capacity)
+    let inner = native::dial_until(url, origin, trust, capacity, deadline)
         .await
+        .map_err(|_| CandidateFailureV3::Timeout)?
         .map_err(|error| match error {
             native::DialFailure::InvalidArtifact => CandidateFailureV3::InvalidArtifact,
             native::DialFailure::Security => CandidateFailureV3::Security,
