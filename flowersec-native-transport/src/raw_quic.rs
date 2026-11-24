@@ -1062,20 +1062,34 @@ impl RawQuicStream {
         if self.inner.reset.load(Ordering::Acquire) {
             return Err(RawQuicError::Stream);
         }
-        let mut payload = vec![0_u8; maximum_bytes];
         let mut receive = self.inner.receive.lock().await;
-        let read = tokio::select! {
+        tokio::select! {
             biased;
-            _ = cancellation.inner.cancelled() => return Err(RawQuicError::Canceled),
-            _ = self.inner.canceled.cancelled() => return Err(RawQuicError::Stream),
-            result = receive.read(&mut payload) => result.map_err(|_| RawQuicError::Stream)?,
-        };
-        match read {
-            None => Ok(None),
-            Some(bytes) => {
-                payload.truncate(bytes);
-                Ok(Some(payload))
-            }
+            _ = cancellation.inner.cancelled() => Err(RawQuicError::Canceled),
+            _ = self.inner.canceled.cancelled() => Err(RawQuicError::Stream),
+            result = receive.read_chunk(maximum_bytes, true) => result
+                .map(|chunk| chunk.map(|chunk| chunk.bytes.to_vec()))
+                .map_err(|_| RawQuicError::Stream),
+        }
+    }
+
+    pub async fn read_chunk(
+        &self,
+        maximum_bytes: usize,
+        cancellation: &Cancellation,
+    ) -> io::Result<Option<Bytes>> {
+        if maximum_bytes == 0 || maximum_bytes > MAX_READ_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid raw QUIC read size",
+            ));
+        }
+        let mut receive = self.inner.receive.lock().await;
+        tokio::select! {
+            biased;
+            _ = cancellation.inner.cancelled() => Err(io::ErrorKind::Interrupted.into()),
+            _ = self.inner.canceled.cancelled() => Err(if self.inner.reset.load(Ordering::Acquire) { local_reset_error() } else { local_canceled_error() }),
+            result = receive.read_chunk(maximum_bytes, true) => result.map(|chunk| chunk.map(|chunk| chunk.bytes)).map_err(io::Error::from),
         }
     }
 

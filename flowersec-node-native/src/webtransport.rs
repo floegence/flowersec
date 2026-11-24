@@ -415,11 +415,12 @@ impl WebTransportStream {
 impl WebTransportStream {
     #[napi]
     pub async fn read(&self) -> Result<Option<Buffer>> {
-        let mut data = vec![0; 65536];
         let token = self.token();
-        let read = tokio::select! {biased; _ = token.cancelled() => return Err(failure("canceled")), result = self.stream.read(&mut data) => result.map_err(|_|failure("reset"))? };
-        data.truncate(read);
-        Ok((read != 0).then(|| data.into()))
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(failure("canceled")),
+            result = self.stream.read_chunk(64 * 1024) => result.map(|chunk| chunk.map(|bytes| bytes.to_vec().into())).map_err(|_| failure("reset")),
+        }
     }
     #[napi]
     pub async fn write(&self, data: Uint8Array) -> Result<u32> {

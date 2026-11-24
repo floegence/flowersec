@@ -345,7 +345,7 @@ export function registerProxyAppWindowWithServiceWorkerRuntime(
   if (serviceWorker === undefined) throw new Error("proxy service worker is unavailable");
   const app = registerProxyAppWindow(options);
   try {
-    const serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(app.runtime, serviceWorker);
+    const serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(app.runtime, serviceWorker, "app_window");
     let disposed = false;
     return Object.freeze({
       runtime: app.runtime,

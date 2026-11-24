@@ -432,17 +432,11 @@ pub struct RawQuicStreamBinding {
 impl RawQuicStreamBinding {
     #[napi]
     pub async fn read(&self) -> Result<Option<Buffer>> {
-        let mut payload = vec![0_u8; DEFAULT_READ_BYTES];
-        let read = self
-            .stream
-            .read_into(&mut payload, &Cancellation::new())
+        self.stream
+            .read_chunk(DEFAULT_READ_BYTES, &Cancellation::new())
             .await
-            .map_err(stream_io_error)?;
-        if read == 0 {
-            return Ok(None);
-        }
-        payload.truncate(read);
-        Ok(Some(payload.into()))
+            .map(|chunk| chunk.map(|bytes| bytes.to_vec().into()))
+            .map_err(stream_io_error)
     }
 
     #[napi]

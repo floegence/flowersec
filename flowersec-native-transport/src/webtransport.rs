@@ -869,6 +869,15 @@ impl fmt::Debug for Stream {
     }
 }
 impl Stream {
+    pub async fn read_chunk(&self, maximum: usize) -> io::Result<Option<Bytes>> {
+        let mut recv = self.recv.lock().await;
+        tokio::select! {
+            biased;
+            _ = self.stop.cancelled() => Err(io::ErrorKind::ConnectionReset.into()),
+            result = recv.read_chunk(maximum, true) => result.map(|chunk| chunk.map(|chunk| chunk.bytes)).map_err(io_error),
+        }
+    }
+
     pub async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
         let mut recv = self.recv.lock().await;
         tokio::select! {biased; _=self.stop.cancelled()=>Err(io::ErrorKind::ConnectionReset.into()), result=recv.read(payload)=>result.map(|n|n.unwrap_or(0)).map_err(io_error)}

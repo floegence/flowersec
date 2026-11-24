@@ -89,6 +89,7 @@ import {
 const decoder = new TextDecoder();
 const MAX_DATA_BYTES = 16_384;
 const MAX_BUFFERED_STREAM_BYTES = 4 * 1024 * 1024;
+const MAX_BUFFERED_STREAM_RECORDS = 4096;
 const RESERVED_RPC_KIND = "flowersec.rpc.v5";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
@@ -1141,6 +1142,10 @@ export class SessionV3 implements SessionV3Contract {
       // Do not consume a transition id until preparation has completed and
       // the caller has not cancelled the operation.
       throwIfAborted(prepareSignal.signal);
+      const active = [...this.streams.values()].filter((stream) => stream.canRekeySend());
+      if (active.some((stream) => stream.hasRemoteFIN())) {
+        throw new SessionV3Error("resource_exhausted", "stream acknowledgement direction has finished");
+      }
       prepareSignal.cancel();
       prepareDeadline.cancel();
       completionDeadline = createSessionDeadline(this.deadlines, "rekey_completion");
@@ -1153,7 +1158,6 @@ export class SessionV3 implements SessionV3Contract {
       const transition = this.nextTransition;
       this.nextTransition = transition === MAX_UINT64 ? 0n : transition + 1n;
       const payload = concat(u64(transition), u32(nextEpoch), u64(watermark));
-      const active = [...this.streams.values()].filter((stream) => stream.canRekeySend());
       const updates = active.map((stream) => stream.startSendRekey(transition, nextEpoch));
       await Promise.all(updates.map(async (update) => await raceAbort(update.armed.promise, completionSignal!.signal)));
       const pending = {
@@ -2192,7 +2196,7 @@ class ByteQueue {
     if (!Number.isInteger(required) || required < 0 || required > this.limit) {
       throw new RangeError("invalid stream receive capacity request");
     }
-    while (this.bytes + required > this.limit) {
+    while (this.bytes + required > this.limit || this.chunks.length - this.head >= MAX_BUFFERED_STREAM_RECORDS) {
       if (this.error !== undefined) throw this.error;
       if (this.closed) return;
       const waiter = deferred<void>();

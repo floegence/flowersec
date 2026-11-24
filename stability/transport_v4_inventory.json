@@ -395,7 +395,7 @@
       "path": "flowersec-go/internal/sessionv3/control.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 59
+      "matching_lines": 60
     },
     {
       "path": "flowersec-go/internal/sessionv3/engine.go",
@@ -851,7 +851,7 @@
       "path": "flowersec-swift/Sources/Flowersec/TransportV3Session.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 5,
-      "matching_lines": 382
+      "matching_lines": 384
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
@@ -1012,7 +1012,7 @@
     {
       "path": "flowersec-ts/src/public/sessionHandlers.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 55,
+      "first_matching_line": 56,
       "matching_lines": 10
     },
     {
@@ -1163,7 +1163,7 @@
       "path": "flowersec-ts/src/v3/session.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 6,
-      "matching_lines": 340
+      "matching_lines": 341
     },
     {
       "path": "flowersec-ts/src/v3/sessionConnector.ts",

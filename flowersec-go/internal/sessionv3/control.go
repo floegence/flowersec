@@ -639,6 +639,15 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		}
 	}()
 
+	activeStreams := s.snapshotStreams()
+	for _, stream := range activeStreams {
+		stream.stateMu.Lock()
+		needsClosedACK := stream.state.State() == protocolv3.LogicalStreamHalfClosed && stream.state.RemoteHalfClosed()
+		stream.stateMu.Unlock()
+		if needsClosedACK && stream.TerminalError() == nil {
+			return ErrResourceExhausted
+		}
+	}
 	nextEpoch := currentEpoch + 1
 	nextSecret, err := protocolv3.DeriveNextEpoch(currentRoots.RekeyRoot, s.h3, s.sendDir, nextEpoch)
 	if err != nil {
@@ -674,7 +683,6 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	binary.BigEndian.PutUint64(pending.payload[12:20], watermark)
 	s.pendingRekey = pending
 	s.pendingRekeyMu.Unlock()
-	activeStreams := s.snapshotStreams()
 	cancelPrepare()
 	completion := make(chan error, 1)
 	rekeyOwned = false

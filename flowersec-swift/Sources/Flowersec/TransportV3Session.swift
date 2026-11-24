@@ -317,6 +317,13 @@ actor TransportV3Session {
       try checkRekeyPreparation(requestID: requestID)
 
       let watermark = localHighWatermark()
+      for stream in Array(streams.values) {
+        if await stream.requiresFinishedACKDirection {
+          throw TransportV3SessionError.resourceExhausted
+        }
+      }
+      try checkRekeyPreparation(requestID: requestID)
+      guard !closing, !closed else { throw TransportV3SessionError.closed }
       guard outboundLedger.frontier == watermark else {
         throw TransportV3SessionError.rekeyFailed
       }
@@ -2399,6 +2406,8 @@ private actor TransportV3ByteStream: ByteStream {
     carrier.abort(code: 6)
     await session.streamFinished(id: id, inbound: inbound, internalRPC: internalRPC)
   }
+
+  fileprivate var requiresFinishedACKDirection: Bool { terminal == nil && !localFIN && remoteFIN }
 
   fileprivate func beginSendRekey(
     transition: UInt64,

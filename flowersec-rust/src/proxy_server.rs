@@ -1161,23 +1161,39 @@ async fn serve_websocket_with_establishment_timeout(
     establishment_timeout: Duration,
 ) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
-    let open: WebSocketOpen = match read_json(&mut reader, inner.config.max_json, &cancellation)
-        .await
-    {
+    let connected = await_websocket_establishment(
+        Instant::now() + establishment_timeout,
+        &cancellation,
+        establish_proxy_websocket(inner, stream, &mut reader, &cancellation),
+    )
+    .await??;
+    let Some(websocket) = connected else {
+        return Ok(());
+    };
+    relay_connected_websocket(inner, stream, reader, cancellation, websocket).await
+}
+
+async fn establish_proxy_websocket(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    reader: &mut ProxyReader<'_>,
+    cancellation: &CancellationToken,
+) -> Result<Option<WebSocketStream<HttpIo>>, ProxyServerError> {
+    let open: WebSocketOpen = match read_json(reader, inner.config.max_json, cancellation).await {
         Ok(open) => open,
         Err(_) => {
-            write_websocket_error(stream, "unknown", "invalid_ws_open_meta", &cancellation).await;
-            return Ok(());
+            write_websocket_error(stream, "unknown", "invalid_ws_open_meta", cancellation).await;
+            return Ok(None);
         }
     };
     let conn_id = open.conn_id.trim();
     let Some(path) = normalize_path(&open.path) else {
-        write_websocket_error(stream, conn_id, "invalid_ws_open_meta", &cancellation).await;
-        return Ok(());
+        write_websocket_error(stream, conn_id, "invalid_ws_open_meta", cancellation).await;
+        return Ok(None);
     };
     if open.v != WIRE_VERSION || conn_id.is_empty() {
-        write_websocket_error(stream, conn_id, "invalid_ws_open_meta", &cancellation).await;
-        return Ok(());
+        write_websocket_error(stream, conn_id, "invalid_ws_open_meta", cancellation).await;
+        return Ok(None);
     }
     let mut target = inner.config.upstream.clone();
     target
@@ -1220,44 +1236,60 @@ async fn serve_websocket_with_establishment_timeout(
     let port = target
         .port_or_known_default()
         .ok_or(ProxyServerError::OperationFailed)?;
-    let establishment_deadline = Instant::now() + establishment_timeout;
-    let tcp = await_websocket_establishment(
-        establishment_deadline,
-        &cancellation,
-        TcpStream::connect((host.as_str(), port)),
-    )
-    .await?
-    .map_err(|_| ProxyServerError::OperationFailed)?;
-    if target.scheme() == "wss" {
+    let tcp = TcpStream::connect((host.as_str(), port))
+        .await
+        .map_err(|_| ProxyServerError::OperationFailed)?;
+    let io = if target.scheme() == "wss" {
         let server_name =
             ServerName::try_from(host).map_err(|_| ProxyServerError::OperationFailed)?;
         let tls = TlsConnector::from(
             websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
-        let tls = await_websocket_establishment(
-            establishment_deadline,
-            &cancellation,
-            tls.connect(server_name, tcp),
-        )
-        .await?
-        .map_err(|_| ProxyServerError::OperationFailed)?;
-        let connected = await_websocket_establishment(
-            establishment_deadline,
-            &cancellation,
-            client_async_with_config(request, tls, Some(websocket_config)),
-        )
-        .await?;
-        return relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected)
-            .await;
-    }
-    let connected = await_websocket_establishment(
-        establishment_deadline,
-        &cancellation,
-        client_async_with_config(request, tcp, Some(websocket_config)),
+        let connected = tls
+            .connect(server_name, tcp)
+            .await
+            .map_err(|_| ProxyServerError::OperationFailed)?;
+        HttpIo::Tls(Box::new(connected))
+    } else {
+        HttpIo::Plain(tcp)
+    };
+    let connected = client_async_with_config(request, io, Some(websocket_config)).await;
+    let (websocket, response) = match connected {
+        Ok(connected) => connected,
+        Err(tungstenite::Error::Http(response)) => {
+            let code = if response.status() == StatusCode::REQUEST_TIMEOUT {
+                "timeout"
+            } else {
+                "upstream_ws_rejected"
+            };
+            write_websocket_error(stream, conn_id, code, cancellation).await;
+            return Ok(None);
+        }
+        Err(_) => {
+            write_websocket_error(stream, conn_id, "upstream_ws_dial_failed", cancellation).await;
+            return Ok(None);
+        }
+    };
+    let protocol = response
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    write_json(
+        stream,
+        &WebSocketResponse {
+            v: WIRE_VERSION,
+            conn_id,
+            ok: true,
+            protocol: &protocol,
+            error: None,
+        },
+        cancellation,
     )
     .await?;
-    relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected).await
+    Ok(Some(websocket))
 }
 
 async fn await_websocket_establishment<F, T>(
@@ -1277,54 +1309,13 @@ where
     }
 }
 
-async fn relay_connected_websocket<S>(
+async fn relay_connected_websocket(
     inner: &Inner,
     stream: &dyn ByteStream,
     mut reader: ProxyReader<'_>,
     cancellation: CancellationToken,
-    conn_id: &str,
-    connected: Result<
-        (WebSocketStream<S>, tungstenite::handshake::client::Response),
-        tungstenite::Error,
-    >,
-) -> Result<(), ProxyServerError>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let (websocket, response) = match connected {
-        Ok(connected) => connected,
-        Err(tungstenite::Error::Http(response)) => {
-            let code = if response.status() == StatusCode::REQUEST_TIMEOUT {
-                "timeout"
-            } else {
-                "upstream_ws_rejected"
-            };
-            write_websocket_error(stream, conn_id, code, &cancellation).await;
-            return Ok(());
-        }
-        Err(_) => {
-            write_websocket_error(stream, conn_id, "upstream_ws_dial_failed", &cancellation).await;
-            return Ok(());
-        }
-    };
-    let protocol = response
-        .headers()
-        .get("sec-websocket-protocol")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-    write_json(
-        stream,
-        &WebSocketResponse {
-            v: WIRE_VERSION,
-            conn_id,
-            ok: true,
-            protocol: &protocol,
-            error: None,
-        },
-        &cancellation,
-    )
-    .await?;
+    websocket: WebSocketStream<HttpIo>,
+) -> Result<(), ProxyServerError> {
     let (mut sink, mut source) = websocket.split();
     let mut downstream_close_sent = false;
     'relay: loop {
@@ -2170,6 +2161,24 @@ mod tests {
             Err(SessionError::Closed)
         );
         upstream.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_establishment_bounds_wait_for_metadata() {
+        let server = ProxyServer::new(test_options("http://127.0.0.1:1".parse().unwrap())).unwrap();
+        let stream = Arc::new(TestStream::new(Vec::new()));
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            serve_websocket_with_establishment_timeout(
+                &server.inner,
+                &stream,
+                CancellationToken::new(),
+                Duration::from_millis(30),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Err(ProxyServerError::OperationFailed));
     }
 
     #[tokio::test]

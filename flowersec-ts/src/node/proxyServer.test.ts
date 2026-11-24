@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 import type { Session } from "../public/contract.js";
 import { expect, expectTypeOf, test, vi } from "vitest";
 
@@ -132,6 +133,34 @@ test("filters configured cookie names and prefixes on the upstream WebSocket han
     await handle(request.incoming, {});
     expect(cookie).toBe("visible=yes");
   } finally { await server.close(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
+});
+
+test("preserves the initial WebSocket snapshot while acknowledging the connection", async () => {
+  const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  upstream.on("connection", socket => { socket.send("initial snapshot"); socket.close(); });
+  await new Promise<void>(resolve => upstream.once("listening", resolve));
+  const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin });
+  const handlers = new StreamHandlers();
+  server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.endsWith("/ws"))!;
+  let endRead!: (value: null) => void;
+  const pendingRead = new Promise<null>(resolve => { endRead = resolve; });
+  const exchange = proxyExchange(kind, { conn_id: "snapshot", path: "/", headers: [] }, () => pendingRead);
+  vi.spyOn(exchange.incoming.stream, "close").mockImplementation(async () => { endRead(null); });
+  const write = exchange.incoming.stream.write.bind(exchange.incoming.stream);
+  vi.spyOn(exchange.incoming.stream, "write").mockImplementationOnce(async bytes => {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return write(bytes);
+  });
+  try {
+    await handle(exchange.incoming, {});
+    expect(Buffer.concat(exchange.replies).toString()).toContain("initial snapshot");
+  } finally {
+    endRead(null);
+    await server.close();
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
 });
 
 test.each(["deadline", "shutdown"])("releases a pending WebSocket upgrade on %s", async (cause) => {

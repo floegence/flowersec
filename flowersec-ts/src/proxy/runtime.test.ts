@@ -7,7 +7,7 @@ import { connectProxyBrowser } from "./integration.js";
 import * as browserConnector from "../browser/connectSessionV3.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
 import type { ArtifactV3 } from "../v3/artifact.js";
-import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
+import { registerProxyRuntimeServiceWorkerBridge, registerWithController } from "./serviceWorkerRuntime.js";
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
   const output = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
@@ -85,6 +85,8 @@ describe("Session proxy runtime", () => {
   it("enforces acquisition paths even with a broader host policy", async () => {
     const session = new FakeSession([]);
     const connector = vi.spyOn(browserConnector, "connectV3").mockResolvedValue(session);
+    const container = Object.assign(new EventTarget(), { controller: { postMessage: vi.fn() } });
+    vi.stubGlobal("navigator", { serviceWorker: container });
     const lease = createArtifactLeaseV3Internal({ scoped: [{ scope: "proxy.runtime", scope_version: 2, critical: true,
       payload: { mode: "controller_bridge", controllerBridge: { allowedOrigins: ["https://app.example"] }, appBasePath: "/app", http: { additionalPathPrefixes: ["/assets/"] } } }] } as unknown as ArtifactV3, async () => {});
     try {
@@ -95,8 +97,9 @@ describe("Session proxy runtime", () => {
         expect(session.opens).toHaveLength(0);
         await expect(handle.runtime.fetch("/assets/icon")).rejects.toBeDefined();
         expect(session.opens).toHaveLength(1);
+        expect(container.controller.postMessage).not.toHaveBeenCalled();
       } finally { await handle.dispose(); }
-    } finally { connector.mockRestore(); }
+    } finally { connector.mockRestore(); vi.unstubAllGlobals(); }
   });
   it("binds a service worker container to one runtime until disposal", async () => {
     const container = new EventTarget() as ServiceWorkerContainer;
@@ -108,6 +111,20 @@ describe("Session proxy runtime", () => {
       finally { first.dispose(); }
       const replacement = createProxyRuntime({ session: next });
       replacement.dispose();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("releases a contacted worker when disposed before its registration acknowledgement", () => {
+    const posted: string[] = [];
+    const controller = { postMessage(message: { type: string }, ports?: MessagePort[]) {
+      posted.push(message.type);
+      ports?.[0]?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+      ports?.[0]?.close();
+    } };
+    vi.stubGlobal("navigator", { serviceWorker: Object.assign(new EventTarget(), { controller }) });
+    try {
+      createProxyRuntime({ session: new FakeSession([]) }).dispose();
+      expect(posted).toEqual(["flowersec-proxy:register-runtime", "flowersec-proxy:release-runtime"]);
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -283,6 +300,8 @@ describe("Session proxy runtime", () => {
       runtime,
       serviceWorker as unknown as ServiceWorkerContainer,
     );
+    await registerWithController(serviceWorker as unknown as ServiceWorkerContainer, serviceWorker.controller as unknown as ServiceWorker,
+      undefined, async acknowledge => { acknowledge(); });
     const channel = new MessageChannel();
     channel.port2.start();
     const metadata = nextPortMessage(channel.port2);

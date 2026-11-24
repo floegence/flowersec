@@ -449,6 +449,41 @@ func TestCallerCancellationDuringFirstActiveStreamUpdateTransfersOwnershipAndClo
 	assertOwnedRekeyGatesReleased(t, session)
 }
 
+func TestRemoteHalfCloseDefersRekeyBeforeCommit(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
+	state, err := protocolv3.NewOutboundLogicalStreamState(1, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := protocolv3.MarshalOpenPayload(protocolv3.OpenPayload{LogicalStreamID: 1, Kind: "reply"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := protocolv3.ComputeOpenHash(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SendOpen(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ReceiveOpenACK(protocolv3.MarshalOpenACK(hash)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ReceiveRecord(protocolv3.InnerFIN); err != nil {
+		t.Fatal(err)
+	}
+	stream := &encryptedStream{session: session, id: 1, kind: "reply", state: state}
+	session.registerStream(stream)
+	transition := session.nextTransition
+	if err := session.Rekey(t.Context()); !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("rekey with peer FIN = %v", err)
+	}
+	if session.nextTransition != transition || session.ctx.Err() != nil {
+		t.Fatal("rekey consumed a transition or terminated the session")
+	}
+	assertOwnedRekeyGatesReleased(t, session)
+}
+
 func assertOwnedRekeyGatesReleased(t *testing.T, session *engineSession) {
 	t.Helper()
 	deadline := time.Now().Add(300 * time.Millisecond)

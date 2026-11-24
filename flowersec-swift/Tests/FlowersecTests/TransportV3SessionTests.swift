@@ -666,10 +666,21 @@ final class TransportV3SessionTests: XCTestCase {
     XCTAssertEqual(serverReceived, Data("epoch-two".utf8))
 
     try await serverSession.rekey()
+    try await clientStream.closeWrite()
+    let end = try await serverStream.read(maxBytes: 1)
+    XCTAssertNil(end)
+    do {
+      try await serverSession.rekey()
+      XCTFail("rekey needs a live acknowledgement direction")
+    } catch TransportV3SessionError.resourceExhausted {}
     let serverWritten = try await serverStream.write(Data("reverse".utf8))
     XCTAssertEqual(serverWritten, 7)
     let clientReceived = try await clientStream.read(maxBytes: 32)
     XCTAssertEqual(clientReceived, Data("reverse".utf8))
+    try await serverStream.closeWrite()
+    let responseEnd = try await clientStream.read(maxBytes: 1)
+    XCTAssertNil(responseEnd)
+    try await serverSession.rekey()
 
     try await clientSession.close()
     try await serverSession.close()

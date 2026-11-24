@@ -30,7 +30,9 @@ class TestServiceWorkerContainer extends EventTarget {
 
   async register(scriptUrl: string, options?: RegistrationOptions): Promise<ServiceWorkerRegistration> {
     this.registerCalls.push({ scriptUrl, scope: options?.scope ?? "" });
-    return {} as ServiceWorkerRegistration;
+    const container = this;
+    return { scope: new URL(options?.scope ?? "/", "https://app.example/").href,
+      get active() { return container.controller; } } as ServiceWorkerRegistration;
   }
 
   async getRegistrations(): Promise<readonly ServiceWorkerRegistration[]> {
@@ -132,6 +134,7 @@ describe("proxy browser control", () => {
   it("bounds registration policy and repairs only within the configured attempt limit", async () => {
     const container = new TestServiceWorkerContainer();
     const replacements: string[] = [];
+    container.controller = { scriptURL: "https://app.example/old-sw.js" };
     setGlobal("navigator", { serviceWorker: container });
     setGlobal("location", {
       href: "https://app.example/workbench?repair=0",

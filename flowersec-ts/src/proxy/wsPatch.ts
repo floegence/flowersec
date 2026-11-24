@@ -190,7 +190,8 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       while (this.readyState !== ProxyWebSocket.CLOSED) {
         const frame = await readFrame(reader, maxFrameBytes);
         if (frame.opcode === 9) {
-          this.writes = this.writes.then(async () => await writeFrame(stream, 10, frame.payload, maxFrameBytes)).catch(() => this.fail());
+          this.writes = this.writes.then(() => writeFrame(stream, 10, frame.payload, maxFrameBytes, { signal: this.abort.signal }));
+          await this.writes;
         } else if (frame.opcode === 8) {
           if (frame.payload.length === 1) throw new Error("invalid WebSocket close frame");
           const code = frame.payload.length >= 2 ? readU16(frame.payload) : 1000;

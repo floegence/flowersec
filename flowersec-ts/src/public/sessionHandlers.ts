@@ -1,6 +1,7 @@
 import { RpcRouter, type RpcHandler as WireHandler } from "../rpc/server.js";
 import type { RpcError as WireRpcError } from "../rpc/wire.js";
 import { assertRpcError, assertRpcTypeId } from "../rpc/validate.js";
+import { raceWithSignal } from "../utils/abort.js";
 import type { JsonValue } from "./contract.js";
 import {
   HandlerRegistrationError,
@@ -125,7 +126,7 @@ function registerRPC(
     throw new HandlerRegistrationError("already_registered");
   }
   state.requests.set(typeId, async (payload, signal, context) => {
-    const result = await handler(payload as JsonValue, handlerRequest(typeId, signal, context));
+    const result = await raceWithSignal(handler(payload as JsonValue, handlerRequest(typeId, signal, context)), signal);
     return "error" in result ? { payload: null, error: validRPCError(result.error) } : { payload: result.payload };
   });
 }
@@ -139,7 +140,8 @@ function registerNotification(
   if (state.requests.has(typeId) || state.notifications.has(typeId)) {
     throw new HandlerRegistrationError("already_registered");
   }
-  state.notifications.set(typeId, (payload, signal, context) => handler(payload as JsonValue, handlerRequest(typeId, signal, context)));
+  state.notifications.set(typeId, (payload, signal, context) =>
+    raceWithSignal(Promise.resolve(handler(payload as JsonValue, handlerRequest(typeId, signal, context))), signal));
 }
 
 function validateRPCRegistration(typeId: number, handler: unknown): void {

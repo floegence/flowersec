@@ -10,7 +10,7 @@ import { createStreamMetadata } from "../public/streamMetadata.js";
 import { InvalidProxyPathError, normalizePath, normalizePrefixes, normalizeHeaderNames, FORBIDDEN_HEADERS } from "./policy.js";
 import { ProxyByteReader, writeAll } from "./stream.js";
 import {
-  registrationAcknowledgement,
+  registerWithController,
   registerProxyRuntimeServiceWorkerBridge,
   usesServiceWorkerResponseFlowControl,
 } from "./serviceWorkerRuntime.js";
@@ -576,8 +576,8 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
       serviceWorkerBridge?.dispose();
     },
   });
-  if (serviceWorker !== undefined) {
-    serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(runtime, serviceWorker);
+  if (serviceWorker !== undefined && authority?.mode !== "controller_bridge") {
+    serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(runtime, serviceWorker, authority?.serviceWorker);
     serviceWorker.addEventListener("controllerchange", register);
     register();
   }
@@ -598,7 +598,11 @@ export async function ensureServiceWorkerRuntimeRegistered(
   const timeoutMs = options.timeoutMs ?? 2_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) throw new TypeError("invalid runtime registration timeout");
   const token = normalizeToken(options.runtimeRegistrationToken);
-  const acknowledge = registrationAcknowledgement(globalThis.navigator.serviceWorker, controller, token);
+  await registerWithController(globalThis.navigator.serviceWorker, controller, token, acknowledge =>
+    sendRuntimeRegistration(controller, token, timeoutMs, acknowledge));
+}
+
+async function sendRuntimeRegistration(controller: ServiceWorker, token: string | undefined, timeoutMs: number, acknowledge: () => void): Promise<void> {
   const channel = new MessageChannel();
   await new Promise<void>((resolve, reject) => {
     let settled = false;

@@ -409,6 +409,7 @@ export class ProxyServer {
     const terminate = () => socket.terminate();
     signal.addEventListener("abort", terminate, { once: true });
     try {
+      socket.once("open", () => socket.pause());
       await onceEvent(socket, "open", signal);
       await writeFrame(stream, { v: WIRE_VERSION, conn_id: open.conn_id.trim(), ok: true, protocol: socket.protocol ?? "" }, signal);
       opened = true;
@@ -613,6 +614,7 @@ async function relayWebSocket(
     });
     socket.once("error", reject);
   });
+  socket.resume();
   const downstream = (async (): Promise<"downstream_close"> => {
     while (!done) {
       const frame = await reader.readExactly(5);

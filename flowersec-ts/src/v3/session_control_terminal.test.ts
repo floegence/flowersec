@@ -2,6 +2,7 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test, vi } from "vitest";
 
 import { RpcRouter } from "../rpc/server.js";
+import { RPCHandlers, freezeRPCHandlers, createRPCRouter } from "../public/sessionHandlers.js";
 import { CarrierError, createMemoryCarrierPairV3, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3 } from "./contract.js";
 import { CipherSuiteV3, InnerTypeV3 } from "./protocol.js";
@@ -29,6 +30,34 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test("peer FIN defers rekey until the response finishes", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    try {
+      const [request, { stream: response }] = await Promise.all([client.openStream("reply"), server.acceptStream()]);
+      await request.closeWrite();
+      expect(await response.read()).toBeNull();
+      await expect(server.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
+      await response.write(Uint8Array.of(42));
+      await response.closeWrite();
+      expect(await request.read()).toEqual(Uint8Array.of(42));
+      expect(await request.read()).toBeNull();
+      await server.rekey();
+    } finally { await Promise.all([client.close(), server.close()]); }
+  });
+
+  test("a registered notification can await session close", async () => {
+    const done = deferred<void>();
+    const handlers = new RPCHandlers();
+    handlers.handleNotification(1, async () => { await server.close(); done.resolve(); });
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, {
+      ...config("server"), rpcRouter: createRPCRouter(freezeRPCHandlers(handlers)),
+    })]);
+    await client.rpc.notify(1, "close");
+    await testDeadline(done.promise, "registered handler shutdown");
+    await client.close();
+  });
   test("an asynchronous notification subscriber can close its own session", async () => {
     const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
     const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);

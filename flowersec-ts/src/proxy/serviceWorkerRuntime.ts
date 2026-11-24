@@ -1,4 +1,5 @@
-import type { ProxyFetchRequest, ProxyHeader, ProxyRuntime } from "./types.js";
+import type { ProxyFetchRequest, ProxyHeader, ProxyRuntime, ProxyRuntimeServiceWorkerScope } from "./types.js";
+import { matchesServiceWorkerRegistration } from "./registerServiceWorker.js";
 
 type RuntimeFetchMessage = Readonly<{
   type: "flowersec-proxy:fetch";
@@ -24,18 +25,29 @@ export function enableResponseFlowControl(request: ProxyFetchRequest): ProxyFetc
 
 type ProxyRuntimeServiceWorkerBridgeHandle = Readonly<{ dispose(): void }>;
 
-type BridgeOwner = { runtime: ProxyRuntime; releaseListener: () => void; handles: number; registration?: { controller: ServiceWorker; token?: string } };
+type WorkerGrant = ProxyRuntimeServiceWorkerScope["serviceWorker"];
+type BridgePolicy = WorkerGrant | "registered" | "app_window";
+type BridgeOwner = { runtime: ProxyRuntime; releaseListener: () => void; handles: number; policy: BridgePolicy; contacted?: ServiceWorker; registration?: { controller: ServiceWorker; token?: string } };
 const ownershipKey = Symbol.for("flowersec.proxy.serviceWorkerBridgeOwners.v2");
 const registryHost = globalThis as typeof globalThis & { [ownershipKey]?: WeakMap<ServiceWorkerContainer, BridgeOwner> };
 const bridgeOwners = registryHost[ownershipKey] ??= new WeakMap();
 
-export function registrationAcknowledgement(container: ServiceWorkerContainer, controller: ServiceWorker, token?: string): () => void {
+export async function registerWithController(
+  container: ServiceWorkerContainer, controller: ServiceWorker, token: string | undefined,
+  send: (acknowledge: () => void) => Promise<void>,
+): Promise<void> {
   const owner = bridgeOwners.get(container);
-  return () => {
+  if (typeof owner?.policy === "object") {
+    const registration = await container.getRegistration();
+    if (!matchesServiceWorkerRegistration(registration, controller, owner.policy)) return;
+  }
+  if (container.controller !== controller || bridgeOwners.get(container) !== owner) return;
+  if (owner) owner.contacted = controller;
+  await send(() => {
     if (owner && bridgeOwners.get(container) === owner && container.controller === controller) {
       owner.registration = { controller, ...(token === undefined ? {} : { token }) };
     }
-  };
+  });
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -85,6 +97,7 @@ export function usesServiceWorkerResponseFlowControl(request: ProxyFetchRequest)
 export function registerProxyRuntimeServiceWorkerBridge(
   runtime: ProxyRuntime,
   serviceWorker: ServiceWorkerContainer,
+  policy: BridgePolicy = "registered",
 ): ProxyRuntimeServiceWorkerBridgeHandle {
   let disposed = false;
   const owner = bridgeOwners.get(serviceWorker);
@@ -107,7 +120,8 @@ export function registerProxyRuntimeServiceWorkerBridge(
     if (port === undefined) return;
     const controller = serviceWorker.controller;
     const registered = bridgeOwners.get(serviceWorker)?.registration;
-    if (!controller || event.source !== controller || (registered && registered.controller !== controller)) {
+    if (!controller || event.source !== controller ||
+        ((policy !== "app_window" || registered) && registered?.controller !== controller)) {
       port.close();
       return;
     }
@@ -123,7 +137,7 @@ export function registerProxyRuntimeServiceWorkerBridge(
       port.close();
     }
   };
-  const entry = owner ?? { runtime, handles: 0, releaseListener: () => serviceWorker.removeEventListener("message", onMessage) };
+  const entry: BridgeOwner = owner ?? { runtime, handles: 0, policy, releaseListener: () => serviceWorker.removeEventListener("message", onMessage) };
   if (owner === undefined) {
     serviceWorker.addEventListener("message", onMessage);
     bridgeOwners.set(serviceWorker, entry);
@@ -136,7 +150,7 @@ export function registerProxyRuntimeServiceWorkerBridge(
       if (--entry.handles === 0) {
         entry.releaseListener();
         bridgeOwners.delete(serviceWorker);
-        try { serviceWorker.controller?.postMessage({ type: "flowersec-proxy:release-runtime", version: 2 }); }
+        try { entry.contacted?.postMessage({ type: "flowersec-proxy:release-runtime", version: 2 }); }
         catch { /* A controller may have gone away during disposal. */ }
       }
     },

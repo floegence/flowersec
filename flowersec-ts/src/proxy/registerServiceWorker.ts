@@ -21,6 +21,16 @@ function repairNavigation(key: string, attempt: number): never {
   throw new Error("service worker controller navigation started");
 }
 
+export function matchesServiceWorkerRegistration(
+  registration: ServiceWorkerRegistration | undefined,
+  controller: ServiceWorker | null,
+  expected: Readonly<{ scriptUrl: string; scope: string }>,
+): boolean {
+  return controller !== null && registration?.active === controller &&
+    controller.scriptURL === new URL(expected.scriptUrl, globalThis.location.href).href &&
+    registration.scope === new URL(expected.scope, globalThis.location.href).href;
+}
+
 export async function registerServiceWorkerAndEnsureControl(options: RegisterServiceWorkerOptions): Promise<void> {
   const serviceWorker = globalThis.navigator?.serviceWorker;
   if (serviceWorker === undefined) throw new Error("service workers are unavailable");
@@ -32,9 +42,10 @@ export async function registerServiceWorkerAndEnsureControl(options: RegisterSer
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000 || !Number.isSafeInteger(maxAttempts) || maxAttempts < 0 || maxAttempts > 5) {
     throw new TypeError("invalid service worker control policy");
   }
-  await serviceWorker.register(scriptUrl, { scope });
+  const registration = await serviceWorker.register(scriptUrl, { scope });
   await serviceWorker.ready;
-  if (serviceWorker.controller !== null) return;
+  const matches = () => matchesServiceWorkerRegistration(registration, serviceWorker.controller, { scriptUrl, scope });
+  if (matches()) return;
 
   const controlled = await new Promise<boolean>((resolve) => {
     let settled = false;
@@ -45,9 +56,9 @@ export async function registerServiceWorkerAndEnsureControl(options: RegisterSer
       serviceWorker.removeEventListener("controllerchange", onChange);
       resolve(value);
     };
-    const onChange = () => finish(serviceWorker.controller !== null);
+    const onChange = () => { if (matches()) finish(true); };
     serviceWorker.addEventListener("controllerchange", onChange);
-    const timer = setTimeout(() => finish(serviceWorker.controller !== null), timeoutMs);
+    const timer = setTimeout(() => finish(matches()), timeoutMs);
   });
   if (controlled) return;
 
