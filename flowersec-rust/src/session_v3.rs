@@ -5631,6 +5631,12 @@ impl CarrierSessionV3 for MemoryCarrierSessionV3 {
             Err(io::ErrorKind::ConnectionReset.into())
         }
     }
+    async fn wait_termination(&self) {
+        tokio::select! {
+            _ = self.end.canceled.cancelled() => {},
+            _ = self.peer_end.canceled.cancelled() => {},
+        }
+    }
 }
 
 #[cfg(test)]

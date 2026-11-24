@@ -12,8 +12,8 @@ import {
   type ServiceWorkerControllerGuardMonitorOptions,
   type ServiceWorkerControllerGuardRepairOptions,
 } from "./controllerGuard.js";
-import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
-import { ensureServiceWorkerRuntimeRegistered } from "./runtime.js";
+import { registerWindowWorker } from "./registerServiceWorker.js";
+import { registerRuntimeInContainer } from "./runtime.js";
 import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
 import type { ProxyFetchRequest, ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
 
@@ -510,17 +510,26 @@ export type RegisterProxyAppWindowWithServiceWorkerControlOptions = RegisterProx
 export async function registerProxyAppWindowWithServiceWorkerControl(
   options: RegisterProxyAppWindowWithServiceWorkerControlOptions,
 ): Promise<ProxyAppWindowHandle> {
-  await registerServiceWorkerAndEnsureControl({
-    scriptUrl: options.serviceWorker.scriptUrl,
-    ...(options.serviceWorker.scope === undefined ? {} : { scope: options.serviceWorker.scope }),
+  const target = options.targetWindow ?? globalThis.window;
+  const href = target.location.href;
+  const scriptUrl = options.serviceWorker.scriptUrl.trim();
+  if (!scriptUrl) throw new TypeError("service worker script and scope are required");
+  const expected = {
+    scriptUrl: new URL(scriptUrl, href).href,
+    scope: new URL(options.serviceWorker.scope?.trim() || "/", href).href,
+    href,
+  };
+  await registerWindowWorker({
+    scriptUrl: expected.scriptUrl,
+    scope: expected.scope,
     ...(options.serviceWorker.repair?.queryKey === undefined ? {} : { repairQueryKey: options.serviceWorker.repair.queryKey }),
     ...(options.serviceWorker.repair?.maxAttempts === undefined ? {} : { maxRepairAttempts: options.serviceWorker.repair.maxAttempts }),
     ...(options.serviceWorker.repair?.controllerTimeoutMs === undefined ? {} : { controllerTimeoutMs: options.serviceWorker.repair.controllerTimeoutMs }),
-  });
+  }, target);
   const guard = createServiceWorkerControllerGuard({
     ...(options.targetWindow === undefined ? {} : { targetWindow: options.targetWindow, navigationWindow: options.targetWindow }),
     expectedScriptPathSuffix: options.serviceWorker.expectedScriptPathSuffix,
-    registration: { scriptUrl: options.serviceWorker.scriptUrl, scope: options.serviceWorker.scope ?? "/" },
+    registration: { scriptUrl: expected.scriptUrl, scope: expected.scope },
     ...(options.serviceWorker.repair === undefined ? {} : { repair: options.serviceWorker.repair }),
     ...(options.serviceWorker.monitor === undefined ? {} : { monitor: options.serviceWorker.monitor }),
     ...(options.serviceWorker.conflicts === undefined ? {} : { conflicts: options.serviceWorker.conflicts }),
@@ -529,11 +538,11 @@ export async function registerProxyAppWindowWithServiceWorkerControl(
   try {
     await guard.ensure();
     app = registerProxyAppWindowWithServiceWorkerRuntime(options);
-    await ensureServiceWorkerRuntimeRegistered({
+    await registerRuntimeInContainer(target.navigator.serviceWorker, {
       ...(options.serviceWorker.runtimeRegistrationToken === undefined
         ? {}
         : { runtimeRegistrationToken: options.serviceWorker.runtimeRegistrationToken }),
-    });
+    }, expected);
     let disposed = false;
     return Object.freeze({
       runtime: app.runtime,

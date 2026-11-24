@@ -707,7 +707,7 @@
       "path": "flowersec-rust/src/tunnel_runtime_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 131
+      "matching_lines": 132
     },
     {
       "path": "flowersec-rust/src/websocket_transport.rs",
@@ -970,8 +970,8 @@
     {
       "path": "flowersec-ts/src/node/proxyServer.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 14,
-      "matching_lines": 3
+      "first_matching_line": 8,
+      "matching_lines": 4
     },
     {
       "path": "flowersec-ts/src/node/rawQuicAdapterV3.ts",
@@ -1133,7 +1133,7 @@
       "path": "flowersec-ts/src/v3/publicSession.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 2,
-      "matching_lines": 40
+      "matching_lines": 42
     },
     {
       "path": "flowersec-ts/src/v3/retryDisposition.ts",

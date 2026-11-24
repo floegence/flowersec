@@ -1,6 +1,7 @@
 import { prepareProxyFetch } from "./fetch.js";
 import { raceWithSignal } from "../utils/abort.js";
 import { BodyIntake } from "./bodyIntake.js";
+import { matchesServiceWorkerRegistration } from "./registerServiceWorker.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { base64urlEncode } from "../utils/base64url.js";
@@ -626,12 +627,26 @@ export type EnsureServiceWorkerRuntimeRegisteredOptions = Readonly<{
 export async function ensureServiceWorkerRuntimeRegistered(
   options: EnsureServiceWorkerRuntimeRegisteredOptions = {},
 ): Promise<void> {
-  const controller = globalThis.navigator?.serviceWorker?.controller;
-  if (controller === null || controller === undefined || typeof controller.postMessage !== "function") return;
+  return registerRuntimeInContainer(globalThis.navigator?.serviceWorker, options);
+}
+
+export async function registerRuntimeInContainer(
+  container: ServiceWorkerContainer | undefined,
+  options: EnsureServiceWorkerRuntimeRegisteredOptions,
+  expected?: { scriptUrl: string; scope: string; href: string },
+): Promise<void> {
+  const controller = container?.controller;
+  if (expected) {
+    const registration = await container?.getRegistration(expected.href);
+    if (!controller || container?.controller !== controller || !matchesServiceWorkerRegistration(registration, controller, expected, expected.href)) {
+      throw new Error("service worker controller mismatch");
+    }
+  }
+  if (!container || !controller || typeof controller.postMessage !== "function") return;
   const timeoutMs = options.timeoutMs ?? 2_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) throw new TypeError("invalid runtime registration timeout");
   const token = normalizeToken(options.runtimeRegistrationToken);
-  await registerWithController(globalThis.navigator.serviceWorker, controller, token, acknowledge =>
+  await registerWithController(container, controller, token, acknowledge =>
     sendRuntimeRegistration(controller, token, timeoutMs, acknowledge));
 }
 

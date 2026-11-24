@@ -241,6 +241,11 @@ class WebTransportCarrierStreamAdapter implements NativeCarrierStreamV3 {
   ) {
     this.reader = stream.readable.getReader();
     this.writer = stream.writable.getWriter();
+    void this.reader.closed.then(() => {
+      if (this.readClosed) return;
+      this.readClosed = true;
+      this.releaseIfComplete();
+    }, error => this.abort(new CarrierError("reset", "WebTransport stream read failed", error)));
   }
 
   async read(_options: OperationOptionsV3 = {}): Promise<Uint8Array | null> {

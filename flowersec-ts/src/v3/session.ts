@@ -1576,6 +1576,12 @@ export class SessionV3 implements SessionV3Contract {
 }
 
 class EncryptedStreamV3 implements ByteStreamV3 {
+  private resetController?: AbortController;
+  get resetSignal(): AbortSignal {
+    this.resetController ??= new AbortController();
+    if (this.terminalError !== undefined) this.resetController.abort(this.terminalError);
+    return this.resetController.signal;
+  }
   readonly reader: ExactReader;
   readonly opened = deferred<void>();
   readonly data = new ByteQueue(MAX_BUFFERED_STREAM_BYTES);
@@ -1773,6 +1779,7 @@ class EncryptedStreamV3 implements ByteStreamV3 {
   markTerminal(error: Error): boolean {
     if (this.terminalError !== undefined) return false;
     this.terminalError = error;
+    this.resetController?.abort(error);
     this.pendingFIN?.abort(error);
     const pendingSendRekey = this.pendingSendRekey;
     this.pendingSendRekey = undefined;

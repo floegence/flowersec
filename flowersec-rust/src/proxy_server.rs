@@ -2026,6 +2026,13 @@ mod tests {
 
     #[tokio::test]
     async fn http_proxy_enforces_origin_host_cookie_header_and_body_policy() {
+        for external_origin in [Some("https://app.example"), None] {
+            check_http_policy(external_origin).await;
+        }
+    }
+
+    async fn check_http_policy(external_origin: Option<&'static str>) {
+        let forwarded_origin = external_origin.unwrap_or("https://caller.example");
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
@@ -2052,28 +2059,43 @@ mod tests {
                 "{text}"
             );
             assert!(text.contains(&format!("host: {address}\r\n")), "{text}");
-            assert!(text.contains("x-forwarded-proto: https\r\n"), "{text}");
+            assert!(
+                text.contains(&format!("origin: {forwarded_origin}\r\n")),
+                "{text}"
+            );
+            if external_origin.is_some() {
+                assert!(text.contains("x-forwarded-proto: https\r\n"), "{text}");
+            } else {
+                assert!(!text.contains("x-forwarded-proto:"), "{text}");
+            }
             assert!(text.contains("cookie: public=ok\r\n"), "{text}");
             assert!(text.contains("x-request-id: visible\r\n"), "{text}");
             assert!(!text.contains("authorization:"), "{text}");
             socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\nLocation: /hidden\r\nX-Visible: yes\r\nSet-Cookie: secret=no\r\nConnection: close\r\n\r\nworld").await.expect("write response");
         });
 
-        let server = ProxyServer::new(test_options(
-            format!("http://{address}").parse().expect("upstream URL"),
-        ))
-        .expect("proxy server");
+        let mut options = test_options(format!("http://{address}").parse().expect("upstream URL"));
+        options
+            .extra_request_headers
+            .extend(["origin".into(), "x-forwarded-proto".into()]);
+        let server = ProxyServer::new(options).expect("proxy server");
         let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
+            let mut request = serde_json::json!({
                 "v": 1, "request_id": "request-1", "method": "POST",
                 "path": "/public/../api//items?q=%7euser",
                 "headers": [
+                    {"name":"origin", "value":forwarded_origin},
+                    {"name":"x-forwarded-proto", "value":"http"},
                     {"name":"cookie", "value":"session=bad; private_key=no; public=ok"},
                     {"name":"authorization", "value":"Bearer secret"},
                     {"name":"x-request-id", "value":"visible"}
                 ],
-                "external_origin": "https://app.example", "timeout_ms": 1000
-            }));
+                "timeout_ms": 1000
+            });
+            if let Some(origin) = external_origin {
+                request["external_origin"] = serde_json::json!(origin);
+            }
+            let mut input = frame_json(request);
             input.extend_from_slice(&5u32.to_be_bytes());
             input.extend_from_slice(b"hello");
             input.extend_from_slice(&0u32.to_be_bytes());

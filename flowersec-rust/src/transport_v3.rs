@@ -101,7 +101,7 @@ pub(crate) trait CarrierSessionV3: fmt::Debug + Send + Sync + 'static {
         Err(io::ErrorKind::Unsupported.into())
     }
     async fn wait_termination(&self) {
-        self.wait_shutdown().await
+        std::future::pending().await
     }
     /// Wait for carrier-owned workers after graceful close or abort.
     async fn wait_shutdown(&self) {}

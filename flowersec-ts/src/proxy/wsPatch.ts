@@ -70,10 +70,29 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     extensions = "";
     protocol = "";
     binaryType: BinaryType = "blob";
-    onopen: ((event: Event) => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror: ((event: Event) => void) | null = null;
-    onclose: ((event: CloseEvent) => void) | null = null;
+    private readonly properties = new Map<string, EventListener>();
+    private readonly notifyProperty = (event: Event) => {
+      try { this.properties.get(event.type)?.call(this, event); } catch { /* User handlers are isolated. */ }
+    };
+
+    private setProperty(type: string, value: EventListener | null): void {
+      if (typeof value === "function") {
+        this.properties.set(type, value);
+        this.addEventListener(type, this.notifyProperty);
+      } else {
+        this.properties.delete(type);
+        this.removeEventListener(type, this.notifyProperty);
+      }
+    }
+
+    get onopen() { return this.properties.get("open") ?? null; }
+    set onopen(value: EventListener | null) { this.setProperty("open", value); }
+    get onmessage() { return this.properties.get("message") ?? null; }
+    set onmessage(value: EventListener | null) { this.setProperty("message", value); }
+    get onerror() { return this.properties.get("error") ?? null; }
+    set onerror(value: EventListener | null) { this.setProperty("error", value); }
+    get onclose() { return this.properties.get("close") ?? null; }
+    set onclose(value: EventListener | null) { this.setProperty("close", value); }
 
     private readonly abort = new AbortController();
     private stream: ByteStream | undefined;
@@ -162,7 +181,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
         this.stream = opened.stream;
         this.protocol = opened.protocol;
         this.readyState = ProxyWebSocket.OPEN;
-        this.emit("open", new Event("open"));
+        this.dispatchEvent(new Event("open"));
         await this.readLoop(opened.stream);
       } catch {
         this.fail();
@@ -190,20 +209,14 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           this.completeClose(code, reason);
           return;
         } else if (frame.opcode === 1) {
-          this.emit("message", new MessageEvent("message", { data: decoder.decode(frame.payload) }));
+          this.dispatchEvent(new MessageEvent("message", { data: decoder.decode(frame.payload) }));
         } else if (frame.opcode === 2) {
           const data = this.binaryType === "arraybuffer"
             ? frame.payload.buffer
             : new Blob([frame.payload]);
-          this.emit("message", new MessageEvent("message", { data }));
+          this.dispatchEvent(new MessageEvent("message", { data }));
         }
       }
-    }
-
-    private emit(type: "open" | "message" | "error" | "close", event: Event): void {
-      const callback = this[`on${type}`] as ((event: Event) => void) | null;
-      try { callback?.call(this, event); } catch { /* User event handlers are isolated. */ }
-      this.dispatchEvent(event);
     }
 
     private fail(): void {
@@ -211,8 +224,8 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
       this.readyState = ProxyWebSocket.CLOSED;
       this.bufferedAmount = 0;
-      this.emit("error", new Event("error"));
-      this.emit("close", new CloseEvent("close", { code: 1006, reason: "proxy WebSocket failed", wasClean: false }));
+      this.dispatchEvent(new Event("error"));
+      this.dispatchEvent(new CloseEvent("close", { code: 1006, reason: "proxy WebSocket failed", wasClean: false }));
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
@@ -224,7 +237,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
       this.readyState = ProxyWebSocket.CLOSED;
       this.bufferedAmount = 0;
-      this.emit("close", new CloseEvent("close", { code, reason, wasClean: true }));
+      this.dispatchEvent(new CloseEvent("close", { code, reason, wasClean: true }));
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();

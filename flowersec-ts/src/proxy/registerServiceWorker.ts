@@ -6,18 +6,18 @@ export type RegisterServiceWorkerOptions = Readonly<{
   controllerTimeoutMs?: number;
 }>;
 
-function currentAttempt(key: string): number {
+function currentAttempt(key: string, location: Location): number {
   try {
-    const value = Number(new URL(globalThis.location.href).searchParams.get(key) ?? "0");
+    const value = Number(new URL(location.href).searchParams.get(key) ?? "0");
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   } catch {
     return 0;
   }
 }
-function repairNavigation(key: string, attempt: number): never {
-  const target = new URL(globalThis.location.href);
+function repairNavigation(key: string, attempt: number, location: Location): never {
+  const target = new URL(location.href);
   target.searchParams.set(key, String(attempt));
-  globalThis.location.replace(target.toString());
+  location.replace(target.toString());
   throw new Error("service worker controller navigation started");
 }
 
@@ -33,7 +33,11 @@ export function matchesServiceWorkerRegistration(
 }
 
 export async function registerServiceWorkerAndEnsureControl(options: RegisterServiceWorkerOptions): Promise<void> {
-  const serviceWorker = globalThis.navigator?.serviceWorker;
+  return registerWindowWorker(options, globalThis);
+}
+
+export async function registerWindowWorker(options: RegisterServiceWorkerOptions, target: Pick<Window, "navigator" | "location">): Promise<void> {
+  const serviceWorker = target.navigator?.serviceWorker;
   if (serviceWorker === undefined) throw new Error("service workers are unavailable");
   const scriptUrl = options.scriptUrl.trim();
   const scope = options.scope?.trim() || "/";
@@ -50,7 +54,7 @@ export async function registerServiceWorkerAndEnsureControl(options: RegisterSer
       serviceWorker.removeEventListener("controllerchange", onChange);
     };
     const onChange = () => {
-      if (matchesServiceWorkerRegistration(registration, serviceWorker.controller, { scriptUrl, scope })) {
+      if (matchesServiceWorkerRegistration(registration, serviceWorker.controller, { scriptUrl, scope }, target.location.href)) {
         cleanup(); resolve(true);
       }
     };
@@ -64,7 +68,7 @@ export async function registerServiceWorkerAndEnsureControl(options: RegisterSer
   if (controlled) return;
 
   const key = options.repairQueryKey?.trim() || "_flowersec_sw_repair";
-  const attempt = currentAttempt(key);
+  const attempt = currentAttempt(key, target.location);
   if (attempt >= maxAttempts) throw new Error("service worker did not take control");
-  repairNavigation(key, attempt + 1);
+  repairNavigation(key, attempt + 1, target.location);
 }

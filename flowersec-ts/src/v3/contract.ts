@@ -41,6 +41,7 @@ export type InternalSessionTerminationV3 = Readonly<{ error: Error; peerCloseRec
 export type SessionV3 = Session;
 
 export interface InternalByteStreamV3 {
+  readonly resetSignal?: AbortSignal;
   readonly id: bigint;
   readonly kind: string;
   readonly terminalError: Error | undefined;

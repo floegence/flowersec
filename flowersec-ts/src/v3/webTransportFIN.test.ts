@@ -66,7 +66,6 @@ test("holds inbound capacity after read EOF until the native FIN completes", asy
     await native.entered.promise;
     await expect(stream.write(new Uint8Array([1]))).rejects.toMatchObject({ code: "write_closed" });
     native.reader.close();
-    await expect(stream.read()).resolves.toBeNull();
     const overflow = controlledStream();
     incoming.enqueue(overflow);
     const aborted = await Promise.race([overflow.aborted.promise, setImmediate("still open")]);
@@ -81,6 +80,29 @@ test("holds inbound capacity after read EOF until the native FIN completes", asy
     native.completion.resolve();
     await carrier.close();
   }
+});
+
+test("preserves buffered data and releases capacity after the last bytes without an EOF read", async () => {
+  const { carrier, incoming } = setup();
+  const native = controlledStream();
+  try {
+    incoming.enqueue(native);
+    const stream = await carrier.acceptStream();
+    for (let index = 0; index < 2; index++) {
+      incoming.enqueue(controlledStream());
+      await carrier.acceptStream();
+    }
+    native.reader.enqueue(Uint8Array.of(42));
+    native.reader.close();
+    native.completion.resolve();
+    await stream.closeWrite();
+    const overflow = controlledStream();
+    incoming.enqueue(overflow);
+    await expect(overflow.aborted.promise).resolves.toMatchObject({ code: "reset" });
+    await expect(stream.read()).resolves.toEqual(Uint8Array.of(42));
+    incoming.enqueue(controlledStream());
+    await expect(carrier.acceptStream()).resolves.toBeDefined();
+  } finally { await carrier.close(); }
 });
 
 test.each(["session", "peer read reset", "local reset"] as const)(

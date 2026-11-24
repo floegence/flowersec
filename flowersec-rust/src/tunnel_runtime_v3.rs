@@ -1158,6 +1158,7 @@ struct AuthorityKey {
 
 struct PendingEntry<T> {
     generation_id: u64,
+    _ownership: tokio::sync::oneshot::Sender<()>,
     value: T,
 }
 
@@ -1418,6 +1419,7 @@ impl TaskRuntime {
             self.replace_active_pair(active, admission_deadline).await;
         }
         let generation_id = self.state.next_pending_id.fetch_add(1, Ordering::Relaxed);
+        let (ownership, transferred) = tokio::sync::oneshot::channel();
         let (peer, pending_capacity, replacement_denied, replaced, incoming_mismatch) = {
             let mut pending = self.state.pending.lock().await;
             if let Some(entry) = pending.get(&key) {
@@ -1440,6 +1442,7 @@ impl TaskRuntime {
                             key.clone(),
                             PendingEntry {
                                 generation_id,
+                                _ownership: ownership,
                                 value: leg.clone(),
                             },
                         );
@@ -1468,6 +1471,7 @@ impl TaskRuntime {
                     key.clone(),
                     PendingEntry {
                         generation_id,
+                        _ownership: ownership,
                         value: leg.clone(),
                     },
                 );
@@ -1528,11 +1532,13 @@ impl TaskRuntime {
             // peer; only artifact expiry can shorten that pairing window.
             let pair_deadline = pair_timeout_deadline.min(expiry_deadline);
             let expiry_first = expiry_deadline <= pair_deadline;
-            tokio::select! {
+            let disconnected = tokio::select! {
                 biased;
-                _ = self.state.closed.cancelled() => {}
-                _ = tokio::time::sleep_until(pair_deadline) => {}
-            }
+                _ = transferred => return Ok(()),
+                _ = self.state.closed.cancelled() => false,
+                _ = leg.carrier.wait_termination() => true,
+                _ = tokio::time::sleep_until(pair_deadline) => false,
+            };
             let expired = {
                 let mut pending = self.state.pending.lock().await;
                 remove_pending_generation(&mut pending, &key, generation_id)
@@ -1547,15 +1553,17 @@ impl TaskRuntime {
                 // response and lease cleanup a fresh bounded window instead
                 // of reusing the already elapsed admission deadline.
                 let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
-                let _ = send_fsa3(
-                    expired.admission.as_ref(),
-                    FSA5_RETRY,
-                    reason,
-                    &self.options.admission_reasons,
-                    cleanup_deadline,
-                    &self.state.closed,
-                )
-                .await;
+                if !disconnected {
+                    let _ = send_fsa3(
+                        expired.admission.as_ref(),
+                        FSA5_RETRY,
+                        reason,
+                        &self.options.admission_reasons,
+                        cleanup_deadline,
+                        &self.state.closed,
+                    )
+                    .await;
+                }
                 expired.carrier.abort();
                 release_bounded(
                     self.authorizer.as_ref(),
@@ -3675,6 +3683,7 @@ mod tests {
                 key,
                 PendingEntry {
                     generation_id: index,
+                    _ownership: tokio::sync::oneshot::channel().0,
                     value: leg,
                 },
             );
@@ -3725,6 +3734,7 @@ mod tests {
             AuthorityKey::from(leg.claims.as_ref()),
             PendingEntry {
                 generation_id: 1,
+                _ownership: tokio::sync::oneshot::channel().0,
                 value: leg,
             },
         );
@@ -3820,9 +3830,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disconnected_leg_releases_its_pending_slot_before_expiry() {
+        let authorizer = Arc::new(CountingAuthorizer::default());
+        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(60), 1));
+        for lease in ["first-lease", "next-lease"] {
+            let (carrier, peer) = crate::session_v3::memory_carrier_pair_v3();
+            let leg = test_leg(
+                lease,
+                1,
+                "first",
+                "second",
+                SystemTime::now() + Duration::from_secs(60),
+                false,
+                carrier,
+            );
+            let key = AuthorityKey::from(leg.claims.as_ref());
+            let owner = runtime.clone();
+            let waiting = tokio::spawn(async move {
+                owner
+                    .register_leg(leg, Instant::now() + Duration::from_secs(1))
+                    .await
+            });
+            wait_for_pending_key(&runtime, &key).await;
+            peer.abort();
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(1), waiting)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(TunnelRuntimeError::AdmissionFailed)
+            ));
+            assert!(runtime.state.pending.lock().await.is_empty());
+        }
+        assert_eq!(authorizer.releases.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn replacement_retires_the_old_pending_generation() {
         let authorizer = Arc::new(CountingAuthorizer::default());
-        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 1));
+        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(60), 1));
         let key = AuthorityKey {
             profile: "flowersec/5".into(),
             channel: "channel".into(),
@@ -3846,7 +3892,7 @@ mod tests {
                         1,
                         "endpoint-first",
                         "endpoint-second",
-                        SystemTime::now() + Duration::from_secs(1),
+                        SystemTime::now() + Duration::from_secs(60),
                         false,
                         first_carrier,
                     ),
@@ -3870,7 +3916,11 @@ mod tests {
                 Instant::now() + Duration::from_millis(100),
             )
             .await;
-        let _ = first_task.await;
+        tokio::time::timeout(Duration::from_secs(1), first_task)
+            .await
+            .expect("replaced owner woke before its pairing deadline")
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             second_result,
             Err(TunnelRuntimeError::AdmissionFailed)

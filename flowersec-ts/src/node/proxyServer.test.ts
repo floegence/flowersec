@@ -65,18 +65,19 @@ test("requires a single forwarded Origin", async () => {
 
 test.each([true, false])("derives the upstream scheme only from a validated external origin (present=%s)", async present => {
   const origin = "http://127.0.0.1:8080";
-  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, allowedOrigins: [origin], extraRequestHeaders: ["x-forwarded-proto"] });
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, allowedOrigins: [origin], extraRequestHeaders: ["origin", "x-forwarded-proto"] });
   const handlers = new StreamHandlers(); server.register(handlers);
   const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
   const fetch = vi.fn(async (_url: URL, init: RequestInit) => {
     expect(new Headers(init.headers).get("x-forwarded-proto")).toBe(present ? "http" : null);
+    expect(new Headers(init.headers).get("origin")).toBe(present ? origin : "https://caller.example");
     return new Response(null, { status: 204 });
   });
   vi.stubGlobal("fetch", fetch);
   try {
     let reads = 0;
     const exchange = proxyExchange(kind, { method: "GET", path: "/", request_id: "scheme", ...(present ? { external_origin: origin } : {}),
-      headers: [{ name: "X-Forwarded-Proto", value: "https" }] }, async () => ++reads === 1 ? u32be(0) : null);
+      headers: [{ name: "Origin", value: present ? origin : "https://caller.example" }, { name: "X-Forwarded-Proto", value: "https" }] }, async () => ++reads === 1 ? u32be(0) : null);
     await handle(exchange.incoming, {});
     expect(fetch).toHaveBeenCalledOnce();
     expect(Buffer.concat(exchange.replies).toString()).toContain('"ok":true');

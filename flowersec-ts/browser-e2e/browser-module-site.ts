@@ -22,7 +22,7 @@ export async function startBrowserModuleSite(input?: number | BrowserModuleSiteO
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (url.pathname === "/") {
+      if (url.pathname === "/" || url.pathname === "/child/") {
         response.writeHead(200, {
           "cache-control": "no-store",
           "content-type": "text/html; charset=utf-8",

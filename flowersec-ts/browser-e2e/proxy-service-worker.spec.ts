@@ -35,6 +35,43 @@ test("Chromium runs scoped Service Worker repair across a real reload", async ({
   } finally { await site.close(); }
 });
 
+test("Chromium runs app-window registration on the iframe's controller", async ({ page }) => {
+  const site = await startBrowserModuleSite({ serviceWorkerScript: `
+    self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+    let registeredPath = null;
+    self.addEventListener('message', event => {
+      if (event.data.type === 'flowersec-proxy:register-runtime') {
+        registeredPath = new URL(event.source.url).pathname;
+        event.ports[0].postMessage({type: 'flowersec-proxy:register-runtime-ack', ok: event.data.token === 'child-registration'});
+      } else { event.ports[0].postMessage(registeredPath); }
+    });` });
+  try {
+    await page.goto(site.origin);
+    const paths = await page.evaluate(async () => {
+      const proxy = await import("/dist/proxy/index.js");
+      await proxy.registerServiceWorkerAndEnsureControl({ scriptUrl: "/proxy-sw.js", scope: "/" });
+      const frame = document.createElement("iframe");
+      frame.src = "/child/";
+      const loaded = new Promise<void>(resolve => { frame.onload = () => resolve(); });
+      document.body.append(frame);
+      await loaded;
+      const child = frame.contentWindow!;
+      const app = await proxy.registerProxyAppWindowWithServiceWorkerControl({
+        targetWindow: child, controllerWindow: window, controllerOrigin: location.origin,
+        serviceWorker: { scriptUrl: "../proxy-sw.js", scope: "./", expectedScriptPathSuffix: "/proxy-sw.js", runtimeRegistrationToken: "child-registration" },
+      });
+      const registeredPath = (controller: ServiceWorker) => new Promise(resolve => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = event => { resolve(event.data); channel.port1.close(); };
+        controller.postMessage("registered-path", [channel.port2]);
+      });
+      try { return await Promise.all([registeredPath(navigator.serviceWorker.controller!), registeredPath(child.navigator.serviceWorker.controller!)]); }
+      finally { app.dispose(); frame.remove(); }
+    });
+    expect(paths).toEqual([null, "/child/"]);
+  } finally { await site.close(); }
+});
+
 test("Chromium runs the Service Worker proxy product chain", async ({ page, context, browserName }) => {
   test.skip(browserName !== "chromium", "requires Chromium Service Worker coverage");
   test.setTimeout(60_000);
@@ -63,6 +100,7 @@ test("Chromium runs the Service Worker proxy product chain", async ({ page, cont
     const primary = JSON.parse(await firstLine(primaryPeer.stdout)) as { artifact_json: string };
     await page.goto(site.origin, { waitUntil: "networkidle" });
     await installRuntimePage(page, primary.artifact_json, site.origin);
+    await expect(delayedResponse(page, false)).resolves.toBe("proxied");
     appPage = await context.newPage();
     await appPage.goto(site.origin, { waitUntil: "networkidle" });
 
@@ -134,12 +172,13 @@ test("Chromium runs the Service Worker proxy product chain", async ({ page, cont
     });
     expect(unavailable).toEqual({ status: 503, body: "proxy runtime unavailable" });
 
-    recoveryPeer = startProxyPeer(upstream.origin, site.origin);
+    recoveryPeer = startProxyPeer(upstream.origin, site.origin, true);
     recoveryStderr = captureStderr(recoveryPeer);
     const recovery = JSON.parse(await firstLine(recoveryPeer.stdout)) as { artifact_json: string };
     recoveryPage = await context.newPage();
     await recoveryPage.goto(site.origin, { waitUntil: "networkidle" });
     await installRuntimePage(recoveryPage, recovery.artifact_json, site.origin);
+    await expect(delayedResponse(recoveryPage, true)).resolves.toBe("proxied");
     await expect(appPage.evaluate(async () => await (await fetch("/proxy/echo")).text()))
       .resolves.toBe("proxied");
     await disposeRuntimePage(recoveryPage);
@@ -205,7 +244,7 @@ async function runWebSocketPatchContract(): Promise<Readonly<{ echoed: string; r
     const socket = new WebSocket("ws://proxy.invalid/echo", "chat");
     echoed = await new Promise<string>((resolve, reject) => {
       socket.onerror = () => reject(new Error("patched WebSocket failed"));
-      socket.onopen = () => socket.send("patched-echo");
+      socket.onopen = event => (event.currentTarget as WebSocket).send("patched-echo");
       socket.onmessage = (event) => resolve(String(event.data));
     });
     socket.close(1000, "done");
@@ -215,10 +254,21 @@ async function runWebSocketPatchContract(): Promise<Readonly<{ echoed: string; r
   return { echoed, restored: globalThis.WebSocket === NativeWebSocket };
 }
 
-function startProxyPeer(upstream: string, origin: string): ReturnType<typeof spawn> {
+async function delayedResponse(page: Page, sessionBound: boolean): Promise<string> {
+  return page.evaluate(async bound => {
+    const runtime = (globalThis as typeof globalThis & { __flowersecProxyRuntime: { fetch(path: string, init: { sessionBound: boolean }): Promise<Response> } }).__flowersecProxyRuntime;
+    const response = await runtime.fetch("/echo", { sessionBound: bound });
+    if (response.status !== 200) throw new Error(`unexpected status ${response.status}`);
+    await new Promise(resolve => setTimeout(resolve, 6_000));
+    return response.text();
+  }, sessionBound);
+}
+
+function startProxyPeer(upstream: string, origin: string, sessionBound = false): ReturnType<typeof spawn> {
   return spawn("go", [
     "run", "./internal/cmd/ts-proxy-peer", "--upstream", upstream, "--origin", origin,
     "--max-body-bytes", "4096", "--http-timeout", "15s",
+    ...(sessionBound ? ["--session-bound"] : []),
   ], {
     cwd: path.join(repositoryRoot, "flowersec-go"),
     stdio: ["ignore", "pipe", "pipe"],

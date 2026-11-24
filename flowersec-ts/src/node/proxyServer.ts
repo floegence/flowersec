@@ -5,6 +5,7 @@ import { SessionError } from "../public/contract.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
 import { ProxyByteReader, writeAll, writeProxyWebSocketFrame } from "../proxy/stream.js";
 import { resolveProxyTarget } from "./proxyTarget.js";
+import { incomingResetSignal } from "../v3/publicSession.js";
 import {
   StreamHandlers,
   registerStreamHandlersAtomically,
@@ -374,7 +375,8 @@ export class ProxyServer {
   async #serveWebSocket(stream: ByteStream, parent: AbortSignal): Promise<void> {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new SessionError("timeout")), this.#config.maxTimeout);
-    const signal = AbortSignal.any([parent, deadline.signal]);
+    const resetSignal = incomingResetSignal(stream);
+    const signal = AbortSignal.any(resetSignal ? [parent, deadline.signal, resetSignal] : [parent, deadline.signal]);
     let resetting: Promise<void> | undefined;
     const abort = () => { resetting ??= stream.reset().catch(() => undefined); };
     signal.addEventListener("abort", abort, { once: true });

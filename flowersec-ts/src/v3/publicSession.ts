@@ -17,6 +17,11 @@ import { assertRpcTypeId } from "../rpc/validate.js";
 import { raceWithSignal } from "../utils/abort.js";
 
 const internals = new WeakMap<SessionV3, InternalSessionV3>();
+const incomingOwners = new WeakMap<ByteStreamV3, InternalByteStreamV3>();
+
+export function incomingResetSignal(stream: ByteStreamV3): AbortSignal | undefined {
+  return incomingOwners.get(stream)?.resetSignal;
+}
 /** @internal Read the actual session and stream owners for the capacity inventory. */
 export function sessionInventory(session: SessionV3) {
   const value = internals.get(session)?.runtimeInventory?.();
@@ -64,10 +69,12 @@ export function projectSessionV3(session: InternalSessionV3): SessionV3 {
     async acceptStream(options?: OperationOptionsV3): Promise<IncomingStreamV3> {
       try {
         const incoming = await session.acceptStream(options);
+        const stream = projectByteStreamV3(incoming.stream);
+        incomingOwners.set(stream, incoming.stream);
         return Object.freeze({
           kind: incoming.kind,
           metadata: createStreamMetadataV3(incoming.metadata),
-          stream: projectByteStreamV3(incoming.stream),
+          stream,
         });
       } catch (error) {
         throw redactSessionError(error, options?.signal);

@@ -35,6 +35,7 @@ func main() {
 	origin := flag.String("origin", "https://app.example", "exact browser and proxy external origin")
 	maxBodyBytes := flag.Int64("max-body-bytes", 8, "maximum proxied HTTP body size")
 	httpTimeout := flag.Duration("http-timeout", time.Second, "proxy HTTP request timeout")
+	sessionBound := flag.Bool("session-bound", false, "use the session lifetime for HTTP requests")
 	flag.Parse()
 	if *upstream == "" {
 		fail(errors.New("--upstream is required"))
@@ -57,6 +58,7 @@ func main() {
 		UpstreamOrigin:              *upstream,
 		AllowedOrigins:              []string{*origin},
 		MaxConcurrentStreams:        4,
+		SessionBoundRequests:        *sessionBound,
 		MaxJSONFrameBytes:           4096,
 		MaxChunkBytes:               8,
 		MaxBodyBytes:                *maxBodyBytes,

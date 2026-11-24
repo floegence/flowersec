@@ -165,11 +165,18 @@ func TestProxyExternalOriginRequiresSingleForwardedValue(t *testing.T) {
 func TestProxyForwardedProtoUsesOnlyValidatedOrigin(t *testing.T) {
 	const origin = "https://app.example"
 	for external, want := range map[string]string{"": "", origin: "https"} {
-		request := &http.Request{Header: http.Header{"X-Forwarded-Proto": {"http", "https"}}}
+		forwarded := origin
+		if external == "" {
+			forwarded = "https://caller.example"
+		}
+		request := &http.Request{Header: http.Header{"Origin": {forwarded}, "X-Forwarded-Proto": {"http", "https"}}}
 		if err := applyProxyExternalOrigin(request, external, map[string]struct{}{origin: {}}); err != nil {
 			t.Fatal(err)
 		}
 		values := request.Header.Values("X-Forwarded-Proto")
+		if request.Header.Get("Origin") != forwarded {
+			t.Fatalf("forwarded Origin changed: %v", request.Header)
+		}
 		if (want == "" && len(values) != 0) || (want != "" && (len(values) != 1 || values[0] != want)) {
 			t.Fatalf("external origin %q produced %v", external, values)
 		}

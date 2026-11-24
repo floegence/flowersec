@@ -110,6 +110,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	}
 	defer releaseEvent()
 	var watchDone chan struct{}
+	responseComplete := false
 	startWatcher := func(beforeWatch func() error) {
 		watchDone = make(chan struct{})
 		go func() {
@@ -126,6 +127,10 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 				if err := stream.CloseWrite(); err != nil {
 					cancelCause(err)
 				}
+			}
+			if responseComplete {
+				<-watchDone
+				return
 			}
 			drain := time.NewTimer(byteStreamCloseTimeout)
 			defer drain.Stop()
@@ -241,6 +246,8 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			if errors.Is(readErr, io.EOF) {
 				if err := writeProxyTerminator(stream); err != nil {
 					server.report(err)
+				} else {
+					responseComplete = true
 				}
 				return
 			}

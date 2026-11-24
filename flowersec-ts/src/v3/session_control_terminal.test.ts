@@ -1,6 +1,9 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { createByteStreamDuplex } from "../node/byteStreamDuplex.js";
+import { ProxyServer } from "../node/proxyServer.js";
+import { freezeStreamHandlers, StreamHandlers } from "../public/streamHandlers.js";
 import { describe, expect, test, vi } from "vitest";
 
 import { RpcRouter } from "../rpc/server.js";
@@ -36,6 +39,51 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test("a peer reset cancels a pending upstream WebSocket upgrade and releases admission", async () => {
+    const upgrade = deferred<void>();
+    const disconnected = deferred<void>();
+    const upstream = createServer();
+    upstream.on("upgrade", (_request, socket) => {
+      socket.on("end", () => socket.end());
+      socket.once("close", () => disconnected.resolve());
+      socket.resume();
+      upgrade.resolve();
+    });
+    await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("missing upstream port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const proxy = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxConcurrentStreams: 1 });
+    const handlers = new StreamHandlers();
+    proxy.register(handlers);
+    const routes = freezeStreamHandlers(handlers).streams;
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    const runtime = createProxyRuntime({ session: projectSessionV3(client) });
+    const peer = projectSessionV3(server);
+    const serve = async () => {
+      const incoming = await peer.acceptStream();
+      await routes.get(incoming.kind)!(incoming, {});
+    };
+    const owner = new AbortController();
+    try {
+      const serving = serve();
+      const opening = runtime.openWebSocketStream("/", { signal: owner.signal }).catch(error => error);
+      await testDeadline(upgrade.promise, "upstream upgrade");
+      owner.abort();
+      expect(await opening).toBeInstanceOf(Error);
+      await testDeadline(Promise.all([disconnected.promise, serving]), "peer reset");
+      expect(proxy.activeCount).toBe(0);
+      await client.probeLiveness();
+    } finally {
+      owner.abort();
+      runtime.dispose();
+      await proxy.close();
+      await Promise.allSettled([client.close(), server.close()]);
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
   test.each(["GET", "HEAD"])("a successful proxy %s exchanges FIN with the peer", async method => {
     const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
     const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
