@@ -3358,6 +3358,11 @@
       },
       {
         "kind": "swift.property",
+        "name": "DirectAdmissionRequest.lookupKey",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "DirectAdmissionRequest.origin",
         "doc_token": ""
       },

@@ -60,7 +60,17 @@ impl fmt::Debug for DirectHandlers {
 /// consume current authorization in the host store, including expiry/revocation.
 #[async_trait::async_trait]
 pub trait DirectAuthorizer: Send + Sync + 'static {
-    async fn lookup(&self, channel_id: &str) -> Option<(ArtifactLease, DirectHandlers)>;
+    async fn lookup(&self, _channel_id: &str) -> Option<(ArtifactLease, DirectHandlers)> {
+        None
+    }
+
+    async fn lookup_credential(
+        &self,
+        channel_id: &str,
+        _lookup_key: &str,
+    ) -> Option<(ArtifactLease, DirectHandlers)> {
+        self.lookup(channel_id).await
+    }
 
     /// Optional outbound work; incoming RPC dispatch is already active.
     async fn connected(&self, _channel_id: &str, _session: Arc<dyn Session>) {}
@@ -474,9 +484,10 @@ impl Acceptor {
             .await
             .map_err(|_| AcceptErrorCode::HandshakeFailed)?;
         let raw = read_fsb3(stream.as_ref(), deadline, cancellation).await?;
-        let channel_id = decode_direct_fsb3(&raw).map_err(|_| AcceptErrorCode::HandshakeFailed)?;
+        let (channel_id, lookup_key) =
+            decode_direct_fsb3(&raw).map_err(|_| AcceptErrorCode::HandshakeFailed)?;
         let (lease, handlers) = authorizer
-            .lookup(&channel_id)
+            .lookup_credential(&channel_id, &lookup_key)
             .await
             .ok_or(AcceptErrorCode::HandshakeFailed)?;
         let plan =

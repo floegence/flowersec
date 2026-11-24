@@ -101,9 +101,17 @@ private struct RedactedByteStreamV3: ByteStream, CustomStringConvertible,
   }
 
   func read(maxBytes: Int) async throws -> Data? {
+    guard !Task.isCancelled else { throw SessionError.canceled }
     do {
-      return try await stream.read(maxBytes: maxBytes)
+      let data = try await withTaskCancellationHandler {
+        try await stream.read(maxBytes: maxBytes)
+      } onCancel: {
+        Task { try? await self.stream.reset() }
+      }
+      try Task.checkCancellation()
+      return data
     } catch {
+      if Task.isCancelled { throw SessionError.canceled }
       throw redactTransportErrorV3(error)
     }
   }

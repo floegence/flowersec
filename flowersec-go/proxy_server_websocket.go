@@ -116,7 +116,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 					if err == nil {
 						err = connection.WriteMessage(messageType, payload)
 					}
-					if err == nil && operation == 8 {
+					if operation == 8 && (err == nil || errors.Is(err, websocket.ErrCloseSent)) {
 						return nil
 					}
 				}
@@ -152,12 +152,10 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 					}
 				} else {
 					var closeErr *websocket.CloseError
-					if errors.As(err, &closeErr) {
+					if errors.As(err, &closeErr) && closeErr.Code != websocket.CloseAbnormalClosure {
 						payload := proxyWebSocketClosePayload(closeErr.Code, closeErr.Text)
 						err = writeProxyWebSocketFrame(stream, 8, payload, server.config.maxWSFrame)
-						if err == nil {
-							err = io.EOF
-						}
+						return err
 					}
 				}
 				if err != nil {
@@ -173,6 +171,21 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		<-errorsCh
 		return operationContext.Err()
 	case err := <-errorsCh:
+		if err == nil {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case err = <-errorsCh:
+				if err != nil {
+					closeBoth()
+				}
+				return err
+			case <-operationContext.Done():
+				err = operationContext.Err()
+			case <-timer.C:
+				err = context.DeadlineExceeded
+			}
+		}
 		closeBoth()
 		<-errorsCh
 		if err != nil && !errors.Is(err, io.EOF) {

@@ -683,7 +683,7 @@
       "path": "flowersec-rust/src/session_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 33,
-      "matching_lines": 1000
+      "matching_lines": 1003
     },
     {
       "path": "flowersec-rust/src/tls_v3.rs",
@@ -737,7 +737,7 @@
       "path": "flowersec-swift/Sources/Flowersec/ArtifactAdmissionV3.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 5,
-      "matching_lines": 66
+      "matching_lines": 67
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/ArtifactV3.swift",
@@ -760,7 +760,7 @@
     {
       "path": "flowersec-swift/Sources/Flowersec/DirectWebSocketListener.swift",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 46,
+      "first_matching_line": 47,
       "matching_lines": 38
     },
     {

@@ -133,10 +133,10 @@ public final class WebSocketRelay: Sendable {
       guard let claim = admission.tunnel, claim.candidate.carrier == "websocket", claim.candidate.normalizedURL == leg.endpoint,
             ContinuousClock.now < leg.deadline else { throw RelayRejection.invalid }
       try checkIngress(claim, leg)
-      let request = RelayAdmissionRequest(lookupKey: claim.lookupKey, origin: leg.origin, remoteAddress: leg.address, ingressEndpoint: leg.endpoint)
+      let request = RelayAdmissionRequest(lookupKey: admission.lookupKey, origin: leg.origin, remoteAddress: leg.address, ingressEndpoint: leg.endpoint)
       guard let grant = try await authorize(request) else { throw RelayRejection.invalid }
       let record = grant.record
-      guard record.lookupKey == claim.lookupKey, record.bindings[admission.chosenCandidateID] == admission.admissionBinding,
+      guard record.lookupKey == admission.lookupKey, record.bindings[admission.chosenCandidateID] == admission.admissionBinding,
             AdmissionCodecV3.registryID(record.authorityScope, maximum: 128), AdmissionCodecV3.registryID(record.expectedPeerID, maximum: 128),
             record.expectedPeerID != claim.localID else { throw RelayRejection.invalid }
       let participant = RelayParticipant(leg: leg, transport: transport, claim: claim, record: record, channelID: admission.channelID)

@@ -263,15 +263,18 @@ export class ProxyServer {
       const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
       if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
       const requestHeaders = filterUpstreamHeaders(meta.headers, REQUEST_HEADERS, this.#config.requestHeaders, this.#config);
+      const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
+      if (requestHeaders.filter(header => header.name === "origin").length > 1) {
+        await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
+      }
       if (externalOrigin !== undefined) {
-        const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
+        const explicitOrigin = headers.origin;
         if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
           await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
         }
         const origin = new URL(externalOrigin);
-        requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
+        headers["x-forwarded-proto"] = origin.protocol.slice(0, -1);
       }
-      const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
       let body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
         const available = this.#config.maxBufferedBody - this.#bufferedBodyBytes;
         const growth = Math.min(preferred, available);

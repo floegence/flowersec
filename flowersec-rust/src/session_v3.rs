@@ -5081,12 +5081,19 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
     let concurrency = usize::from(session.rpc_concurrency.get());
     let permits = Arc::new(Semaphore::new(concurrency));
     let mut workers = tokio::task::JoinSet::new();
-    let (notifications, mut notification_rx) =
-        mpsc::channel::<RpcEnvelopeWireV3>(MAX_QUEUED_RPC_NOTIFICATIONS);
+    let notification_bytes = Arc::new(Semaphore::new(
+        limit
+            .0
+            .max(RpcFrameLimit::default().0 * MAX_QUEUED_RPC_NOTIFICATIONS),
+    ));
+    let (notifications, mut notification_rx) = mpsc::channel::<(
+        RpcEnvelopeWireV3,
+        tokio::sync::OwnedSemaphorePermit,
+    )>(MAX_QUEUED_RPC_NOTIFICATIONS);
     let handler = session.config.rpc_handler.clone();
     let registry = session.rpc.notifications.clone();
     workers.spawn(async move {
-        while let Some(request) = notification_rx.recv().await {
+        while let Some((request, _bytes)) = notification_rx.recv().await {
             registry.dispatch(request.type_id, request.payload.clone());
             if let Some(handler) = &handler {
                 let _ =
@@ -5101,9 +5108,9 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
         loop {
             // Keep an in-progress frame read intact while completed handlers are
             // reaped; canceling that read would lose a partially consumed header.
-            let reading = read_rpc_frame_v3(stream.as_ref(), &read_buffer, limit);
+            let reading = read_sized_rpc_frame_v3(stream.as_ref(), &read_buffer, limit);
             tokio::pin!(reading);
-            let request = loop {
+            let (request, frame_bytes) = loop {
                 tokio::select! {
                     _ = session.canceled.cancelled() => return Err(closed()),
                     result = &mut reading => break result?,
@@ -5116,8 +5123,12 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
                 return Err(invalid("invalid RPC request envelope"));
             }
             if request.request_id == 0 {
+                let bytes = notification_bytes
+                    .clone()
+                    .try_acquire_many_owned(frame_bytes)
+                    .map_err(|_| invalid("RPC notification queue exhausted"))?;
                 notifications
-                    .try_send(request)
+                    .try_send((request, bytes))
                     .map_err(|_| invalid("RPC notification queue exhausted"))?;
                 continue;
             }
@@ -5231,6 +5242,14 @@ async fn read_rpc_frame_v3(
     buffer: &Mutex<VecDeque<u8>>,
     limit: RpcFrameLimit,
 ) -> io::Result<RpcEnvelopeWireV3> {
+    Ok(read_sized_rpc_frame_v3(stream, buffer, limit).await?.0)
+}
+
+async fn read_sized_rpc_frame_v3(
+    stream: &dyn ByteStream,
+    buffer: &Mutex<VecDeque<u8>>,
+    limit: RpcFrameLimit,
+) -> io::Result<(RpcEnvelopeWireV3, u32)> {
     fill_rpc_bytes_v3(stream, buffer, 4).await?;
     let length = {
         let mut buffer = buffer.lock().await;
@@ -5254,7 +5273,7 @@ async fn read_rpc_frame_v3(
         buffer.shrink_to_fit();
     }
     validate_rpc_envelope_v3(&envelope)?;
-    Ok(envelope)
+    Ok((envelope, length as u32))
 }
 
 struct RpcFrameWriter {

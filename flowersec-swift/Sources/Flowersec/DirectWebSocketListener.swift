@@ -8,6 +8,7 @@ import NIOWebSocket
 
 /// Lookup hints only. The listener verifies the entire incoming admission against the returned artifact.
 public struct DirectAdmissionRequest: Sendable {
+  public let lookupKey: String
   public let channelID: String
   public let candidateID: String
   public let origin: String
@@ -259,7 +260,7 @@ private struct DirectWSSConfigV3: Sendable {
     let transport = NIOWebSocketBinaryTransportV3(socket: socket)
     let admission = try AdmissionCodecV3.decodeFSB5(try await transport.readBinary())
     guard admission.pathKind == "direct" else { throw ConnectError.artifactInvalid }
-    let request = DirectAdmissionRequest(channelID: admission.channelID, candidateID: admission.chosenCandidateID,
+    let request = DirectAdmissionRequest(lookupKey: admission.lookupKey, channelID: admission.channelID, candidateID: admission.chosenCandidateID,
                                          origin: origin, remoteAddress: address)
     try checkDeadline(deadline)
     let config: TransportV3SessionConfig

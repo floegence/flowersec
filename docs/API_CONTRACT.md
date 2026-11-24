@@ -470,6 +470,16 @@ owns TLS, WebSocket upgrade, admission, and session protocol. Its
 for same-origin application HTTP exchanges. It does not mint artifacts, bypass
 certificate validation, or change the Transport v5 wire contract.
 
+## Admission and stream lifecycle
+
+For hosted direct admissions, Swift supplies `DirectAdmissionRequest.lookupKey` and Rust calls `DirectAuthorizer::lookup_credential`. The lookup key is the unpadded base64url SHA-256 digest of the routing token's UTF-8 bytes. Use it to select one invitation when a channel has several active credentials. Full admission binding and single-use consumption still precede acceptance. Rust authorizers indexed by unique channel can continue to implement `lookup`.
+
+Canceling a pending Swift public byte-stream read ends that stream and reports `SessionError.canceled`. A read canceled before it starts leaves the stream available. Other streams in the session remain usable.
+
+Rust queues up to 128 RPC notifications. Pending and executing notifications share an encoded-byte budget of the larger of 128 MiB and one configured maximum frame. Exceeding the byte budget has the same outcome as overflowing the notification queue.
+
+Go and Rust WebSocket proxies bound the wait for an upstream close acknowledgement to one second. Node HTTP proxies accept at most one forwarded `Origin` header and check it against the supplied external origin.
+
 ## Explicit Go HTTPS egress
 
 `github.com/floegence/flowersec/flowersec-go/v7/egress` owns the Go-native

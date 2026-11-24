@@ -102,7 +102,7 @@ actor TransportV3Session {
   private var controlTask: Task<Void, Never>?
   private var acceptTask: Task<Void, Never>?
   private var idleTask: Task<Void, Never>?
-  private var activityGeneration: UInt64 = 0
+  private var idleDeadline: ContinuousClock.Instant?
   private var closeDeadlineTask: Task<Void, Never>?
   private var closeWorkTask: Task<Void, Never>?
   private var closeGeneration: UInt64 = 0
@@ -1901,22 +1901,22 @@ actor TransportV3Session {
 
   fileprivate func touchActivity() {
     guard let timeout = config.idleTimeout, !closing, !closed else { return }
-    activityGeneration &+= 1
-    if activityGeneration == 0 { activityGeneration = 1 }
-    let generation = activityGeneration
-    idleTask?.cancel()
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    idleDeadline = deadline
+    guard idleTask == nil else { return }
     idleTask = Task { [weak self] in
-      do {
-        try await Task.sleep(for: timeout)
-        await self?.expireIdle(generation: generation)
-      } catch {
-        // Cancellation means authenticated activity reset or stopped the watchdog.
+      var next = deadline
+      while !Task.isCancelled {
+        do { try await Task.sleep(until: next, clock: .continuous) } catch { return }
+        guard let updated = await self?.checkIdleDeadline() else { return }
+        next = updated
       }
     }
   }
 
-  private func expireIdle(generation: UInt64) {
-    guard activityGeneration == generation, !closing, !closed else { return }
+  private func checkIdleDeadline() -> ContinuousClock.Instant? {
+    guard !closing, !closed, let deadline = idleDeadline else { return nil }
+    if deadline > .now { return deadline }
     idleTask = nil
     _ = initiateClose(
       goAwayReason: 4,
@@ -1925,6 +1925,7 @@ actor TransportV3Session {
       carrierReason: "session idle timeout",
       terminalError: .closed
     )
+    return nil
   }
 
   private func terminate(

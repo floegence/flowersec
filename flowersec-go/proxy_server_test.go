@@ -220,7 +220,7 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}
 }
 
-func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *testing.T) {
+func TestProxyServerWebSocketUpstreamCloseJoinsAfterAcknowledgement(t *testing.T) {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
 	}
@@ -274,6 +274,9 @@ func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *
 	if operation != 8 || len(payload) < 2 || binary.BigEndian.Uint16(payload[:2]) != websocket.CloseNormalClosure {
 		t.Fatalf("close frame = operation %d payload %x", operation, payload)
 	}
+	if err := writeProxyWebSocketFrame(client, 8, payload, 1<<20); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case err := <-done:
 		if err != nil {
@@ -282,8 +285,8 @@ func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *
 	case <-time.After(time.Second):
 		t.Fatal("WebSocket handler did not join both relays")
 	}
-	if stream.resets.Load() != 1 {
-		t.Fatalf("stream Reset count = %d, want 1", stream.resets.Load())
+	if stream.resets.Load() != 0 {
+		t.Fatalf("unexpected reset after close acknowledgement")
 	}
 
 	closed := make(chan struct{})
@@ -295,6 +298,28 @@ func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("ProxyServer.Close did not converge after upstream WebSocket close")
+	}
+}
+
+func TestProxyServerWebSocketDownstreamCloseReceivesReply(t *testing.T) {
+	harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+		connection.SetCloseHandler(func(code int, text string) error {
+			time.Sleep(25 * time.Millisecond)
+			return connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(time.Second))
+		})
+		_, _, _ = connection.ReadMessage()
+	})
+	payload := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished")
+	if err := writeProxyWebSocketFrame(harness.client, 8, payload, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	opcode, reply, err := readProxyWebSocketFrame(harness.client, 1<<20)
+	if err != nil || opcode != 8 || string(reply) != string(payload) {
+		t.Fatalf("normal close reply: opcode=%d payload=%x err=%v", opcode, reply, err)
+	}
+	awaitProxyWebSocketRelayDone(t, harness.done)
+	if harness.stream.resets.Load() != 0 {
+		t.Fatal("unexpected reset after close acknowledgement")
 	}
 }
 

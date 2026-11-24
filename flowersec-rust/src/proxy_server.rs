@@ -1317,7 +1317,6 @@ async fn relay_connected_websocket(
     websocket: WebSocketStream<HttpIo>,
 ) -> Result<(), ProxyServerError> {
     let (mut sink, mut source) = websocket.split();
-    let mut downstream_close_sent = false;
     'relay: loop {
         // A read may already have consumed its header. Keep it alive until
         // the entire message arrives, even while the other direction is busy.
@@ -1347,12 +1346,10 @@ async fn relay_connected_websocket(
                     )
                     .await?;
                     if operation == 8 {
-                        // An upstream close is terminal after it has been relayed. If the
-                        // downstream initiated close first, this is its acknowledgement.
                         break 'relay;
                     }
                 }
-                frame = &mut downstream, if !downstream_close_sent => break frame?,
+                frame = &mut downstream => break frame?,
             }
         };
         let message = match operation {
@@ -1367,14 +1364,35 @@ async fn relay_connected_websocket(
             10 => tungstenite::Message::Pong(payload),
             _ => return Err(ProxyServerError::OperationFailed),
         };
+        if operation == 8 {
+            let acknowledge = async {
+                sink.send(message)
+                    .await
+                    .map_err(|_| ProxyServerError::OperationFailed)?;
+                while let Some(reply) = source.next().await {
+                    if let tungstenite::Message::Close(close) =
+                        reply.map_err(|_| ProxyServerError::OperationFailed)?
+                    {
+                        return write_websocket_frame(
+                            stream,
+                            8,
+                            encode_websocket_close(close),
+                            inner.config.max_websocket_frame,
+                            &cancellation,
+                        )
+                        .await;
+                    }
+                }
+                Err(ProxyServerError::OperationFailed)
+            };
+            return tokio::select! {
+                _ = cancellation.cancelled() => Err(ProxyServerError::Closed),
+                result = tokio::time::timeout(Duration::from_secs(1), acknowledge) => result.map_err(|_| ProxyServerError::OperationFailed)?,
+            };
+        }
         tokio::select! {
             _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
             result = sink.send(message) => result.map_err(|_| ProxyServerError::OperationFailed)?,
-        }
-        if operation == 8 {
-            // Keep the carrier stream alive until upstream acknowledges the
-            // close. This preserves normal FIN semantics for the peer.
-            downstream_close_sent = true;
         }
     }
     tokio::select! { _ = cancellation.cancelled() => {}, _ = sink.close() => {} }
@@ -2100,6 +2118,31 @@ mod tests {
             &[0x03, 0xe8, b'd', b'o', b'n', b'e'],
             "close code and reason are preserved"
         );
+    }
+
+    #[tokio::test]
+    async fn downstream_close_bounds_an_unresponsive_upstream() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let _socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let server =
+            ProxyServer::new(test_options(format!("http://{address}").parse().unwrap())).unwrap();
+        let mut input =
+            frame_json(serde_json::json!({"v":1, "conn_id":"closing", "path":"/", "headers":[]}));
+        input.extend_from_slice(&[8, 0, 0, 0, 2, 3, 232]);
+        let stream = Arc::new(TestStream::new(input));
+        let result = tokio::time::timeout(
+            Duration::from_secs(4),
+            serve_websocket(&server.inner, &stream, CancellationToken::new()),
+        )
+        .await;
+        upstream.abort();
+        assert!(matches!(result, Ok(Err(ProxyServerError::OperationFailed))));
+        assert!(String::from_utf8_lossy(&stream.output()).contains("\"ok\":true"));
     }
 
     #[tokio::test]

@@ -24,6 +24,28 @@ extension TransportV3CarrierStream {
 }
 
 final class TransportV3SessionTests: XCTestCase {
+  func testCancelPublicReadReleasesOnlyItsStream() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    let (clientSession, serverSession) = try await (client, server)
+    let stream = try await OpaqueSessionV3(clientSession).openStream(kind: "idle")
+    _ = try await serverSession.acceptStream()
+    let finished = XCTestExpectation(description: "idle read canceled")
+    let reading = Task {
+      defer { finished.fulfill() }
+      do { _ = try await stream.read(maxBytes: 1); XCTFail("canceled read succeeded") }
+      catch { XCTAssertEqual(error as? SessionError, .canceled) }
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    reading.cancel()
+    await fulfillment(of: [finished], timeout: 2)
+    _ = try await clientSession.probeLiveness()
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testPublicWritePreservesSlicedDataAndDropsResetIncomingStream() async throws {
     let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
     let configs = try makeConfigs()

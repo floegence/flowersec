@@ -598,7 +598,7 @@ pub(crate) struct DecodedTunnelFsb3V3 {
     pub(crate) session_contract_hash_b64u: String,
 }
 
-pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<String, Fsb3DecodeErrorV3> {
+pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(String, String), Fsb3DecodeErrorV3> {
     let value = decode_fsb3_payload(raw, 1)?;
     let wire: DirectFsb3WireV3 =
         serde_json::from_value(value).map_err(|_| Fsb3DecodeErrorV3::Invalid)?;
@@ -618,7 +618,10 @@ pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<String, Fsb3DecodeErrorV3
         &wire.candidate_set_hash_b64u,
         &wire.chosen_candidate_id,
     )?;
-    Ok(wire.channel_id)
+    Ok((
+        wire.channel_id,
+        URL_SAFE_NO_PAD.encode(Sha256::digest(wire.routing_token.as_bytes())),
+    ))
 }
 
 pub(crate) fn decode_tunnel_fsb3(
@@ -2152,6 +2155,10 @@ mod tests {
             "wss://example.com/flowersec/v5/direct"
         );
         let frame = artifact.encode_fsb3("a").unwrap();
+        assert_eq!(
+            decode_direct_fsb3(&frame.raw).unwrap(),
+            ("channel".to_owned(), artifact.credential_lookup_key())
+        );
         assert_eq!(&frame.raw[..5], b"FSB5\x05");
         assert_eq!(
             frame.binding,

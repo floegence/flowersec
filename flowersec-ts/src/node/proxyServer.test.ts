@@ -39,6 +39,30 @@ function proxyExchange(kind: string, meta: object, readBody: () => Promise<Uint8
   return { incoming: { kind, stream, metadata: createStreamMetadata({}) }, replies };
 }
 
+test("requires a single forwarded Origin", async () => {
+  const origin = "http://127.0.0.1:8080";
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, allowedOrigins: [origin], extraRequestHeaders: ["origin"] });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    for (const names of [["origin", "Origin"], ["Origin"]]) {
+      let ended = false;
+      const exchange = proxyExchange(kind, { method: "GET", path: "/", request_id: "origin", external_origin: origin,
+        headers: names.map(name => ({ name, value: origin })) }, async () => {
+        if (ended) return null;
+        ended = true;
+        return u32be(0);
+      });
+      await handle(exchange.incoming, {});
+      expect(Buffer.concat(exchange.replies).toString()).toContain(names.length === 1 ? '"ok":true' : '"invalid_request_meta"');
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ headers: expect.objectContaining({ origin }) }));
+  } finally { vi.unstubAllGlobals(); await server.close(); }
+});
+
 test.each(["HEAD", "interrupted GET"])("preserves HTTP response framing for %s", async (scenario) => {
   const head = scenario === "HEAD";
   const origin = "http://[::1]:8080";

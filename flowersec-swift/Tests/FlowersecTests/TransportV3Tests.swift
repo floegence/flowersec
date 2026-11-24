@@ -16,6 +16,8 @@ struct TransportV3Tests {
     #expect(
       artifact.canonicalCandidates[0].normalizedURL == "wss://example.com/flowersec/v5/direct")
     let encoded = try AdmissionCodecV3.encodeFSB5(artifact: artifact, chosenCandidateID: "a")
+    let admission = try AdmissionCodecV3.decodeFSB5(encoded.frame)
+    #expect(admission.lookupKey == Data(SHA256.hash(data: Data("token".utf8))).base64URLEncodedStringV3())
     #expect(encoded.frame.prefix(5) == Data("FSB5".utf8) + Data([5]))
     var expected = Data("flowersec-v5-admission\0".utf8)
     expected.append(encoded.frame)

@@ -27,6 +27,7 @@ struct EncodedFSB5: Equatable, Sendable {
 
 struct DecodedFSB5: Equatable, Sendable {
   let pathKind: String
+  let lookupKey: String
   let channelID: String
   let chosenCandidateID: String
   let frame: Data
@@ -35,7 +36,6 @@ struct DecodedFSB5: Equatable, Sendable {
 }
 
 struct TunnelAdmissionV3: Equatable, Sendable {
-  let lookupKey: String
   let role: UInt64
   let localID: String
   let audience: String
@@ -190,23 +190,20 @@ enum AdmissionCodecV3 {
         == FlowersecJCSV3.canonical32(candidateHash)
     else { throw AdmissionCodecErrorV3.invalid }
     var tunnel: TunnelAdmissionV3?
-    if pathKind == "direct" {
-      guard let token = object["routing_token"] as? String, ascii(token, maximum: 8_192) else {
-        throw AdmissionCodecErrorV3.invalid
-      }
-    } else {
-      guard let token = object["attach_token"] as? String, ascii(token, maximum: 8_192),
-        let endpoint = object["endpoint_instance_id"] as? String,
+    guard let token = object[pathKind == "direct" ? "routing_token" : "attach_token"] as? String,
+      ascii(token, maximum: 8_192) else { throw AdmissionCodecErrorV3.invalid }
+    if pathKind == "tunnel" {
+      guard let endpoint = object["endpoint_instance_id"] as? String,
         registryID(endpoint, maximum: 128),
         let role = unsignedInteger(object["role"]), role == 1 || role == 2
       else { throw AdmissionCodecErrorV3.invalid }
-      tunnel = TunnelAdmissionV3(lookupKey: Data(SHA256.hash(data: Data(token.utf8))).base64URLEncodedStringV3(),
-        role: role, localID: endpoint, audience: listener, group: groupID, contract: sessionHash, candidate: selected)
+      tunnel = TunnelAdmissionV3(role: role, localID: endpoint, audience: listener, group: groupID, contract: sessionHash, candidate: selected)
     }
     var bindingInput = Data(TransportV3Contract.admissionLabel.utf8)
     bindingInput.append(frame)
     return DecodedFSB5(
-      pathKind: pathKind, channelID: channelID, chosenCandidateID: chosen, frame: frame,
+      pathKind: pathKind, lookupKey: Data(SHA256.hash(data: Data(token.utf8))).base64URLEncodedStringV3(),
+      channelID: channelID, chosenCandidateID: chosen, frame: frame,
       admissionBinding: Data(SHA256.hash(data: bindingInput)), tunnel: tunnel)
   }
 
