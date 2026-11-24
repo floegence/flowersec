@@ -44,6 +44,7 @@ test("authoritative config rejects floating, missing and unknown version fields"
   for (const mutate of [
     (config) => { config.rust.version = "stable"; },
     (config) => { config.rust.nightly = "nightly"; },
+    (config) => { config.securityModels.tlaSha256 = "unspecified"; },
     (config) => { delete config.go.version; },
     (config) => { config.node.fallback = "latest"; },
     (config) => { config.node.minimum = "99.0.0"; },

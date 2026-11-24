@@ -1,0 +1,187 @@
+theory Handshake
+begin
+builtins: diffie-hellman, hashing, symmetric-encryption
+functions: extract/2, confirm/3, derive/2, material/5
+
+rule IssueDirect:
+  let frame = <'direct',~token,contract,ingress,policy>
+      binding = h(<'admission',frame>)
+  in
+  [ Fr(~psk), In(<contract,ingress,policy>), Fr(~token) ]
+  --> [ Client('direct',~psk,contract,'empty','empty',binding),
+        Server('direct',~psk,contract,'empty','empty',binding),
+        Invitation(frame,ingress,policy), Record(frame,ingress,policy,'direct','direct','empty','empty') ]
+
+rule IssueTunnel:
+  let partition = <scope,contract,routing>
+      left = <'tunnel',~first,contract,routing,'client',client,leftIngress,leftPolicy>
+      right = <'tunnel',~second,contract,routing,'server',server,rightIngress,rightPolicy>
+  in
+  [ Fr(~psk), In(<scope,contract,routing,client,server,leftIngress,rightIngress,leftPolicy,rightPolicy>),
+    Fr(~first), Fr(~second) ]
+  --[ DistinctEndpoints(client,server) ]->
+  [ Client('tunnel',~psk,contract,client,server,h(<'admission',left>)),
+    Server('tunnel',~psk,contract,client,server,h(<'admission',right>)),
+    Invitation(left,leftIngress,leftPolicy), Invitation(right,rightIngress,rightPolicy),
+    Record(left,leftIngress,leftPolicy,partition,'client',client,server),
+    Record(right,rightIngress,rightPolicy,partition,'server',server,client) ]
+
+rule VerifyTLS:
+  [ Invitation(frame,ingress,policy) ]
+  --[ Verified(h(<'admission',frame>),ingress,policy) ]-> [ Ready(frame,ingress,policy) ]
+
+rule DurableSpend:
+  [ Ready(frame,ingress,policy) ]
+  --[ Spent(h(<'admission',frame>)) ]-> [ Confirmed(frame,ingress,policy) ]
+
+rule WriteAdmission:
+  [ Confirmed(frame,ingress,policy) ]
+  --[ Written(h(<'admission',frame>)) ]-> [ Arrival(frame,ingress,policy), Out(frame) ]
+
+rule AuthorizeLeg:
+  let binding = h(<'admission',frame>) in
+  [ Record(frame,ingress,policy,partition,role,own,peer), Arrival(frame,ingress,policy) ]
+  --[ Admitted(binding,ingress,policy), LegIssued(binding,partition,role,own,peer,ingress) ]->
+  [ Leg(binding,partition,role,own,peer,ingress) ]
+
+rule DirectRoute:
+  [ Leg(binding,'direct','direct','empty','empty',ingress), Fr(~route) ]
+  --[ DirectReady(~route,binding) ]->
+  [ StartClient(~route,binding), StartServer(~route,binding), !Route(~route) ]
+
+rule Pair:
+  [ Leg(left,partition,'client',client,server,leftIngress),
+    Leg(right,partition,'server',server,client,rightIngress), Fr(~route) ]
+  --[ Paired(left,right), TunnelReady(~route,left,right), DistinctEndpoints(client,server) ]->
+  [ StartClient(~route,left), StartServer(~route,right), !Route(~route) ]
+
+#ifdef ACTIVE_RELAY
+rule RelayForwardingOnly:
+  let frame = <'tunnel',token,contract,routing,role,own,ingress,policy> in
+  [ Arrival(frame,ingress,policy), Fr(~route) ] -->
+  [ StartClient(~route,h(<'admission',frame>)), StartServer(~route,h(<'admission',frame>)), !Route(~route) ]
+
+rule Observe:
+  [ Outgoing(route,message) ] --> [ Out(message) ]
+
+rule Deliver:
+  [ !Route(route), In(message) ] --> [ Incoming(route,message) ]
+#else
+rule Forward:
+  [ Outgoing(route,message) ] --> [ Incoming(route,message), Out(message) ]
+#endif
+
+rule ClientInit:
+  let init = <'init',contract,client,local,'g'^~exponent>
+  in
+  [ Client(path,psk,contract,client,server,local), StartClient(route,local), Fr(~exponent) ]
+  --> [ WaitingClient(path,psk,contract,client,server,local,~exponent,init,route), Outgoing(route,init) ]
+
+rule ServerFinished:
+  let init = <'init',contract,client,remote,clientDH>
+      core = <'server',contract,server,local,'g'^~exponent,~handshake>
+      transcript = h(<h(<'v5',init>),core>)
+      key = extract(psk,clientDH^~exponent)
+      finished = <core,confirm('server',key,transcript)>
+  in
+  [ Server(path,psk,contract,client,server,local), StartServer(route,local), Incoming(route,init), Fr(~exponent), Fr(~handshake) ]
+  --[ CheckBinding(path,local,remote), Offered(path,client,server,transcript) ]->
+  [ WaitingServer(path,client,server,transcript,finished,key,~handshake,route,local,remote), Outgoing(route,finished) ]
+
+rule ClientFinished:
+  let core = <'server',contract,server,remote,serverDH,handshake>
+      transcript = h(<h(<'v5',init>),core>)
+      key = extract(psk,serverDH^exponent)
+      finished = <core,confirm('server',key,transcript)>
+      htwo = h(<transcript,finished,handshake>)
+      reply = <handshake,confirm('client',key,htwo)>
+      session = derive(h(<htwo,reply>),key)
+  in
+  [ WaitingClient(path,psk,contract,client,server,local,exponent,init,route), Incoming(route,finished) ]
+  --[ CheckBinding(path,local,remote), ClientDone(path,client,server,transcript,session),
+      Bound(path,route,local,remote,session) ]-> [ Outgoing(route,reply),
+      !SealKey(session,'c2s'), !OpenKey(session,'s2c') ]
+
+rule ServerAccept:
+  let htwo = h(<transcript,finished,handshake>)
+      reply = <handshake,confirm('client',key,htwo)>
+      session = derive(h(<htwo,reply>),key)
+  in
+  [ WaitingServer(path,client,server,transcript,finished,key,handshake,route,local,remote), Incoming(route,reply) ]
+  --[ ServerDone(path,client,server,transcript,session), Bound(path,route,remote,local,session) ]->
+  [ !SealKey(session,'s2c'), !OpenKey(session,'c2s') ]
+
+#ifdef ACTIVE_RELAY
+rule SealRecord:
+  let header = <direction,family,stream,epoch,sequence>
+      key = material(session,direction,family,stream,epoch)
+  in
+  [ !SealKey(session,direction), In(<family,stream,epoch,sequence>), Fr(~plain) ]
+  --[ Sealed(session,header,~plain) ]-> [ Out(<header,senc(<header,~plain>,key)>) ]
+
+rule OpenRecord:
+  let header = <direction,family,stream,epoch,sequence>
+      key = material(session,direction,family,stream,epoch)
+  in
+  [ !OpenKey(session,direction), In(<header,senc(<header,plain>,key)>) ]
+  --[ Opened(session,header,plain) ]-> []
+#endif
+
+restriction DirectBinding:
+  "All local remote #i. CheckBinding('direct',local,remote)@i ==> local = remote"
+
+restriction DistinctEndpoints:
+  "All client server #i. DistinctEndpoints(client,server)@i ==> not (client = server)"
+
+lemma direct_completes: exists-trace
+  "Ex c s tr key #i #j. ClientDone('direct',c,s,tr,key)@i & ServerDone('direct',c,s,tr,key)@j"
+
+lemma tunnel_completes: exists-trace
+  "Ex c s tr key #i #j. ClientDone('tunnel',c,s,tr,key)@i & ServerDone('tunnel',c,s,tr,key)@j"
+
+lemma disjoint_ingresses_pair: exists-trace
+  "Ex l r part c s a b #i #j #k. LegIssued(l,part,'client',c,s,a)@i &
+   LegIssued(r,part,'server',s,c,b)@j & Paired(l,r)@k & not (a = b)"
+
+lemma pair_authority_and_identity:
+  "All l r #k. Paired(l,r)@k ==> (Ex part c s a b #i #j.
+   LegIssued(l,part,'client',c,s,a)@i & LegIssued(r,part,'server',s,c,b)@j & i<k & j<k)"
+
+lemma admission_provenance [reuse]:
+  "All b ingress policy #i. Admitted(b,ingress,policy)@i ==>
+    (Ex #v #s #w. Verified(b,ingress,policy)@v & Spent(b)@s & Written(b)@w & v<s & s<w & w<i)"
+
+#ifdef ACTIVE_RELAY
+lemma admission_once:
+  "All b e p f q #i #j. Admitted(b,e,p)@i & Admitted(b,f,q)@j ==> #i=#j"
+
+lemma client_authenticates_server:
+  "All p c s tr key #i. ClientDone(p,c,s,tr,key)@i ==> (Ex #j. Offered(p,c,s,tr)@j & j<i)"
+
+lemma direct_requires_admission:
+  "All r l b key #i. Bound('direct',r,l,b,key)@i ==> l=b &
+    (Ex e p #a #j. Admitted(l,e,p)@a & DirectReady(r,l)@j & a<j & j<i)"
+
+lemma server_authenticates_client:
+  "All p c s tr key #i. ServerDone(p,c,s,tr,key)@i ==> (Ex #j. ClientDone(p,c,s,tr,key)@j & j<i)"
+
+lemma unique_server_completion:
+  "All p c s tr key #i #j. ServerDone(p,c,s,tr,key)@i & ServerDone(p,c,s,tr,key)@j ==> #i=#j"
+
+lemma session_key_secrecy [reuse]:
+  "All p c s tr key #i. ClientDone(p,c,s,tr,key)@i ==> not (Ex #j. K(key)@j)"
+
+lemma authenticated_record_context [reuse]:
+  "All key h m #i. Opened(key,h,m)@i ==> (Ex #j. Sealed(key,h,m)@j & j<i)"
+
+lemma record_round_trip: exists-trace
+  "Ex key hc hs mc ms #i #j. Opened(key,<'c2s',hc>,mc)@i & Opened(key,<'s2c',hs>,ms)@j"
+
+lemma confidential_payload:
+  "All key h m #i. Sealed(key,h,m)@i ==> not (Ex #j. K(m)@j)"
+#else
+lemma routed_tunnel_requires_both_admissions:
+  "All r l b key #i. Bound('tunnel',r,l,b,key)@i ==>
+    (Ex e p f q #a #z #j. Admitted(l,e,p)@a & Admitted(b,f,q)@z & TunnelReady(r,l,b)@j & a<j & z<j & j<i)"
+#endif
+end

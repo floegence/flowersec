@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/floegence/flowersec/flowersec-go/v7 v7.1.0
+	github.com/gorilla/websocket v1.5.3
 	modernc.org/sqlite v1.60.1
 )
 
@@ -12,7 +13,6 @@ require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/libp2p/go-buffer-pool v0.0.2 // indirect
 	github.com/libp2p/go-yamux/v5 v5.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

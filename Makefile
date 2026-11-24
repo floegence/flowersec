@@ -220,6 +220,31 @@ test-resume:
 coverage-race:
 	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race
 
+.PHONY: security-v5-model-check security-v5-acceptance security-v5-go security-v5-rust security-v5-ts security-v5-swift
+security-v5-model-check:
+	python3 scripts/check-v5-security-models.py
+
+security-v5-acceptance: security-v5-model-check security-v5-go security-v5-rust security-v5-ts security-v5-swift
+
+security-v5-go:
+	node scripts/toolchains.mjs --check-runtime node go
+	go -C flowersec-go/adapters/sqlite test -timeout=2m -count=1 .
+	go -C flowersec-go test -timeout=2m -count=1 ./internal/protocolv3 ./internal/tunnelv3 ./internal/transportsecurity ./internal/sessionv3 ./internal/artifactv3 ./internal/admissionv3
+	go -C flowersec-go test -timeout=2m -count=1 -run '^Test(ConnectionController|TunnelPairing|Invitation|DirectIngress|HTTPDirect|IssueHTTPDirect|PrivateLoopback|PublicArtifactParserRejectsPrivateLoopback)' .
+	go -C flowersec-go test -timeout=2m -count=1 ./internal/httpdirectv1
+
+security-v5-rust:
+	node scripts/toolchains.mjs --check-runtime node rust
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --lib session_v3
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --lib rust_consumes_transport_v5_crypto_vectors
+
+security-v5-ts: ts-build
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v3 src/browser/httpDirectV1.test.ts src/browser/privateLoopbackV1.test.ts
+
+security-v5-swift:
+	node scripts/toolchains.mjs --check-runtime node swift
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter 'TransportV3(HandshakeVector|Crypto|Session)Tests'
+
 browser-smoke:
 	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke
 
@@ -567,6 +592,7 @@ go-cover-check:
 	cd tools/stabilitycheck && go run . verify-go-coverage
 
 nightly-check:
+	$(MAKE) security-v5-model-check
 	$(MAKE) ts-ci
 	$(MAKE) stability-check
 	$(MAKE) rust-release-check

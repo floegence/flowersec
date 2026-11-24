@@ -251,7 +251,7 @@ func (s *engineSession) unreliableSendRoots() (uint32, protocolv3.EpochRoots, er
 func (s *engineSession) unreliableReceiveRoots(epoch uint32) (protocolv3.EpochRoots, bool) {
 	s.cryptoMu.RLock()
 	defer s.cryptoMu.RUnlock()
-	if epoch > s.recvSessionEpoch {
+	if epoch > s.recvSessionEpoch || s.recvSessionEpoch-epoch > 1 {
 		return protocolv3.EpochRoots{}, false
 	}
 	roots, ok := s.recvRoots[epoch]

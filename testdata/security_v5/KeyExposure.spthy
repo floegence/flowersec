@@ -1,0 +1,36 @@
+theory KeyExposure
+begin
+builtins: diffie-hellman, hashing
+functions: extract/2, confirm/3, derive/2, directional/2, successor/2
+
+rule MatchedExchange:
+  let shares = <'g'^~client,'g'^~server>
+      transcript = h(<context,shares>)
+      prk = extract(~psk,('g'^~client)^~server)
+      sfin = confirm('server',prk,transcript)
+      cfin = confirm('client',prk,h(<transcript,sfin>))
+      finalHash = h(<transcript,sfin,cfin>)
+      session = derive(finalHash,prk)
+      forward = directional(session,'c2s')
+      reverse = directional(session,'s2c')
+  in
+  [ In(context), Fr(~psk), Fr(~client), Fr(~server) ]
+  --[ Established(session,~psk,forward,reverse,finalHash) ]->
+  [ Out(<shares,sfin,cfin,finalHash>), Credential(session,~psk), Root(session,forward) ]
+
+rule RevealCredential:
+  [ Credential(session,psk) ] --[ Disclosed(session,psk) ]-> [ Out(psk) ]
+
+rule RevealDirectionalRoot:
+  [ Root(session,root) ] --[ RootExposed(session,root) ]-> [ Out(root) ]
+
+lemma past_session_secret:
+  "All key psk f r tr #i. Established(key,psk,f,r,tr)@i ==> not (Ex #j. K(key)@j)"
+
+lemma opposite_direction_secret:
+  "All key psk f r tr #i. Established(key,psk,f,r,tr)@i ==> not (Ex #j. K(r)@j)"
+
+lemma exposure_boundary: exists-trace
+  "Ex key psk f r tr #i #a #b #c #d. Established(key,psk,f,r,tr)@i & Disclosed(key,psk)@a &
+   RootExposed(key,f)@b & K(psk)@c & K(successor(f,tr))@d & i<a & i<b & a<c & b<d"
+end

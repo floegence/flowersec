@@ -10,6 +10,7 @@ const fields = {
   go: ["version", "minimum"], rust: ["version", "msrv", "nightly"],
   node: ["version", "minimum"], swift: ["version", "xcode", "toolsVersion"],
   typescript: ["version", "apiVersion", "compatibilityVersion"],
+  securityModels: ["tlaTools", "tlaSha256", "tamarin", "maude", "z3"],
 };
 
 export function readToolchains(root = repositoryRoot) {
@@ -20,7 +21,7 @@ export function readToolchains(root = repositoryRoot) {
   for (const [language, keys] of Object.entries(fields)) {
     if (!sameKeys(config[language], keys)) throw new Error(`toolchains.json has invalid ${language} fields`);
     for (const key of keys) {
-      const pattern = key === "nightly" ? /^nightly-\d{4}-\d{2}-\d{2}$/
+      const pattern = key === "tlaSha256" ? /^[a-f0-9]{64}$/ : key === "nightly" ? /^nightly-\d{4}-\d{2}-\d{2}$/
         : key === "toolsVersion" ? /^\d+\.\d+$/ : /^\d+\.\d+\.\d+$/;
       if (typeof config[language][key] !== "string" || !pattern.test(config[language][key])) {
         throw new Error(`toolchains.json ${language}.${key} must be an exact version`);

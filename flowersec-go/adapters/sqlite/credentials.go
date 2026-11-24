@@ -16,8 +16,12 @@ func (store *Store) Lease(artifact flowersec.Artifact) (flowersec.ArtifactLease,
 		return flowersec.ArtifactLease{}, errors.New("sqlite: missing store or credential")
 	}
 	return flowersec.NewArtifactLease(artifact, func(ctx context.Context) error {
-		return store.writeOne(ctx, "INSERT INTO client_spends (credential) VALUES (?)", key)
+		return store.spend(ctx, key)
 	})
+}
+
+func (store *Store) spend(ctx context.Context, key string) error {
+	return store.writeOne(ctx, "INSERT INTO client_spends (credential) VALUES (?)", key)
 }
 
 // Publish persists the issuer's authorization record before the host distributes

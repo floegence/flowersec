@@ -1390,7 +1390,7 @@ fn record_unreliable_sequence_v3(
 }
 
 fn unreliable_receive_epoch_is_committed_v3(recv_epoch: u32, message_epoch: u32) -> bool {
-    message_epoch <= recv_epoch
+    message_epoch <= recv_epoch && recv_epoch - message_epoch <= 1
 }
 
 fn is_previous_version_unreliable_datagram_v3(wire: &[u8]) -> bool {
@@ -7416,7 +7416,13 @@ mod tests {
     fn unreliable_replay_state_rejects_future_epochs_and_keeps_two_windows() {
         assert!(unreliable_receive_epoch_is_committed_v3(2, 2));
         assert!(unreliable_receive_epoch_is_committed_v3(2, 1));
+        assert!(!unreliable_receive_epoch_is_committed_v3(2, 0));
         assert!(!unreliable_receive_epoch_is_committed_v3(2, 3));
+        assert!(unreliable_receive_epoch_is_committed_v3(
+            u32::MAX,
+            u32::MAX - 1
+        ));
+        assert!(!unreliable_receive_epoch_is_committed_v3(u32::MAX, 0));
 
         let mut replay = HashMap::new();
         for epoch in 0..4 {

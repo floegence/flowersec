@@ -11,6 +11,8 @@ instances, namespaces, faults, and temporary files that they create.
 | TLS policy canonicalization, candidate identity, candidate-set hash, FSB5, and admission binding | `testdata/transport_v5/artifact_vectors.json` and per-language v5 codec suites |
 | Go issuer artifact, FSB5, admission binding, and acceptor-admissions hash parity | `testdata/transport_v5/go_issuer_admission_vectors.json`, produced by the Go issuer and consumed by Go, TypeScript, Rust, and Swift |
 | Strict previous-version rejection and current codec isolation | `testdata/transport_v5/version_isolation_vectors.json`, consumed by production decoders in Go, TypeScript, Rust, and Swift |
+| Single-use credentials across process failure, restart and concurrent direct WSS admission | `protocol/v5-credential-sqlite-go` runs the production Go connector and SQLite adapter against a byte observer and a production acceptor |
+| Admission and profile isolation, key disclosure, handshake and record security, overlapping rekeys, replay and tunnel termination | `make security-v5-acceptance` runs the Go, Rust, Swift and TypeScript suites and the [Flowersec 7 protocol security models](V5_SECURITY_ACCEPTANCE.md). `make nightly-check` includes the model checks. |
 | CA, private-CA, self-signed pin, mismatch, expiry, and overlap rotation | Production transport-security adapters and real TLS handshake suites in each supported runtime |
 | Runtime security-mode capability and unsupported-candidate filtering | `testdata/transport_v5/capability_vectors.json`, production adapter capability tests, and Chromium provider tests |
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |

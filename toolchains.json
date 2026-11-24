@@ -3,5 +3,6 @@
   "rust": { "version": "1.98.0", "msrv": "1.88.0", "nightly": "nightly-2026-09-01" },
   "node": { "version": "26.8.1", "minimum": "24.20.0" },
   "swift": { "version": "6.3.1", "xcode": "26.4.1", "toolsVersion": "6.1" },
-  "typescript": { "version": "7.0.2", "apiVersion": "6.0.2", "compatibilityVersion": "6.0.3" }
+  "typescript": { "version": "7.0.2", "apiVersion": "6.0.2", "compatibilityVersion": "6.0.3" },
+  "securityModels": { "tlaTools": "1.7.4", "tlaSha256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88", "tamarin": "1.12.0", "maude": "3.5.1", "z3": "4.13.3" }
 }

@@ -89,7 +89,7 @@ struct HTTPDirectV1Tests {
     #expect(await counter.retired == 2)
   }
 
-  @Test func ordinaryAppleAdapterKeepsTLSRequired() throws {
+  @Test func ordinaryTLSProviderRequiresCanonicalSecureOrigin() throws {
     for origin in ["https://localhost", "https://127.0.0.1:9443", "https://example.com"] {
       let provider = try TLSChannelProvider(origin: URL(string: origin)!) { _ in
         throw CancellationError()
@@ -111,6 +111,10 @@ struct HTTPDirectV1Tests {
         try TLSChannelProvider(origin: URL(string: origin)!) { _ in throw CancellationError() }
       }
     }
+  }
+
+  #if os(macOS) || os(iOS)
+  @Test func ordinaryAppleAdapterKeepsTLSRequired() throws {
     let adapter = AppleWebSocketRuntimeAdapterV3()
     #expect(adapter.httpDirectEndpoint == nil)
     let http = AppleWebSocketRuntimeAdapterV3(
@@ -119,6 +123,7 @@ struct HTTPDirectV1Tests {
       try http.validate(options: ConnectorOptions(origin: "https://127.0.0.1"))
     }
   }
+  #endif
 
   private func privateVector() throws -> Data {
     let rootURL = URL(fileURLWithPath: #filePath)

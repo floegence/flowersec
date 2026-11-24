@@ -15,6 +15,7 @@ commands use the Node version selected by `actions/setup-node` from this policy.
 | Rust | `rust.version` | Root `rust-toolchain.toml`, local gates, native addons, probes, and publication |
 | Rust minimum | `rust.msrv` | Dedicated MSRV checks for all three published Rust crates |
 | Rust fuzzing | `rust.nightly` | Explicit fuzz target using a dated nightly |
+| Protocol models | `securityModels` | TLA+ release jar and SHA-256, Tamarin, Maude and Z3 for the v5 model and nightly checks. See [v5 security acceptance](V5_SECURITY_ACCEPTANCE.md). |
 | Node | `node.version` | `.nvmrc`, primary CI, local gates, and publication |
 | Node minimum | `node.minimum` | Published SDK engine requirements and local compatibility tests in `make check` |
 | Swift | `swift.version`, `swift.xcode` | Explicit Xcode selection on macOS, including CodeQL; signed Swift release on Linux |

@@ -1,0 +1,44 @@
+theory Enrollment
+begin
+builtins: hashing, symmetric-encryption
+functions: proof/3, transport/4
+
+rule Issue:
+  [ Fr(~code) ] --> [ !Invitation(h(<'lookup',~code>),~code), Out(h(<'lookup',~code>)) ]
+
+rule Start:
+  let context = <'enrollment',purpose,locator> in
+  [ !Invitation(locator,code), In(purpose), Fr(~client) ] -->
+  [ WaitClient(context,code,~client), Out(<context,~client,proof('client',code,<context,~client>)>) ]
+
+rule Challenge:
+  let context = <'enrollment',purpose,locator>
+      key = transport(code,context,client,~server)
+  in
+  [ !Invitation(locator,code), In(<context,client,proof('client',code,<context,client>)>), Fr(~server) ] -->
+  [ WaitServer(context,key), Out(<~server,proof('server',key,context)>) ]
+
+rule Confirm:
+  let key = transport(code,context,client,server) in
+  [ WaitClient(context,code,client), In(<server,proof('server',key,context)>) ]
+  --[ Confirmed(context,key) ]-> [ ReceiveResult(context,key), Out(senc(<'confirm',context>,key)) ]
+
+rule Describe:
+  [ WaitServer(context,key), In(senc(<'confirm',context>,key)), Fr(~descriptor) ]
+  --[ Described(context,key,~descriptor) ]-> [ Out(senc(<'descriptor',context,~descriptor>,key)) ]
+
+rule Receive:
+  [ ReceiveResult(context,key), In(senc(<'descriptor',context,descriptor>,key)) ]
+  --[ Received(context,key,descriptor) ]-> []
+
+lemma descriptor_reachable: exists-trace
+  "Ex ctx key d #i. Received(ctx,key,d)@i"
+lemma confirm_before_describe:
+  "All ctx key d #i. Described(ctx,key,d)@i ==> (Ex #j. Confirmed(ctx,key)@j & j<i)"
+lemma one_description_per_exchange:
+  "All ctx key d e #i #j. Described(ctx,key,d)@i & Described(ctx,key,e)@j ==> #i=#j"
+lemma descriptor_origin:
+  "All ctx key d #i. Received(ctx,key,d)@i ==> (Ex #j. Described(ctx,key,d)@j & j<i)"
+lemma descriptor_secrecy:
+  "All ctx key d #i. Described(ctx,key,d)@i ==> not (Ex #j. K(d)@j)"
+end
