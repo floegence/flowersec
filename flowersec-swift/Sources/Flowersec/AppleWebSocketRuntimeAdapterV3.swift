@@ -406,10 +406,11 @@ import Foundation
     }
   }
 
-  private actor WebSocketYamuxChannelV3: FlowersecYamuxChannel {
+  actor WebSocketYamuxChannelV3: FlowersecYamuxChannel {
     private let transport: any FlowersecBinaryTransport
     private var buffer = Data()
     private var offset = 0
+    var bufferedStorageBytes: Int { buffer.count }
 
     init(transport: any FlowersecBinaryTransport) { self.transport = transport }
 
@@ -423,7 +424,10 @@ import Foundation
       let output = Data(buffer[offset..<end])
       offset = end
       if offset == buffer.count {
-        buffer.removeAll(keepingCapacity: true)
+        buffer.removeAll()
+        offset = 0
+      } else if offset >= 64 * 1024, buffer.count - offset <= offset {
+        buffer.removeSubrange(0..<offset)
         offset = 0
       }
       return output

@@ -363,13 +363,31 @@ export class ProxyServer {
     }
   }
 
-  async #serveWebSocket(stream: ByteStream, signal: AbortSignal): Promise<void> {
+  async #serveWebSocket(stream: ByteStream, parent: AbortSignal): Promise<void> {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new SessionError("timeout")), this.#config.maxTimeout);
+    const signal = AbortSignal.any([parent, deadline.signal]);
+    let resetting: Promise<void> | undefined;
+    const abort = () => { resetting ??= stream.reset().catch(() => undefined); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal.aborted) { abort(); return; }
+      await this.#runWebSocket(stream, signal, () => clearTimeout(timer));
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      await resetting;
+    }
+  }
+
+  async #runWebSocket(stream: ByteStream, signal: AbortSignal, established: () => void): Promise<void> {
     const reader = new ProxyByteReader(stream, { signal });
     let open: WSOpen;
     try { open = decodeWSOpen(await readFrame(reader, this.#config.maxJSON)); }
-    catch { await writeWSError(stream, "unknown", "invalid_ws_open_meta"); return; }
+    catch { if (!signal.aborted) await writeWSError(stream, "unknown", "invalid_ws_open_meta", signal); return; }
     const upstreamURL = resolveProxyTarget(this.#config.upstream, open.path);
-    if (open.v !== WIRE_VERSION || open.conn_id.trim() === "" || upstreamURL === undefined) { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
+    if (open.v !== WIRE_VERSION || open.conn_id.trim() === "" || upstreamURL === undefined) { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta", signal); return; }
+    signal.throwIfAborted();
     upstreamURL.protocol = upstreamURL.protocol === "https:" ? "wss:" : "ws:";
     const require = createRequire(import.meta.url);
     const wsModule = require("ws") as any;
@@ -386,16 +404,25 @@ export class ProxyServer {
       perMessageDeflate: false,
     });
     let opened = false;
+    const socketClosed = new Promise<void>((resolve) => socket.once("close", resolve));
+    socket.on("error", () => {});
+    const terminate = () => socket.terminate();
+    signal.addEventListener("abort", terminate, { once: true });
     try {
       await onceEvent(socket, "open", signal);
       await writeFrame(stream, { v: WIRE_VERSION, conn_id: open.conn_id.trim(), ok: true, protocol: socket.protocol ?? "" }, signal);
       opened = true;
+      if (socket.readyState !== WebSocketCtor.OPEN) return;
+      established();
       await relayWebSocket(socket, stream, reader, this.#config.maxWS, signal);
     } catch (error) {
-      if (!opened) await writeWSError(stream, open.conn_id, signal.aborted ? "canceled" : "upstream_ws_dial_failed");
+      if (!opened && !signal.aborted) await writeWSError(stream, open.conn_id, "upstream_ws_dial_failed", signal);
       this.#report(error);
     } finally {
-      try { socket.close(); } catch { /* cleanup */ }
+      if (signal.aborted || !opened) socket.terminate();
+      else socket.close();
+      await socketClosed;
+      signal.removeEventListener("abort", terminate);
       await stream.close().catch(() => undefined);
     }
   }
@@ -495,8 +522,8 @@ async function writeHTTPError(stream: ByteStream, requestID: string, code: strin
   await writeFrame(stream, { v: WIRE_VERSION, request_id: requestID.trim() || "unknown", ok: false, error: { code, message: "proxy operation failed" } }).catch(() => undefined);
   await writeChunks(stream, new Uint8Array(), 1, undefined).catch(() => undefined);
 }
-async function writeWSError(stream: ByteStream, connID: string, code: string): Promise<void> {
-  await writeFrame(stream, { v: WIRE_VERSION, conn_id: connID.trim() || "unknown", ok: false, error: { code, message: "proxy operation failed" } }).catch(() => undefined);
+async function writeWSError(stream: ByteStream, connID: string, code: string, signal: AbortSignal): Promise<void> {
+  await writeFrame(stream, { v: WIRE_VERSION, conn_id: connID.trim() || "unknown", ok: false, error: { code, message: "proxy operation failed" } }, signal).catch(() => undefined);
 }
 async function writeChunks(stream: ByteStream, body: Uint8Array, chunkSize: number, signal?: AbortSignal): Promise<void> {
   for (let offset = 0; offset < body.length; offset += chunkSize) {

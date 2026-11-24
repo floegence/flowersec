@@ -1192,6 +1192,31 @@ final class TransportV3SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testProbeDeadlineIncludesTheOutgoingWrite() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = StallableWriteCarrierSession(
+      base: clientBase, blocker: blocker, blockOpenStreamNumber: 1)
+    var configs = try makeConfigs()
+    configs.client.deadlines.liveness = .milliseconds(25)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (local, remote) = try await (client, server)
+    await blocker.enable(afterSuccessfulWrites: 0)
+    let fallback = Task { try await Task.sleep(for: .seconds(2)); await blocker.release() }
+    defer { fallback.cancel() }
+    do {
+      _ = try await local.probeLiveness()
+      XCTFail("a stalled PING write outlived its deadline")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .livenessFailed)
+    }
+    try? await local.close()
+    try? await remote.close()
+  }
+
   func testCancellingQueuedRekeyRemovesOnlyThatCaller() async throws {
     let gate = FirstReadGate()
     let (clientBase, serverCarrier) = MemoryCarrierSession.pair()

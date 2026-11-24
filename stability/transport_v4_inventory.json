@@ -682,8 +682,8 @@
     {
       "path": "flowersec-rust/src/session_v3.rs",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 31,
-      "matching_lines": 990
+      "first_matching_line": 33,
+      "matching_lines": 997
     },
     {
       "path": "flowersec-rust/src/tls_v3.rs",

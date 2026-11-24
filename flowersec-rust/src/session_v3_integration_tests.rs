@@ -3433,6 +3433,19 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
     tokio::time::timeout(Duration::from_secs(1), write_entered.notified())
         .await
         .expect("open never reached blocked FSS5 write");
+    gate.store(false, Ordering::Release);
+    let (stream, incoming) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(
+            client.open_stream("concurrent-setup", StreamMetadata::empty()),
+            server.accept_stream(),
+        )
+    })
+    .await
+    .expect("independent OPEN waited for the stalled stream");
+    let stream = stream.expect("concurrent stream");
+    let incoming = incoming.expect("concurrent incoming");
+    assert_eq!(stream.internal_test_id(), 3);
+    assert_eq!(incoming.internal_test_id(), 3);
     opening.abort();
     assert!(
         opening
@@ -3440,15 +3453,15 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
             .expect_err("open task must be canceled")
             .is_cancelled()
     );
-    gate.store(false, Ordering::Release);
     release_write.notify_waiters();
-
-    let (stream, incoming) = tokio::join!(
+    drop(stream);
+    drop(incoming);
+    let (later, accepted) = tokio::join!(
         client.open_stream("after-cancel", StreamMetadata::empty()),
         server.accept_stream(),
     );
-    assert_eq!(stream.expect("later stream").internal_test_id(), 3);
-    assert_eq!(incoming.expect("later incoming").internal_test_id(), 3);
+    assert_eq!(later.expect("later stream").internal_test_id(), 5);
+    assert_eq!(accepted.expect("later incoming").internal_test_id(), 5);
     tokio::time::timeout(Duration::from_millis(700), client.rekey())
         .await
         .expect("rekey remained stuck behind canceled open")

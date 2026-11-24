@@ -105,6 +105,12 @@ export function registerProxyRuntimeServiceWorkerBridge(
     if (message?.type !== "flowersec-proxy:fetch") return;
     const port = event.ports?.[0];
     if (port === undefined) return;
+    const controller = serviceWorker.controller;
+    const registered = bridgeOwners.get(serviceWorker)?.registration;
+    if (!controller || event.source !== controller || (registered && registered.controller !== controller)) {
+      port.close();
+      return;
+    }
     try {
       runtime.dispatchFetch(parseRuntimeRequest(message.req), port);
     } catch {

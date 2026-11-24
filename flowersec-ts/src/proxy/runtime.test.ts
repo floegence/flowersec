@@ -278,15 +278,15 @@ describe("Session proxy runtime", () => {
       u32be(0),
     ]);
     const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxChunkBytes: 8, maxBodyBytes: 64 });
-    const serviceWorker = new EventTarget();
+    const serviceWorker = Object.assign(new EventTarget(), { controller: { postMessage() {} } });
     const bridge = registerProxyRuntimeServiceWorkerBridge(
       runtime,
-      serviceWorker as ServiceWorkerContainer,
+      serviceWorker as unknown as ServiceWorkerContainer,
     );
     const channel = new MessageChannel();
     channel.port2.start();
     const metadata = nextPortMessage(channel.port2);
-    serviceWorker.dispatchEvent(new MessageEvent("message", {
+    const request = new MessageEvent("message", {
       data: {
         type: "flowersec-proxy:fetch",
         req: {
@@ -295,7 +295,9 @@ describe("Session proxy runtime", () => {
         },
       },
       ports: [channel.port1],
-    }));
+    });
+    Object.defineProperty(request, "source", { value: serviceWorker.controller });
+    serviceWorker.dispatchEvent(request);
     await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta", status: 200 });
     await eventLoopTurn();
     expect(stream.readCalls).toBe(1);

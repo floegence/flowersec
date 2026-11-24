@@ -4,6 +4,18 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecYamuxTests: XCTestCase {
+  #if os(macOS) || os(iOS)
+    func testMisalignedWebSocketReadsCompactConsumedStorage() async throws {
+      let channel = WebSocketYamuxChannelV3(transport: ChunkedBinaryTransport())
+      for _ in 0..<128 {
+        let payload = try await channel.readExact(4096)
+        XCTAssertEqual(payload, Data(repeating: 7, count: 4096))
+        let stored = await channel.bufferedStorageBytes
+        XCTAssertLessThan(stored, 64 * 1024 + 4097)
+      }
+    }
+  #endif
+
   func testDirectTerminalWriteDeliversFinalDataAndFINInOneProviderWrite() async throws {
     let wire = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: wire, limits: YamuxLimits(preferredOutboundFrameBytes: 1024))
@@ -689,6 +701,12 @@ private final class PendingRPCStream: FlowersecRPCStream, @unchecked Sendable {
 private actor NoopBinaryTransport: FlowersecBinaryTransport {
   func writeBinary(_ data: Data) async throws { _ = data }
   func readBinary() async throws -> Data { Data() }
+  func close() async {}
+}
+
+private actor ChunkedBinaryTransport: FlowersecBinaryTransport {
+  func writeBinary(_ data: Data) async throws {}
+  func readBinary() async throws -> Data { Data(repeating: 7, count: 4097) }
   func close() async {}
 }
 

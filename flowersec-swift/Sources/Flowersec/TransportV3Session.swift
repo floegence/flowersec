@@ -498,17 +498,28 @@ actor TransportV3Session {
   }
 
   func probeLiveness() async throws -> Duration {
+    try Task.checkCancellation()
     guard !closing, !closed else { throw TransportV3SessionError.closed }
     let nonce = nextPing
     guard nonce != 0 else { throw TransportV3SessionError.resourceExhausted }
     nextPing &+= 1
-    let waiter = PingWaiterV3(started: ContinuousClock.now)
+    let started = ContinuousClock.now
+    let deadline = started.advanced(by: config.deadlines.liveness)
+    let waiter = PingWaiterV3(started: started)
     pings[nonce] = waiter
     var payload = Data()
     payload.appendUInt64BE(nonce)
     do {
-      try await sendControl(.ping, payload: payload)
-      return try await waiter.wait(timeout: config.deadlines.liveness)
+      let writeDeadline = Task {
+        try await Task.sleep(until: deadline, clock: .continuous)
+        try Task.checkCancellation()
+        carrier.abort(code: 6, reason: "liveness write timeout")
+      }
+      do {
+        defer { writeDeadline.cancel() }
+        try await sendControl(.ping, payload: payload)
+      }
+      return try await waiter.wait(until: deadline)
     } catch {
       pings.removeValue(forKey: nonce)
       if error is CancellationError { throw CancellationError() }
@@ -3112,7 +3123,7 @@ private actor PingWaiterV3 {
 
   init(started: ContinuousClock.Instant) { self.started = started }
 
-  func wait(timeout: Duration) async throws -> Duration {
+  func wait(until limit: ContinuousClock.Instant) async throws -> Duration {
     try Task.checkCancellation()
     if let result { return try result.get() }
     let continuationID = nextContinuationID
@@ -3120,7 +3131,7 @@ private actor PingWaiterV3 {
     if nextContinuationID == 0 { nextContinuationID = 1 }
     let deadline = Task { [weak self] in
       do {
-        try await Task.sleep(for: timeout)
+        try await Task.sleep(until: limit, clock: .continuous)
       } catch {
         return
       }

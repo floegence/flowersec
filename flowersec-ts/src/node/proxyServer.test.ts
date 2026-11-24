@@ -134,6 +134,32 @@ test("filters configured cookie names and prefixes on the upstream WebSocket han
   } finally { await server.close(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
 });
 
+test.each(["deadline", "shutdown"])("releases a pending WebSocket upgrade on %s", async (cause) => {
+  const upstream = createServer();
+  let reached!: () => void;
+  const started = new Promise<void>(resolve => { reached = resolve; });
+  upstream.on("request", reached);
+  await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin,
+    defaultHTTPRequestTimeoutMs: 100, maxHTTPRequestTimeoutMs: cause === "deadline" ? 250 : 5000 });
+  const handlers = new StreamHandlers();
+  server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.endsWith("/ws"))!;
+  const request = proxyExchange(kind, { conn_id: "pending", path: "/", headers: [] }, async () => null);
+  const operation = handle(request.incoming, {});
+  try {
+    await started;
+    if (cause === "shutdown") await server.close();
+    await operation;
+    expect(server.activeCount).toBe(0);
+  } finally {
+    await server.close();
+    upstream.closeAllConnections();
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
+});
+
 test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", async (stage) => {
   const server = new ProxyServer({
     upstream: "http://127.0.0.1:1", upstreamOrigin: "http://127.0.0.1:1",

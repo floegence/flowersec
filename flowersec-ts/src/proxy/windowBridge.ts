@@ -47,10 +47,13 @@ export class MessagePortByteStream implements ByteStream {
   private writeClosed = false;
   private closed = false;
 
-  constructor(private readonly port: MessagePort) {
+  private readonly abortLifetime = () => { void this.reset(); };
+
+  constructor(private readonly port: MessagePort, private readonly lifetime?: AbortSignal) {
     port.onmessage = (event) => this.handle(event.data as BridgeMessage | unknown);
     port.onmessageerror = () => this.fail(new SessionError("operation_failed"));
     port.start();
+    lifetime?.addEventListener("abort", this.abortLifetime, { once: true });
   }
 
   async read(options: OperationOptions = {}): Promise<Uint8Array | null> {
@@ -177,6 +180,7 @@ export class MessagePortByteStream implements ByteStream {
 
   private finish(): void {
     if (this.closed) return;
+    this.lifetime?.removeEventListener("abort", this.abortLifetime);
     this.closed = true;
     this.ended = true;
     this.reads.length = 0;
@@ -188,6 +192,7 @@ export class MessagePortByteStream implements ByteStream {
 
   private fail(error: SessionError): void {
     if (this.terminalError !== undefined) return;
+    this.lifetime?.removeEventListener("abort", this.abortLifetime);
     this.terminalError = error;
     this.closed = true;
     this.reads.length = 0;
@@ -310,7 +315,7 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
             finish(new SessionError("operation_failed"));
             return;
           }
-          finish(undefined, Object.freeze({ stream: new MessagePortByteStream(channel.port1), protocol: typeof event.data.protocol === "string" ? event.data.protocol : "" }));
+          finish(undefined, Object.freeze({ stream: new MessagePortByteStream(channel.port1, lifetime.signal), protocol: typeof event.data.protocol === "string" ? event.data.protocol : "" }));
         };
         openOptions.signal?.addEventListener("abort", abort, { once: true });
       });

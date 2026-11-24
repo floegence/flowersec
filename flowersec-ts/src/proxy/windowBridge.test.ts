@@ -16,7 +16,9 @@ class TestWindow extends EventTarget {
   parent: Window = this as unknown as Window;
 }
 
-class TestServiceWorkerContainer extends EventTarget {}
+class TestServiceWorkerContainer extends EventTarget {
+  controller = { postMessage() {} };
+}
 
 class BridgeTarget {
   constructor(
@@ -234,6 +236,11 @@ describe("proxy controller/app window bridge", () => {
       },
       ports: [channel.port1],
     });
+    Object.defineProperty(event, "source", { value: serviceWorker.controller });
+    const staleChannel = new MessageChannel();
+    serviceWorker.dispatchEvent(new MessageEvent("message", { data: event.data, ports: [staleChannel.port1] }));
+    expect(forwarded).toHaveLength(0);
+    staleChannel.port2.close();
     serviceWorker.dispatchEvent(event);
     expect(forwarded).toHaveLength(1);
 
@@ -254,10 +261,12 @@ describe("proxy controller/app window bridge", () => {
       targetWindow: appWindow as unknown as Window,
     });
     const channel = new MessageChannel();
-    serviceWorker.dispatchEvent(new MessageEvent("message", {
+    const malformed = new MessageEvent("message", {
       data: { type: "flowersec-proxy:fetch", req: { id: 7 } },
       ports: [channel.port1],
-    }));
+    });
+    Object.defineProperty(malformed, "source", { value: serviceWorker.controller });
+    serviceWorker.dispatchEvent(malformed);
     await expect(within(nextMessage(channel.port2))).resolves.toMatchObject({
       type: "flowersec-proxy:response_error",
       status: 400,
@@ -308,6 +317,17 @@ describe("proxy controller/app window bridge", () => {
       handles.app.dispose();
       handles.controller.dispose();
     }
+  });
+
+  it("releases established WebSockets when the app window is disposed", async () => {
+    const stream = new FailingDuplexStream("blocked");
+    const handles = bridgeHarness(stream);
+    try {
+      const opened = await handles.app.runtime.openWebSocketStream("/socket");
+      handles.app.dispose();
+      await expect(opened.stream.read()).rejects.toMatchObject({ code: "stream_reset" });
+      await waitFor(() => stream.resetCalled);
+    } finally { handles.controller.dispose(); }
   });
 });
 

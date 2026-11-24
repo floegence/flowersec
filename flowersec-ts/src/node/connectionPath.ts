@@ -74,15 +74,14 @@ function rejectUnassignedRequest(request: ClientRequest, error: Error): void {
 }
 
 class ConnectionPathAgent extends Agent {
+  declare readonly totalSocketCount: number;
   readonly #options: ConnectionPathAgentOptions;
   readonly #timeout: number;
   readonly #lifetime = new AbortController();
   readonly #requests: Array<{ request: ClientRequest; options: RequestOptions }> = [];
-  #admitting = false;
+  readonly #opening = new Map<string, number>();
+  #openingCount = 0;
 
-  // Node accounts asynchronous factories only after their callback. Admit the
-  // next request once its predecessor has an assigned socket, so native pool
-  // limits include every in-flight route without constructing TLS prematurely.
   addRequest(request: ClientRequest, options: RequestOptions): void {
     if (this.#lifetime.signal.aborted || this.#options.signal?.aborted) {
       rejectUnassignedRequest(request, new Error("Connection path canceled"));
@@ -93,30 +92,26 @@ class ConnectionPathAgent extends Agent {
   }
 
   #drain(): void {
-    if (this.#admitting) return;
-    let next = this.#requests.shift();
-    while (next?.request.destroyed) {
-      rejectUnassignedRequest(next.request, new Error("Connection path canceled"));
-      next = this.#requests.shift();
+    for (let index = 0; index < this.#requests.length;) {
+      const { request, options } = this.#requests[index]!;
+      const origin = this.#origin(options);
+      if (!request.destroyed && this.#openingCount > 0 &&
+          (this.totalSocketCount + this.#openingCount >= this.maxTotalSockets ||
+           (Number.isFinite(this.maxSockets) && this.#opening.has(origin)))) {
+        index++;
+        continue;
+      }
+      this.#requests.splice(index, 1);
+      if (request.destroyed) rejectUnassignedRequest(request, new Error("Connection path canceled"));
+      else {
+        try { nativeAddRequest.call(this, request, options); }
+        catch (error) { rejectUnassignedRequest(request, error instanceof Error ? error : new Error("Connection path failed")); }
+      }
     }
-    if (next === undefined) return;
-    const { request, options } = next;
-    this.#admitting = true;
-    let settled = false;
-    const advance = (): void => {
-      if (settled) return;
-      settled = true;
-      request.off("socket", advance);
-      request.off("close", advance);
-      request.off("error", advance);
-      this.#admitting = false;
-      queueMicrotask(() => this.#drain());
-    };
-    request.once("socket", advance);
-    request.once("close", advance);
-    request.once("error", advance);
-    try { nativeAddRequest.call(this, request, options); }
-    catch (error) { rejectUnassignedRequest(request, error instanceof Error ? error : new Error("Connection path failed")); advance(); }
+  }
+
+  #origin(options: RequestOptions): string {
+    return JSON.stringify([options.host ?? options.servername, Number(options.port ?? 443)]);
   }
 
   constructor(options: ConnectionPathAgentOptions, timeout: number) {
@@ -127,7 +122,18 @@ class ConnectionPathAgent extends Agent {
 
   override createConnection(options: RequestOptions, callback?: (err: Error | null, stream: Duplex) => void): Duplex | undefined {
     if (callback === undefined) throw new Error("Connection path Agent requires an asynchronous callback");
-    const fail = (error: Error): void => callback(error, undefined as unknown as Duplex);
+    const origin = this.#origin(options);
+    this.#opening.set(origin, (this.#opening.get(origin) ?? 0) + 1);
+    this.#openingCount++;
+    const complete = (error: Error | null, socket: Duplex): void => {
+      const remaining = this.#opening.get(origin)! - 1;
+      if (remaining === 0) this.#opening.delete(origin);
+      else this.#opening.set(origin, remaining);
+      this.#openingCount--;
+      callback(error, socket);
+      if (this.#requests.length) queueMicrotask(() => this.#drain());
+    };
+    const fail = (error: Error): void => complete(error, undefined as unknown as Duplex);
     const hostname = options.host ?? options.servername;
     const port = Number(options.port ?? 443);
     if (typeof hostname !== "string" || hostname === "" || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
@@ -158,7 +164,7 @@ class ConnectionPathAgent extends Agent {
       signal.addEventListener("abort", abort, { once: true });
       socket.once("secureConnect", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); });
       socket.once("close", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); transport.destroy(); });
-      callback(null, socket);
+      complete(null, socket);
     }, () => { clearTimeout(timer); fail(new Error("Connection path failed")); });
     // Node's asynchronous Agent factory reports exclusively via callback.
     return undefined;

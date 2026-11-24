@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::sync::{Mutex, Notify, OwnedMutexGuard, Semaphore, mpsc, oneshot};
+use tokio::sync::{
+    Mutex, Notify, OwnedMutexGuard, OwnedRwLockWriteGuard, RwLock, Semaphore, mpsc, oneshot,
+};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -469,7 +471,7 @@ pub struct EncryptedSessionV3 {
     state: Mutex<EngineStateV3>,
     control_write: Mutex<()>,
     control_terminal_committed: AtomicBool,
-    open_lock: Arc<Mutex<()>>,
+    open_lock: Arc<RwLock<()>>,
     rekey_lock: Arc<Mutex<()>>,
     rekeying: AtomicBool,
     rekey_changed: Notify,
@@ -737,7 +739,7 @@ async fn establish_inner_with_limit(
         }),
         control_write: Mutex::new(()),
         control_terminal_committed: AtomicBool::new(false),
-        open_lock: Arc::new(Mutex::new(())),
+        open_lock: Arc::new(RwLock::new(())),
         rekey_lock: Arc::new(Mutex::new(())),
         rekeying: AtomicBool::new(false),
         rekey_changed: Notify::new(),
@@ -2038,6 +2040,13 @@ async fn probe_v3(session: &EncryptedSessionV3) -> io::Result<Duration> {
 }
 
 async fn confirm_control_delivery_v3(session: &EncryptedSessionV3) -> io::Result<Duration> {
+    probe_with_timeout_v3(session, Duration::from_secs(10)).await
+}
+
+async fn probe_with_timeout_v3(
+    session: &EncryptedSessionV3,
+    limit: Duration,
+) -> io::Result<Duration> {
     if session.is_closed() {
         return Err(closed());
     }
@@ -2045,16 +2054,43 @@ async fn confirm_control_delivery_v3(session: &EncryptedSessionV3) -> io::Result
     let (tx, rx) = oneshot::channel();
     let _pending = session.pings.register(nonce, tx)?;
     let start = Instant::now();
-    send_control_v3(session, InnerRecordTypeV3::Ping, &nonce.to_be_bytes()).await?;
+    let deadline = tokio::time::Instant::now() + limit;
+    let timeout = || io::Error::new(io::ErrorKind::TimedOut, "Flowersec v5 liveness timeout");
+    {
+        let _write = tokio::time::timeout_at(deadline, session.control_write.lock())
+            .await
+            .map_err(|_| timeout())?;
+        if session.is_closed() {
+            return Err(closed());
+        }
+        let mut guard = PendingControlWrite(Some(session));
+        tokio::time::timeout_at(
+            deadline,
+            write_control_locked_v3(session, InnerRecordTypeV3::Ping, &nonce.to_be_bytes()),
+        )
+        .await
+        .map_err(|_| timeout())??;
+        guard.0 = None;
+    }
     let end = tokio::select! {
         _ = session.canceled.cancelled() => return Err(closed()),
-        result = tokio::time::timeout(Duration::from_secs(10), rx) => {
+        result = tokio::time::timeout_at(deadline, rx) => {
             result
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v5 liveness timeout"))?
+                .map_err(|_| timeout())?
                 .map_err(|_| closed())?
         }
     };
     Ok(end.duration_since(start))
+}
+
+struct PendingControlWrite<'session>(Option<&'session EncryptedSessionV3>);
+
+impl Drop for PendingControlWrite<'_> {
+    fn drop(&mut self) {
+        if let Some(session) = self.0 {
+            fail_session_v3(session, io::Error::other("incomplete control write"));
+        }
+    }
 }
 
 async fn rekey_v3(session: &EncryptedSessionV3) -> io::Result<()> {
@@ -2099,7 +2135,7 @@ struct PreparedRekeyV3 {
     streams: Vec<Arc<EncryptedStreamV3>>,
     payload: [u8; 20],
     _rekey_lock: OwnedMutexGuard<()>,
-    _open_lock: OwnedMutexGuard<()>,
+    _open_lock: OwnedRwLockWriteGuard<()>,
     _responder_freeze: InboundResponderFreezeGuardV3,
     _activity: RekeyActivityGuardV3,
 }
@@ -2169,7 +2205,7 @@ async fn send_exhaustion_goaway_v3(session: &Arc<SelfSession>) {
 
 async fn prepare_rekey_v3(session: &Arc<SelfSession>) -> io::Result<PreparedRekeyV3> {
     let rekey_lock = session.rekey_lock.clone().lock_owned().await;
-    let open_lock = session.open_lock.clone().lock_owned().await;
+    let open_lock = session.open_lock.clone().write_owned().await;
     if session.is_closed() {
         return Err(terminal_error_v3(session));
     }
@@ -3224,7 +3260,7 @@ async fn open_stream_with_capacity_v3(
     } else {
         None
     };
-    let _open = session.open_lock.lock().await;
+    let _open = session.open_lock.read().await;
     loop {
         let changed = session.rekey_changed.notified();
         tokio::pin!(changed);
@@ -3244,17 +3280,20 @@ async fn open_stream_with_capacity_v3(
     if session.received_goaway.load(Ordering::Acquire) {
         return Err(going_away());
     }
+    let mut ledger = session.outbound_ledger.lock().await;
     let id = session
         .next_stream_id
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(2))
         .map_err(|_| invalid("logical stream ID exhausted"))?;
-    if let Err(error) = session.outbound_ledger.lock().await.mark_fss3(id) {
+    if let Err(error) = ledger.mark_fss3(id) {
+        drop(ledger);
         let _ = send_goaway_v3(session, 5).await;
         return Err(error);
     }
     session
         .local_open_high_watermark
         .store(id, Ordering::Release);
+    drop(ledger);
     session.outbound_ledger_changed.notify_waiters();
     let owner = session_arc(session)?;
     let mut guard = OutboundOpenGuardV3::new(&owner, id);
@@ -6118,6 +6157,26 @@ mod tests {
             server.expect("server session"),
             client_streams,
         )
+    }
+
+    #[tokio::test]
+    async fn probe_deadline_includes_control_write_admission() {
+        let (client, server, _) =
+            observed_inner_session_pair_v3(stream_lifecycle_config(SessionRole::Client)).await;
+        let writer = client.control_write.lock().await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            probe_with_timeout_v3(&client, Duration::from_millis(20)),
+        )
+        .await
+        .expect("probe deadline")
+        .expect_err("blocked writer");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(client.pings.len(), 0);
+        drop(writer);
+        client.probe_liveness().await.unwrap();
+        client.close().await.unwrap();
+        server.close().await.unwrap();
     }
 
     async fn open_observed_stream_v3(
