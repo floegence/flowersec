@@ -350,10 +350,34 @@ describe("Session proxy runtime", () => {
     expect(session.opens[0]).toEqual({
       kind: "flowersec-proxy/ws",
       options: {
+        signal: expect.any(AbortSignal),
         metadata: expect.objectContaining({ values: { protocol: "flowersec.proxy.websocket", version: 2 } }),
       },
     });
     runtime.dispose();
+  });
+
+  it.each(["stream", "metadata"])("disposal withdraws a WebSocket handshake awaiting %s", async stage => {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    const stream = new FakeStream([]);
+    const reset = vi.spyOn(stream, "reset");
+    const wait = async () => { enter(); await resume; };
+    const session = new FakeSession([]);
+    session.openStream = async () => { if (stage === "stream") await wait(); return stream; };
+    stream.read = async () => { if (stage === "metadata") await wait(); return jsonFrame({ v: 1, ok: true }); };
+    const runtime = createProxyRuntime({ session });
+    try {
+      const opening = runtime.openWebSocketStream("/socket");
+      await entered;
+      runtime.dispose();
+      await expect(opening).rejects.toMatchObject({ code: "closed" });
+      release();
+      await eventLoopTurn();
+      expect(reset).toHaveBeenCalledTimes(1);
+    } finally { release(); runtime.dispose(); }
   });
 
   it("removes queued admission abort listeners on dequeue and runtime close", async () => {
@@ -388,6 +412,7 @@ describe("Session proxy runtime", () => {
         jsonFrame({ v: 1, request_id: "first", ok: true, status: 204, headers: [] }),
         u32be(0),
       ]));
+      first.read = async () => null;
       await Promise.all([firstDone, secondDone]);
       const addedAfterDequeue = add.mock.calls.filter(([type]) => type === "abort").length;
       const removedAfterDequeue = remove.mock.calls.filter(([type]) => type === "abort").length;
@@ -469,6 +494,7 @@ async function eventLoopTurn(): Promise<void> {
 
 class FetchResponseStream extends FakeStream {
   private initialized = false;
+  private ended = false;
   constructor(private readonly contentType: string, private readonly chunks: Uint8Array[]) { super([], 65536); }
   override async read(): Promise<Uint8Array | null> {
     this.readCalls++;
@@ -478,6 +504,8 @@ class FetchResponseStream extends FakeStream {
         headers: [{ name: "content-type", value: this.contentType }] });
     }
     const chunk = this.chunks.shift();
+    if (this.ended) return null;
+    this.ended = chunk === undefined;
     return chunk === undefined ? u32be(0) : concat([u32be(chunk.length), chunk]);
   }
 }

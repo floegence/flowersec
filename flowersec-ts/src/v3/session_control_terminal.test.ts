@@ -4,6 +4,10 @@ import { createByteStreamDuplex } from "../node/byteStreamDuplex.js";
 import { describe, expect, test, vi } from "vitest";
 
 import { RpcRouter } from "../rpc/server.js";
+import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
+import { createProxyRuntime } from "../proxy/runtime.js";
+import { ProxyByteReader, writeAll } from "../proxy/stream.js";
+import { u32be } from "../utils/bin.js";
 import { RPCHandlers, freezeRPCHandlers, createRPCRouter } from "../public/sessionHandlers.js";
 import { CarrierError, createMemoryCarrierPairV3, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3 } from "./contract.js";
@@ -32,6 +36,29 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test.each(["GET", "HEAD"])("a successful proxy %s exchanges FIN with the peer", async method => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    const runtime = createProxyRuntime({ session: projectSessionV3(client) });
+    const peer = async () => {
+      const { stream } = await projectSessionV3(server).acceptStream();
+      const reader = new ProxyByteReader(stream);
+      const request = await readJsonFrame(reader, runtime.limits.maxJsonFrameBytes) as { request_id: string };
+      expect(await reader.readExactly(4)).toEqual(u32be(0));
+      await writeJsonFrame(data => writeAll(stream, data), { v: 1, ok: true, status: 200, request_id: request.request_id });
+      if (method === "GET") await writeAll(stream, Uint8Array.of(0, 0, 0, 2, 79, 75));
+      await writeAll(stream, u32be(0));
+      if (method === "GET") await stream.closeWrite();
+      expect(await stream.read()).toBeNull();
+      if (method === "HEAD") await stream.closeWrite();
+    };
+    try {
+      const [text] = await testDeadline(Promise.all([runtime.fetch("/", { method }).then(response => response.text()), peer()]), "HTTP completion");
+      expect(text).toBe(method === "GET" ? "OK" : "");
+      await client.probeLiveness();
+    } finally { runtime.dispose(); await Promise.allSettled([client.close(), server.close()]); }
+  });
+
   test("a normally finished Node duplex preserves the peer's unread response", async () => {
     const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
     const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);

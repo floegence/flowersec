@@ -424,6 +424,12 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
       else releaseEvent();
       const chunks = readChunks(reader, maxChunkBytes, persistent ? Infinity : maxBodyBytes)[Symbol.asyncIterator]();
       controller.signal.throwIfAborted();
+      const finishResponse = async () => {
+        await stream!.closeWrite();
+        if (await reader.remainingStream().read({ signal: controller.signal }) !== null) throw new Error("unexpected data after response terminator");
+        controller.signal.throwIfAborted();
+        finish();
+      };
       const bodyStream = new ReadableStream<Uint8Array>({
         start(value) { output = value; },
         async pull(value) {
@@ -431,7 +437,7 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
             controller.signal.throwIfAborted();
             const next = await chunks.next();
             if (finished) return;
-            if (next.done) finish();
+            if (next.done) await finishResponse();
             else {
               if (persistent) arm(eventStreamIdleTimeoutMs);
               value.enqueue(next.value);
@@ -444,7 +450,7 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
       if (noBody) {
         const next = await chunks.next();
         if (!next.done) throw new Error("unexpected proxy response body");
-        finish();
+        await finishResponse();
       }
       return new Response(noBody ? null : bodyStream, {
         status: response.status!, headers: headersOut.map(({ name, value }) => [name, value]),
@@ -532,31 +538,48 @@ export function createScopedProxyRuntime(options: ProxyRuntimeOptions, authority
     const path = normalizePath(input);
     enforcePathPolicy("websocket", path, pathPolicy);
     checkAuthority("websocket", path);
-    const stream = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
-      ...(openOptions.signal === undefined ? {} : { signal: openOptions.signal }),
-      metadata: createStreamMetadata({ protocol: "flowersec.proxy.websocket", version: 2 }),
-    });
-    try {
+    const signal = openOptions.signal ? AbortSignal.any([lifetime.signal, openOptions.signal]) : lifetime.signal;
+    const abortError = () => lifetime.signal.aborted ? new SessionError("closed") : new SessionError("canceled");
+    if (signal.aborted) throw abortError();
+    let pendingStream: ByteStream | undefined;
+    const resetPending = () => {
+      const stream = pendingStream;
+      pendingStream = undefined;
+      void stream?.reset().catch(() => undefined);
+    };
+    const establish = async () => {
+      const stream = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
+        signal,
+        metadata: createStreamMetadata({ protocol: "flowersec.proxy.websocket", version: 2 }),
+      });
+      pendingStream = stream;
+      if (signal.aborted) { resetPending(); throw abortError(); }
       const protocols = (openOptions.protocols ?? []).filter((value) => value.trim() !== "" && value === value.trim());
       const headers = filterHeaders(
         protocols.length === 0 ? [] : [{ name: "sec-websocket-protocol", value: protocols.join(", ") }],
         new Set(["sec-websocket-protocol"]),
         webSocketExtra,
       );
-      await writeJsonFrame({ write: async (data) => await writeAll(stream, data, openOptions.signal === undefined ? {} : { signal: openOptions.signal }) }, {
+      await writeJsonFrame({ write: async (data) => await writeAll(stream, data, { signal }) }, {
         v: PROXY_WIRE_VERSION,
         conn_id: randomID(),
         path,
         headers,
       });
-      const reader = new ProxyByteReader(stream, openOptions.signal === undefined ? {} : { signal: openOptions.signal });
+      const reader = new ProxyByteReader(stream, { signal });
       const response = await readJsonFrame(reader, maxJsonFrameBytes) as WebSocketOpenResponse;
       if (response.v !== PROXY_WIRE_VERSION || response.ok !== true || (response.protocol !== undefined && typeof response.protocol !== "string")) {
         throw new Error("proxy WebSocket open failed");
       }
       return Object.freeze({ stream: reader.remainingStream(), protocol: response.protocol ?? "" });
+    };
+    try {
+      const opened = await raceWithSignal(establish(), signal);
+      if (signal.aborted) throw abortError();
+      return opened;
     } catch (error) {
-      await stream.reset().catch(() => undefined);
+      resetPending();
+      if (signal.aborted) throw abortError();
       throw error instanceof SessionError ? error : new SessionError("operation_failed");
     }
   }

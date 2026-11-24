@@ -163,6 +163,23 @@ function installBrowserGlobals(): void {
 }
 
 describe("WebSocket v2 proxy patch", () => {
+  it("releases a late handshake without reopening a closed socket", async () => {
+    installBrowserGlobals();
+    const stream = new ControlledStream(true);
+    let complete!: (value: { stream: ByteStream; protocol: string }) => void;
+    const handshake = new Promise<{ stream: ByteStream; protocol: string }>(resolve => { complete = resolve; });
+    installWebSocketPatch({ runtime: { limits, openWebSocketStream: () => handshake } });
+    const socket = new WebSocket("wss://app.example/socket");
+    const events: string[] = [];
+    for (const type of ["error", "close", "open"]) socket.addEventListener(type, () => events.push(type));
+    socket.close();
+    complete({ stream, protocol: "late" });
+    await waitFor(() => stream.resetCalled);
+    expect(events).toEqual(["error", "close"]);
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
+    expect(socket.protocol).toBe("");
+  });
+
   it("bounds pending empty data messages and reuses drained slots", async () => {
     installBrowserGlobals();
     const stream = new ControlledStream(true);

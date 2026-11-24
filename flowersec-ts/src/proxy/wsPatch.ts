@@ -155,6 +155,10 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           protocols: typeof protocols === "string" ? [protocols] : protocols ?? [],
           signal: this.abort.signal,
         });
+        if (this.readyState !== ProxyWebSocket.CONNECTING) {
+          await opened.stream.reset();
+          return;
+        }
         this.stream = opened.stream;
         this.protocol = opened.protocol;
         this.readyState = ProxyWebSocket.OPEN;
