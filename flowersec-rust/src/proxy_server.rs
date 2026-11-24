@@ -877,6 +877,15 @@ async fn serve_http_request(
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
         let request_headers = filter_request_headers(&meta.headers, &inner.config);
+        if request_headers
+            .iter()
+            .filter(|header| header.name == "origin")
+            .count()
+            > 1
+        {
+            write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
+            return Ok(());
+        }
         if let Some(origin) = &external_origin {
             let expected = origin.origin().ascii_serialization();
             if request_headers.iter().any(|header| {

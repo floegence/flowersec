@@ -112,6 +112,8 @@ internal actor RPCClient {
   private var closingWriters: [Task<Void, Never>] = []
   private var notifyHandlers: [UInt32: [UUID: @Sendable (Data) async -> Void]] = [:]
   private var notificationQueue: [NotificationWork] = []
+  private var sendingNotifications = 0
+  private var notificationBytes = 0
   private var notificationTask: Task<Void, Never>?
   private var readTask: Task<Void, Never>?
   private var closed = false
@@ -241,6 +243,13 @@ internal actor RPCClient {
   }
 
   internal func notify<Payload: Encodable>(_ typeID: UInt32, _ payload: Payload) async throws {
+    guard !closed else { throw FlowersecError.closed(path: path) }
+    try Task.checkCancellation()
+    guard sendingNotifications < maxConcurrentRequests else {
+      throw FlowersecError.resourceExhausted(path: path, stage: .rpc, "The RPC notification send limit is reached.")
+    }
+    sendingNotifications += 1
+    defer { sendingNotifications -= 1 }
     let envelope = RPCEnvelope(
       typeID: typeID,
       requestID: 0,
@@ -364,13 +373,16 @@ internal actor RPCClient {
       handlers = []
     }
     guard !handlers.isEmpty else { return }
-    guard notificationQueue.count < FlowersecSDKDefaults.RPC.maxQueuedNotifications else {
+    let capacity = FlowersecSDKDefaults.RPC.maxQueuedNotifications
+    guard notificationQueue.count < capacity,
+      envelope.payload.count <= frameLimits.inboundBudget(queueSize: capacity) - notificationBytes else {
       throw FlowersecError.resourceExhausted(
         path: path,
         stage: .rpc,
         "The RPC notification queue is full."
       )
     }
+    notificationBytes += envelope.payload.count
     notificationQueue.append(NotificationWork(payload: envelope.payload, handlers: handlers))
     startNotificationWorkerIfNeeded()
   }
@@ -383,6 +395,7 @@ internal actor RPCClient {
   private func runNotificationWorker() async {
     while !Task.isCancelled, !closed, !notificationQueue.isEmpty {
       let work = notificationQueue.removeFirst()
+      defer { notificationBytes -= work.payload.count }
       for handler in work.handlers {
         guard !Task.isCancelled, !closed else { break }
         await handler(work.payload)
@@ -398,6 +411,7 @@ internal actor RPCClient {
     guard !closed else { return }
     closed = true
     readTask?.cancel()
+    for work in notificationQueue { notificationBytes -= work.payload.count }
     notificationQueue.removeAll()
     notificationTask?.cancel()
     notifyHandlers.removeAll()

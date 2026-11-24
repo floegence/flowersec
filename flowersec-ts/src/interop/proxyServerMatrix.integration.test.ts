@@ -189,6 +189,11 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     }]);
 
     phase = "origin-rejection";
+    await expect(dispatch(proxyRuntime, {
+      id: "duplicate-origin", method: "GET", path: "/resource",
+      headers: ["origin", "Origin"].map(name => ({ name, value: "https://app.example" })),
+    })).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));
+    expect(observed).toHaveLength(1);
     const wrongOrigin = createProxyRuntime({ session, externalOrigin: "https://other.example" });
     await expect(dispatch(wrongOrigin, { id: "origin", method: "GET", path: "/", headers: [] }))
       .resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));

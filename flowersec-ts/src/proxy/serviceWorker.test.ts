@@ -3,6 +3,21 @@ import { describe, expect, it } from "vitest";
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
 
 describe("proxy service worker generator", () => {
+  it("releases stalled streaming intake after its deadline", async () => {
+    let canceled = 0;
+    const worker = generatedWorker(async () => ({ id: "client", postMessage(_message: unknown, [port]: MessagePort[]) {
+      port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204 });
+      port!.postMessage({ type: "flowersec-proxy:response_end" });
+      port!.close();
+    } }), { responseMetadataTimeoutMs: 80 });
+    const uploads = Array.from({ length: 24 }, () => {
+      const init = { method: "POST", duplex: "half", body: new ReadableStream({ cancel() { canceled++; } }) };
+      return worker.fetch(new Request("https://app.example/upload", init));
+    });
+    expect((await Promise.all(uploads)).every(response => response.status === 504)).toBe(true);
+    expect(canceled).toBe(24);
+    expect((await worker.fetch(new Request("https://app.example/upload", { method: "POST", body: "ok" }))).status).toBe(204);
+  });
   it("forwards bounded non-streaming uploads and rejects oversized blobs", async () => {
     const bodies: string[] = [];
     const worker = generatedWorker(async id => ({ id, postMessage(message: { req: {body: ArrayBuffer} }, [port]: MessagePort[]) {

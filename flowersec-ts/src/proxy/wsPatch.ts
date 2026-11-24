@@ -168,7 +168,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           await this.writes;
         } else if (frame.opcode === 8) {
           if (frame.payload.length === 1) throw new Error("invalid WebSocket close frame");
-          const code = frame.payload.length >= 2 ? readU16(frame.payload) : 1000;
+          const code = frame.payload.length >= 2 ? readU16(frame.payload) : 1005;
           const reason = frame.payload.length > 2 ? decoder.decode(frame.payload.subarray(2)) : "";
           const peerInitiated = this.readyState === ProxyWebSocket.OPEN;
           this.readyState = ProxyWebSocket.CLOSING;

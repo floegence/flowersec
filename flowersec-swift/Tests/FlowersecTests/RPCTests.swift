@@ -4,6 +4,48 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecRPCTests: XCTestCase {
+  func testSlowNotificationWriterRejectsExcessAndReleasesCapacity() async throws {
+    let stream = GatedNotificationStream()
+    let client = RPCClient(stream: stream, maxConcurrentRequests: 1)
+    let first = Task { try await client.notify(1, "first") }
+    try await waitForRPCCondition { await stream.gate.isStarted() }
+    do {
+      try await client.notify(1, "busy")
+      XCTFail("Expected bounded notification admission")
+    } catch let failure as FlowersecError { XCTAssertEqual(failure.code, .resourceExhausted) }
+    await stream.gate.release()
+    try await first.value
+    try await client.notify(1, "next")
+    await client.close()
+  }
+
+  func testLargeRequestsShareOneAdmissionBudgetUntilTheHandlerFinishes() async throws {
+    let stream = InMemoryByteStream()
+    let router = RPCRouter()
+    let gate = RPCNotificationGate()
+    await router.register(1) { _ in await gate.wait(); return Data("null".utf8) }
+    var options = RPCServerOptions(maxConcurrentRequests: 1, maxQueuedRequests: 1)
+    options.frameLimits = try RPCFrameLimits(send: 1024, receive: 2 << 20)
+    let server = try RPCServer(stream: stream, router: router, options: options)
+    let serve = Task { try await server.serve() }
+    let payload = try JSONEncoder().encode(String(repeating: "x", count: 1 << 20))
+    func request(_ id: UInt64) async throws {
+      try await stream.pushJSONFrame(RPCEnvelope(typeID: 1, requestID: id, responseTo: 0, payload: payload, error: nil).encoded())
+    }
+    try await request(1)
+    try await waitForRPCCondition { await gate.isStarted() }
+    try await request(2)
+    let busy = try await RPCEnvelope(data: stream.nextWrittenJSONFrame())
+    XCTAssertEqual(busy.error?.code, 429)
+    await gate.release()
+    let first = try await RPCEnvelope(data: stream.nextWrittenJSONFrame())
+    XCTAssertEqual(first.responseTo, 1)
+    try await request(3)
+    let next = try await RPCEnvelope(data: stream.nextWrittenJSONFrame())
+    XCTAssertNil(next.error)
+    await server.close()
+    _ = await serve.result
+  }
   func testOnlyUncommittedRPCHandoffsCanBeWithdrawn() throws {
     let queued = RPCWriteAdmission(deadline: .now.advanced(by: .seconds(8)))
     queued.withdraw()
@@ -974,6 +1016,14 @@ private struct RPCNotification: Codable, Equatable {
 
 private struct IntentionalRPCServerError: Error {}
 private struct RPCWaitTimeout: Error {}
+
+private final class GatedNotificationStream: FlowersecRPCStream {
+  let gate = RPCNotificationGate()
+  func write(_ data: Data) async throws { await gate.wait() }
+  func readExact(_ length: Int) async throws -> Data { Data() }
+  func close() async { await gate.release() }
+  func reset() async throws { await close() }
+}
 
 private actor RPCNotificationGate {
   private var started = false

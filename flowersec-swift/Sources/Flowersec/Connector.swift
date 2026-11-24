@@ -18,6 +18,11 @@ public struct RPCFrameLimits: Equatable, Sendable {
     self.send = send
     self.receive = receive
   }
+
+  func inboundBudget(queueSize: Int) -> Int {
+    let (standardBudget, overflow) = Self.standard.receive.multipliedReportingOverflow(by: queueSize)
+    return overflow ? Int.max : max(receive, standardBudget)
+  }
 }
 
 /// An application-owned snapshot installed before either peer may make its first call.

@@ -214,13 +214,16 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
     return null;
   };
 
-  const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number, reserve?: (bytes: number) => boolean): Promise<ArrayBuffer | null> => {
+  const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number, reserve?: (bytes: number) => boolean, signal?: AbortSignal): Promise<ArrayBuffer | null> => {
     let buffer = new Uint8Array(0);
     let used = 0;
     if (body === null) return buffer.buffer;
     const reader = body.getReader();
+    const cancel = () => { void reader.cancel().catch(() => undefined); };
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
       while (true) {
+        signal?.throwIfAborted();
         const next = await reader.read();
         if (next.done) return used === buffer.length ? buffer.buffer : buffer.buffer.slice(0, used);
         const required = used + next.value.byteLength;
@@ -241,7 +244,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
         buffer.set(next.value, used);
         used = required;
       }
-    } finally { reader.releaseLock(); }
+    } finally { signal?.removeEventListener("abort", cancel); reader.releaseLock(); }
   };
 
   const pathMatches = (path: string, values: readonly string[]) => values.some((value) => path.startsWith(value));
@@ -338,29 +341,49 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
       }
 
       let body: ArrayBuffer | undefined;
+      const deadline = performance.now() + config.responseMetadataTimeoutMs;
       if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
       if (request.method !== "GET" && request.method !== "HEAD") {
         const reservation = intake.begin();
         if (!reservation) return new Response("proxy service unavailable", { status: 503 });
-        try {
+        const timeout = new AbortController();
+        const timer = setTimeout(() => timeout.abort(), config.responseMetadataTimeoutMs);
+        const signal = AbortSignal.any([request.signal, timeout.signal]);
+        const interrupted = () => request.signal.aborted ? new Response("proxy request canceled", { status: 499 }) : new Response("proxy request timed out", { status: 504 });
+        const prepare = async () => {
           let busy = false;
           let requestBody: ArrayBuffer | null;
           if (request.body === undefined) {
-            if (!await reservation.waitForBudget(config.maxRequestBodyBytes, request.signal).catch(() => false)) {
-              return request.signal.aborted ? new Response("proxy request canceled", { status: 499 }) : new Response("proxy service unavailable", { status: 503 });
+            if (!await reservation.waitForBudget(config.maxRequestBodyBytes, signal)) {
+              return new Response("proxy service unavailable", { status: 503 });
             }
             const blob = await request.blob();
+            signal.throwIfAborted();
             requestBody = blob.size > config.maxRequestBodyBytes ? null : await blob.arrayBuffer();
           } else requestBody = await boundedBody(request.body, config.maxRequestBodyBytes, bytes => {
             busy = !reservation.grow(bytes);
             return !busy;
-          });
-          if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
+          }, signal);
+          signal.throwIfAborted();
           if (busy) return new Response("proxy service unavailable", { status: 503 });
           if (requestBody === null) return new Response("proxy request too large", { status: 413 });
-          body = requestBody;
-        } finally { reservation.release(); }
+          return requestBody;
+        };
+        let wake!: () => void;
+        const aborted = new Promise<Response>(resolve => { wake = () => resolve(interrupted()); });
+        signal.addEventListener("abort", wake, { once: true });
+        try {
+          const result = await Promise.race([aborted, prepare().finally(() => reservation.release())]);
+          if (signal.aborted) return interrupted();
+          if (result instanceof Response) return result;
+          body = result;
+        } finally {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", wake);
+        }
       }
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return new Response("proxy request timed out", { status: 504 });
       const channel = new MessageChannel();
       const response = await new Promise<Response>((resolve) => {
         let metadata: Readonly<{ status: number; headers: Headers }> | null = null;
@@ -399,7 +422,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
         };
         const metadataTimer = setTimeout(
           () => finishError(504, "proxy response timed out", true),
-          config.responseMetadataTimeoutMs,
+          remaining,
         );
         const stopWatching = watchClient(target.id, () => {
           forgetTarget();

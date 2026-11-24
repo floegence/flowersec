@@ -214,6 +214,16 @@ describe("WebSocket v2 proxy patch", () => {
     await waitFor(() => stream.closed);
   });
 
+  it("exposes an empty peer close as no status", async () => {
+    installBrowserGlobals();
+    const stream = new ControlledStream();
+    installWebSocketPatch({ runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) }, shouldProxy: () => true });
+    const socket = new WebSocket("wss://app.example/socket");
+    const closed = new Promise<CloseEvent>(resolve => socket.addEventListener("close", resolve));
+    stream.push(frame(8, new Uint8Array()));
+    await expect(closed).resolves.toMatchObject({ code: 1005, wasClean: true });
+  });
+
   it("reports timeout and close-frame write failures as error then unclean close", async () => {
     for (const mode of ["timeout_ignores_abort", "timeout_observes_abort", "write_failure"] as const) {
       installBrowserGlobals();

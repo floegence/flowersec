@@ -25,10 +25,11 @@ export function matchesServiceWorkerRegistration(
   registration: ServiceWorkerRegistration | undefined,
   controller: ServiceWorker | null,
   expected: Readonly<{ scriptUrl: string; scope: string }>,
+  base = globalThis.location.href,
 ): boolean {
   return controller !== null && registration?.active === controller &&
-    controller.scriptURL === new URL(expected.scriptUrl, globalThis.location.href).href &&
-    registration.scope === new URL(expected.scope, globalThis.location.href).href;
+    controller.scriptURL === new URL(expected.scriptUrl, base).href &&
+    registration.scope === new URL(expected.scope, base).href;
 }
 
 export async function registerServiceWorkerAndEnsureControl(options: RegisterServiceWorkerOptions): Promise<void> {

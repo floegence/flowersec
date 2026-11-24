@@ -22,6 +22,7 @@ afterEach(() => {
 class TestServiceWorkerContainer extends EventTarget {
   controller: Readonly<{ scriptURL: string }> | null = null;
   readonly registrations: Array<Readonly<{
+    scope?: string;
     active?: Readonly<{ scriptURL: string }>;
     unregister(): Promise<boolean>;
   }>> = [];
@@ -38,6 +39,9 @@ class TestServiceWorkerContainer extends EventTarget {
   async getRegistrations(): Promise<readonly ServiceWorkerRegistration[]> {
     return this.registrations as unknown as readonly ServiceWorkerRegistration[];
   }
+  async getRegistration(): Promise<ServiceWorkerRegistration | undefined> {
+    return this.registrations.find(item => item.active === this.controller) as ServiceWorkerRegistration | undefined;
+  }
 }
 
 function testWindow(container: TestServiceWorkerContainer | undefined, href = "https://app.example/workbench") {
@@ -45,6 +49,7 @@ function testWindow(container: TestServiceWorkerContainer | undefined, href = "h
   let reloads = 0;
   const target = {
     navigator: container === undefined ? {} : { serviceWorker: container },
+    history: { state: null, replaceState(_state: unknown, _title: string, url: URL) { target.location.href = url.href; } },
     location: {
       href,
       replace(value: string) { replacements.push(value); },
@@ -72,17 +77,18 @@ describe("proxy browser control", () => {
 
   it("cleans conflicting registrations before a bounded repair navigation", async () => {
     const container = new TestServiceWorkerContainer();
-    container.controller = { scriptURL: "not-a-url/legacy-sw.js" };
+    container.controller = { scriptURL: "https://app.example/legacy-sw.js" };
     let unregistered = 0;
     container.registrations.push(
-      { active: { scriptURL: "https://app.example/legacy-sw.js" }, unregister: async () => { unregistered++; return true; } },
-      { active: { scriptURL: "https://app.example/keep-sw.js" }, unregister: async () => true },
+      { scope: "https://app.example/", active: container.controller, unregister: async () => { unregistered++; return true; } },
+      { scope: "https://app.example/mail/", active: { scriptURL: "https://app.example/mail/sw.js" }, unregister: async () => { throw new Error("unrelated registration"); } },
     );
     const { target, replacements } = testWindow(container);
     const contexts: string[] = [];
     const guard = createServiceWorkerControllerGuard({
       targetWindow: target,
       navigationWindow: target,
+      registration: { scope: "/", scriptUrl: "/proxy-sw.js" },
       expectedScriptPathSuffix: "/proxy-sw.js",
       repair: { controllerTimeoutMs: 1, queryKey: "repair", maxAttempts: 2 },
       conflicts: { keepScriptPathSuffixes: ["/keep-sw.js"] },
@@ -90,10 +96,26 @@ describe("proxy browser control", () => {
     });
 
     await expect(guard.ensure()).rejects.toThrow("navigation started");
-    expect(contexts).toEqual(["ensure:not-a-url/legacy-sw.js"]);
+    expect(contexts).toEqual(["ensure:https://app.example/legacy-sw.js"]);
     expect(unregistered).toBe(1);
     expect(replacements[0]).toContain("repair=1");
     guard.dispose();
+  });
+
+  it("persists a reload attempt across guard instances and clears it after recovery", async () => {
+    const container = new TestServiceWorkerContainer();
+    const { target, reloads } = testWindow(container);
+    const options = { targetWindow: target, expectedScriptPathSuffix: "/sw.js", repair: { strategy: "reload", maxAttempts: 1, controllerTimeoutMs: 1 } } as const;
+    const first = createServiceWorkerControllerGuard(options);
+    await expect(first.ensure()).rejects.toThrow("navigation started");
+    first.dispose();
+    const second = createServiceWorkerControllerGuard(options);
+    await expect(second.ensure()).rejects.toThrow("mismatch persists");
+    expect(reloads()).toBe(1);
+    container.controller = { scriptURL: "https://app.example/sw.js" };
+    await second.ensure();
+    expect(target.location.href).not.toContain("_flowersec_sw_repair");
+    second.dispose();
   });
 
   it("supports ignored mismatches and fails closed without service workers", async () => {

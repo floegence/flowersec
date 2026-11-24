@@ -12,6 +12,29 @@ import { startBrowserModuleSite } from "./browser-module-site.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(packageRoot, "..");
 
+test("Chromium runs scoped Service Worker repair across a real reload", async ({ page }) => {
+  const site = await startBrowserModuleSite({ serviceWorkerScript: "self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));" });
+  try {
+    await page.goto(site.origin);
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.register("/proxy-sw.js", { scope: "/mail/" });
+      await navigator.serviceWorker.register("/proxy-sw.js", { scope: "/" });
+      await navigator.serviceWorker.ready;
+    });
+    await page.reload();
+    const repair = () => page.evaluate(async () => {
+      const proxy = await import("/dist/proxy/index.js");
+      const guard = proxy.createServiceWorkerControllerGuard({ expectedScriptPathSuffix: "/new.js", registration: { scriptUrl: "/new.js", scope: "/" },
+        repair: { strategy: "reload", maxAttempts: 1, controllerTimeoutMs: 10 } });
+      try { await guard.ensure(); return "controlled"; } catch (error) { return String(error); } finally { guard.dispose(); }
+    });
+    await Promise.all([page.waitForEvent("domcontentloaded"), repair().catch(() => undefined)]);
+    expect(new URL(page.url()).searchParams.get("_flowersec_sw_repair")).toBe("1");
+    expect(await repair()).toContain("mismatch persists");
+    expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).map(item => new URL(item.scope).pathname))).toEqual(["/mail/"]);
+  } finally { await site.close(); }
+});
+
 test("Chromium runs the Service Worker proxy product chain", async ({ page, context, browserName }) => {
   test.skip(browserName !== "chromium", "requires Chromium Service Worker coverage");
   test.setTimeout(60_000);

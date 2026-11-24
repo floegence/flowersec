@@ -103,6 +103,65 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 }
 
+func TestProxySuccessfulResponseSendsFINBeforePeerCloses(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, "complete")
+	}))
+	defer upstream.Close()
+	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	for _, earlyFIN := range []bool{true, false} {
+		client, server := tcpPair(t)
+		stream := &countingProxyServerTestStream{proxyServerTestStream: proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind}}
+		finished := make(chan struct{})
+		go func() { defer close(finished); proxy.serveHTTP(context.Background(), IncomingStream{Stream: stream}) }()
+		if err := client.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeProxyJSON(client, proxyHTTPRequest{Version: proxyWireVersion, Method: "GET", Path: "/", RequestID: "fin"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeProxyTerminator(client); err != nil {
+			t.Fatal(err)
+		}
+		if earlyFIN {
+			if err := client.CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wire, err := io.ReadAll(client)
+		if err != nil || !strings.HasSuffix(string(wire), "complete\x00\x00\x00\x00") {
+			t.Fatalf("incomplete response: %v", err)
+		}
+		if !earlyFIN {
+			if err := client.CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Fatal("handler did not finish")
+		}
+		if stream.resets.Load() != 0 {
+			t.Fatal("successful response was reset")
+		}
+	}
+}
+
+func TestProxyExternalOriginRequiresSingleForwardedValue(t *testing.T) {
+	const origin = "https://app.example"
+	for _, external := range []string{"", origin} {
+		request := &http.Request{Header: http.Header{"Origin": {origin, origin}}}
+		if applyProxyExternalOrigin(request, external, map[string]struct{}{origin: {}}) == nil {
+			t.Fatal("duplicate forwarded Origin accepted")
+		}
+	}
+}
+
 func TestProxyWebSocketClosePayloadTruncatesAtUTF8Boundary(t *testing.T) {
 	reason := strings.Repeat("界", 100)
 	payload := proxyWebSocketClosePayload(websocket.CloseNormalClosure, reason)

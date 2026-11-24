@@ -513,6 +513,7 @@ export async function registerProxyAppWindowWithServiceWorkerControl(
   const guard = createServiceWorkerControllerGuard({
     ...(options.targetWindow === undefined ? {} : { targetWindow: options.targetWindow, navigationWindow: options.targetWindow }),
     expectedScriptPathSuffix: options.serviceWorker.expectedScriptPathSuffix,
+    registration: { scriptUrl: options.serviceWorker.scriptUrl, scope: options.serviceWorker.scope ?? "/" },
     ...(options.serviceWorker.repair === undefined ? {} : { repair: options.serviceWorker.repair }),
     ...(options.serviceWorker.monitor === undefined ? {} : { monitor: options.serviceWorker.monitor }),
     ...(options.serviceWorker.conflicts === undefined ? {} : { conflicts: options.serviceWorker.conflicts }),

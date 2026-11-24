@@ -122,9 +122,20 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	}
 	defer func() {
 		if watchDone != nil {
-			<-watchDone
+			if handlerContext.Err() == nil {
+				if err := stream.CloseWrite(); err != nil {
+					cancelCause(err)
+				}
+			}
+			drain := time.NewTimer(byteStreamCloseTimeout)
+			defer drain.Stop()
+			select {
+			case <-watchDone:
+			case <-drain.C:
+				cancelCause(context.DeadlineExceeded)
+				<-watchDone
+			}
 		}
-		cancelRequest()
 	}()
 
 	var body io.ReadCloser
@@ -396,6 +407,10 @@ func proxyHex(value byte) (byte, bool) {
 }
 
 func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[string]struct{}) error {
+	origins := request.Header.Values("Origin")
+	if len(origins) > 1 {
+		return ErrInvalidProxyServer
+	}
 	if raw == "" {
 		return nil
 	}
@@ -407,7 +422,7 @@ func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[str
 		return ErrInvalidProxyServer
 	}
 	origin, _ := url.Parse(canonical)
-	if current := request.Header.Get("Origin"); current != "" && current != canonical {
+	if len(origins) == 1 && origins[0] != canonical {
 		return ErrInvalidProxyServer
 	}
 	if request.Header.Get("X-Forwarded-Proto") == "" {

@@ -209,7 +209,11 @@ export class ProxyServer {
     this.#active.delete(controller);
     if (this.#closed && this.#active.size === 0) this.#resolveCompletion();
   }
-  #report(error: unknown): void { try { this.#config.report?.(error); } catch { /* reporting is isolated */ } }
+  #report(error: unknown): void {
+    const diagnostic = error instanceof ProxyServerError ? new ProxyServerError(error.code)
+      : new SessionError(error instanceof SessionError ? error.code : "operation_failed");
+    try { this.#config.report?.(diagnostic); } catch { /* reporting is isolated */ }
+  }
 
   async #serveHTTP(stream: ByteStream, parentSignal: AbortSignal): Promise<void> {
     const started = performance.now();
@@ -606,6 +610,7 @@ async function relayWebSocket(
     });
     socket.once("close", (code: number, reason: Buffer) => {
       if (done) return;
+      if (code === 1006) { reject(new SessionError("operation_failed")); return; }
       const closePayload = encodeWebSocketClose(code, reason);
       void enqueue(async () => {
         const frame = new Uint8Array(5 + closePayload.length);

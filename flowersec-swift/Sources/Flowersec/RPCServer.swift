@@ -105,6 +105,9 @@ internal actor RPCServer {
   private var requestQueue: [RPCEnvelope] = []
   private var notificationQueue: [RPCEnvelope] = []
   private var activeRequests = 0
+  private var sendingNotifications = 0
+  private var requestBytes = 0
+  private var notificationBytes = 0
   private var requestTasks: [UInt64: Task<Void, Never>] = [:]
   private var notificationTask: Task<Void, Never>?
   private var nextTaskID: UInt64 = 1
@@ -131,6 +134,12 @@ internal actor RPCServer {
     _ payload: Payload
   ) async throws {
     guard !closed else { throw FlowersecError.closed(path: path) }
+    try Task.checkCancellation()
+    guard sendingNotifications < options.maxConcurrentRequests else {
+      throw FlowersecError.resourceExhausted(path: path, stage: .rpc, "The RPC notification send limit is reached.")
+    }
+    sendingNotifications += 1
+    defer { sendingNotifications -= 1 }
     let envelope = RPCEnvelope(
       typeID: typeID,
       requestID: 0,
@@ -169,6 +178,8 @@ internal actor RPCServer {
   internal func close() async {
     guard !closed else { return }
     closed = true
+    for envelope in requestQueue { requestBytes -= envelope.payload.count }
+    for envelope in notificationQueue { notificationBytes -= envelope.payload.count }
     requestQueue.removeAll()
     notificationQueue.removeAll()
     let requests = Array(requestTasks.values)
@@ -194,11 +205,8 @@ internal actor RPCServer {
   }
 
   private func enqueueRequest(_ envelope: RPCEnvelope) async throws {
-    if activeRequests < options.maxConcurrentRequests {
-      startRequest(envelope)
-      return
-    }
-    guard requestQueue.count < options.maxQueuedRequests else {
+    guard (activeRequests < options.maxConcurrentRequests || requestQueue.count < options.maxQueuedRequests),
+      envelope.payload.count <= options.frameLimits.inboundBudget(queueSize: options.maxQueuedRequests) - requestBytes else {
       try await writeResponse(
         to: envelope,
         payload: Data("null".utf8),
@@ -206,17 +214,21 @@ internal actor RPCServer {
       )
       return
     }
-    requestQueue.append(envelope)
+    requestBytes += envelope.payload.count
+    if activeRequests < options.maxConcurrentRequests { startRequest(envelope) }
+    else { requestQueue.append(envelope) }
   }
 
   private func enqueueNotification(_ envelope: RPCEnvelope) throws {
-    guard notificationQueue.count < options.maxQueuedNotifications else {
+    guard notificationQueue.count < options.maxQueuedNotifications,
+      envelope.payload.count <= options.frameLimits.inboundBudget(queueSize: options.maxQueuedNotifications) - notificationBytes else {
       throw FlowersecError.resourceExhausted(
         path: path,
         stage: .rpc,
         "The RPC notification queue is full."
       )
     }
+    notificationBytes += envelope.payload.count
     notificationQueue.append(envelope)
     startNotificationWorkerIfNeeded()
   }
@@ -249,6 +261,7 @@ internal actor RPCServer {
   ) async {
     defer {
       activeRequests -= 1
+      requestBytes -= envelope.payload.count
       requestTasks.removeValue(forKey: taskID)
       if !closed, terminalError == nil, !requestQueue.isEmpty { startRequest(requestQueue.removeFirst()) }
     }
@@ -285,6 +298,7 @@ internal actor RPCServer {
   private func runNotificationWorker() async {
     while !Task.isCancelled, !closed, !notificationQueue.isEmpty {
       let envelope = notificationQueue.removeFirst()
+      defer { notificationBytes -= envelope.payload.count }
       if let handler = await router.registeredNotification(for: envelope.typeID) {
         do {
           try await handler(envelope.payload)

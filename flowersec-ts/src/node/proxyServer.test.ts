@@ -83,6 +83,24 @@ test.each(["HEAD", "interrupted GET"])("preserves HTTP response framing for %s",
   } finally { vi.unstubAllGlobals(); await server.close(); }
 });
 
+test("redacts the upstream error and its cause at the diagnostic boundary", async () => {
+  const origin = "http://127.0.0.1:8080";
+  const report = vi.fn();
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, onError: report });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  vi.stubGlobal("fetch", async () => { throw new Error(origin, { cause: new Error("private") }); });
+  try {
+    let reads = 0;
+    const exchange = proxyExchange(kind, { method: "GET", path: "/", request_id: "test", headers: [] }, async () => ++reads === 1 ? u32be(0) : null);
+    await handle(exchange.incoming, {});
+    const error = report.mock.calls[0]?.[0];
+    expect(error.code).toBe("operation_failed");
+    expect(error.message).not.toContain(origin);
+    expect(error.cause).toBeUndefined();
+  } finally { vi.unstubAllGlobals(); await server.close(); }
+});
+
 test.each(["slots", "bytes"])("applies shared HTTP %s before reading body payloads and releases reservations", async (limit) => {
   const origin = "http://127.0.0.1:1";
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxConcurrentHTTPStreams: limit === "slots" ? 1 : 2, maxBufferedRequestBodyBytes: 4 });
@@ -159,9 +177,9 @@ test("filters configured cookie names and prefixes on the upstream WebSocket han
   } finally { await server.close(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
 });
 
-test("preserves the initial WebSocket snapshot while acknowledging the connection", async () => {
+test.each([false, true])("preserves the initial WebSocket snapshot and distinguishes abrupt teardown (%s)", async abrupt => {
   const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  upstream.on("connection", socket => { socket.send("initial snapshot"); socket.close(); });
+  upstream.on("connection", socket => { socket.send("initial snapshot", () => abrupt ? socket.terminate() : socket.close()); });
   await new Promise<void>(resolve => upstream.once("listening", resolve));
   const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin });
@@ -181,9 +199,14 @@ test("preserves the initial WebSocket snapshot while acknowledging the connectio
   });
   try {
     await handle(exchange.incoming, {});
-    expect(Buffer.concat(exchange.replies).toString()).toContain("initial snapshot");
-    expect(reset).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    if (abrupt) {
+      expect(reset).toHaveBeenCalled();
+      expect(exchange.replies.some(bytes => bytes[0] === 8)).toBe(false);
+    } else {
+      expect(Buffer.concat(exchange.replies).toString()).toContain("initial snapshot");
+      expect(reset).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    }
   } finally {
     endRead(null);
     await server.close();
