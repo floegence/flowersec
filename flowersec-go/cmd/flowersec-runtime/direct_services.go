@@ -214,6 +214,7 @@ func (host *directServiceHost) dispatchStream(ctx context.Context, grant directM
 	bridges.Go(func() {
 		defer func() { <-host.slots }()
 		defer cancel()
+		defer session.OnStreamReset(incoming.Stream, cancel)()
 		defer joinOnCancel(call, func() { _ = incoming.Stream.Reset() })()
 		input, err := readMethodPayload(incoming.Stream, method.spec.MaxRequest)
 		if err == nil {

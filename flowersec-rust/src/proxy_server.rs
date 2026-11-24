@@ -79,6 +79,7 @@ const RESPONSE_HEADERS: &[&str] = &[
     "last-modified",
     "location",
     "x-content-type-options",
+    "x-frame-options",
 ];
 
 pub type ProxyErrorReporter = Arc<dyn Fn(ProxyServerError) + Send + Sync + 'static>;
@@ -364,8 +365,8 @@ fn report(inner: &Inner, error: ProxyServerError) {
 fn compile_options(
     options: ProxyServerOptions,
 ) -> Result<(Config, usize, Option<ProxyErrorReporter>), ProxyServerError> {
-    validate_base_url(&options.upstream, true)?;
-    validate_base_url(&options.upstream_origin, false)?;
+    validate_base_url(&options.upstream)?;
+    validate_base_url(&options.upstream_origin)?;
     if options.upstream.scheme() == "https"
         && (options.upstream_trust_roots_der.is_empty()
             || options.upstream_trust_roots_der.iter().any(Vec::is_empty))
@@ -452,10 +453,10 @@ fn compile_options(
     ))
 }
 
-fn validate_base_url(value: &Url, require_port: bool) -> Result<(), ProxyServerError> {
+fn validate_base_url(value: &Url) -> Result<(), ProxyServerError> {
     if !matches!(value.scheme(), "http" | "https")
         || value.host_str().is_none()
-        || (require_port && value.port().is_none())
+        || value.port_or_known_default() == Some(0)
         || value.username() != ""
         || value.password().is_some()
         || !matches!(value.path(), "" | "/")
@@ -1993,7 +1994,7 @@ mod tests {
                 while !headers.ends_with(b"\r\n\r\n") {
                     headers.push(socket.read_u8().await.unwrap());
                 }
-                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Security-Policy: default-src 'none'\r\nX-Content-Type-Options: nosniff\r\n\r\nok").await.unwrap();
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Security-Policy: default-src 'none'\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n\r\nok").await.unwrap();
             }
             let mut byte = [0];
             assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
@@ -2013,7 +2014,8 @@ mod tests {
                 meta["headers"],
                 serde_json::json!([
                     {"name":"content-security-policy","value":"default-src 'none'"},
-                    {"name":"x-content-type-options","value":"nosniff"}
+                    {"name":"x-content-type-options","value":"nosniff"},
+                    {"name":"x-frame-options","value":"DENY"}
                 ])
             );
         }
@@ -2471,6 +2473,17 @@ mod tests {
         }
         server.close().await;
         upstream.abort();
+    }
+
+    #[test]
+    fn standard_upstream_ports_use_the_same_trust_and_host_policy() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        for url in ["http://127.0.0.1:80", "https://127.0.0.1:443"] {
+            let mut options = test_options(url.parse().unwrap());
+            options.upstream_trust_roots_der = vec![STANDARD.decode(TEST_CERT_DER_B64).unwrap()];
+            assert!(ProxyServer::new(options).is_ok());
+        }
     }
 
     #[test]

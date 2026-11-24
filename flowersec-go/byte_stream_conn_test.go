@@ -198,6 +198,55 @@ func TestRelayStreamsCancellationInterruptsBothDirections(t *testing.T) {
 	}
 }
 
+func TestRelayStreamsPeerResetAfterFIN(t *testing.T) {
+	serverTLS, roots := controllerNetworkTLS(t)
+	source := &webSocketHandlerRestartSource{serverTLS: serverTLS}
+	defer source.stopAll()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	lease, sourceErr := source.Acquire(ctx)
+	if sourceErr != nil {
+		t.Fatal(sourceErr)
+	}
+	client, err := Connect(ctx, lease, ConnectorOptions{Origin: "https://client.example", TrustRoots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer := source.takeGeneration(t, 0).waitSession(t)
+	stream, err := peer.OpenStream(ctx, "tcp", EmptyStreamMetadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := client.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, upstream := tcpPair(t)
+	defer upstream.Close()
+	done := make(chan error, 1)
+	go func() { done <- RelayStreams(ctx, local, incoming.Stream) }()
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	deadline, _ := ctx.Deadline()
+	_ = upstream.SetReadDeadline(deadline)
+	if _, err := upstream.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected request FIN: %v", err)
+	}
+	if err := stream.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			t.Fatalf("unexpected relay termination: %v (parent: %v)", err, ctx.Err())
+		}
+	case <-ctx.Done():
+		t.Fatal("stream reset did not retire the relay")
+	}
+}
+
 func TestRelayStreamsCancellationAbortsNetworkAdapters(t *testing.T) {
 	left, peerLeft := net.Pipe()
 	right, peerRight := net.Pipe()

@@ -1,4 +1,4 @@
-import { rootCertificates } from "node:tls";
+import { getCACertificates } from "node:tls";
 
 import type { ArtifactV3, CanonicalArtifactCandidateV3 } from "../v3/artifact.js";
 import type { NativeCarrierSessionV3 } from "../v3/carrier.js";
@@ -66,7 +66,7 @@ export async function createNodeRawQuicClientV3(
     ? {
         ...common,
         tlsMode: "ca",
-        trustRootsDer: options.roots === undefined ? rootCertificates.map((cert) => normalizeCertificateChain(cert)[0]!) : normalizeCertificateChain(options.roots),
+        trustRootsDer: options.roots === undefined ? getCACertificates("default").map((cert) => normalizeCertificateChain(cert)[0]!) : normalizeCertificateChain(options.roots),
       }
     : {
         ...common,

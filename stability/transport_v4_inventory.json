@@ -590,6 +590,12 @@
       "matching_lines": 2
     },
     {
+      "path": "flowersec-go/stream_relay.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 10,
+      "matching_lines": 3
+    },
+    {
       "path": "flowersec-go/tunnel_runtime.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 16,

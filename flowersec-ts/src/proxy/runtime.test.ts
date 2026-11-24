@@ -262,7 +262,7 @@ describe("Session proxy runtime", () => {
   });
 
   it("streams an HTTP request with partial writes and returns bounded response messages", async () => {
-    const securityHeaders = [{ name: "content-security-policy", value: "default-src 'self'" }, { name: "x-content-type-options", value: "nosniff" }];
+    const securityHeaders = [{ name: "content-security-policy", value: "default-src 'self'" }, { name: "x-content-type-options", value: "nosniff" }, { name: "x-frame-options", value: "DENY" }];
     const response = concat([
       jsonFrame({ v: 1, request_id: "request-1", ok: true, status: 201, headers: [{ name: "content-type", value: "text/plain" }, ...securityHeaders] }),
       u32be(2), new Uint8Array([111, 107]), u32be(0),

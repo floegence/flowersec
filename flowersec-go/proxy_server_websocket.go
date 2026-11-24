@@ -13,10 +13,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming IncomingStream) error {
+func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming IncomingStream) proxyResult {
 	if incoming.Stream == nil {
-		server.report(ErrInvalidProxyServer)
-		return ErrInvalidProxyServer
+		return proxyResult{diagnostic: ErrInvalidProxyServer, streamErr: ErrInvalidProxyServer}
 	}
 	stream := incoming.Stream
 	ctx, cancelOperation := context.WithCancel(ctx)
@@ -37,15 +36,13 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 	open := proxyWebSocketOpen{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &open); err != nil {
 		server.writeWebSocketError(stream, "unknown", "invalid_ws_open_meta")
-		server.report(err)
-		return nil
+		return proxyResult{diagnostic: err}
 	}
 	open.ConnID = strings.TrimSpace(open.ConnID)
 	path, err := parseProxyPath(open.Path)
 	if open.Version != proxyWireVersion || open.ConnID == "" || err != nil {
 		server.writeWebSocketError(stream, open.ConnID, "invalid_ws_open_meta")
-		server.report(ErrInvalidProxyServer)
-		return nil
+		return proxyResult{diagnostic: ErrInvalidProxyServer}
 	}
 	target := *server.config.upstream
 	if target.Scheme == "http" {
@@ -69,16 +66,14 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 			code = "canceled"
 		}
 		server.writeWebSocketError(stream, open.ConnID, code)
-		server.report(err)
-		return nil
+		return proxyResult{diagnostic: err}
 	}
 	defer connection.Close()
 	connection.SetReadLimit(int64(server.config.maxWSFrame))
 	if err := writeProxyJSON(stream, proxyWebSocketResponse{
 		Version: proxyWireVersion, ConnID: open.ConnID, OK: true, Protocol: connection.Subprotocol(),
 	}); err != nil {
-		server.report(err)
-		return err
+		return proxyResult{diagnostic: err, streamErr: err}
 	}
 
 	intake.Stop()
@@ -169,7 +164,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeBoth()
 		<-errorsCh
 		<-errorsCh
-		return operationContext.Err()
+		return proxyResult{streamErr: operationContext.Err()}
 	case err := <-errorsCh:
 		if err == nil {
 			timer := time.NewTimer(time.Second)
@@ -179,7 +174,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 				if err != nil {
 					closeBoth()
 				}
-				return err
+				return proxyResult{streamErr: err}
 			case <-operationContext.Done():
 				err = operationContext.Err()
 			case <-timer.C:
@@ -189,10 +184,9 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeBoth()
 		<-errorsCh
 		if err != nil && !errors.Is(err, io.EOF) {
-			server.report(err)
-			return err
+			return proxyResult{diagnostic: err, streamErr: err}
 		}
-		return nil
+		return proxyResult{}
 	}
 }
 

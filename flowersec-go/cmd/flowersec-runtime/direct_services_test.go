@@ -34,6 +34,7 @@ func TestDirectMethodsAuthenticatedTCP(t *testing.T) {
 	var peers sync.WaitGroup
 	notified := make(chan struct{}, 2)
 	blocked := make(chan struct{})
+	streamWaiting := make(chan struct{})
 	shutdownBlocked := make(chan struct{})
 	allowExit := make(chan struct{})
 	t.Cleanup(func() { close(allowExit); listener.Close(); peers.Wait() })
@@ -63,6 +64,9 @@ func TestDirectMethodsAuthenticatedTCP(t *testing.T) {
 					_, _ = io.WriteString(peer, strings.Repeat("1", 33))
 				case "stream":
 					_, _ = peer.Write(framed)
+				case "wait-for-reset":
+					close(streamWaiting)
+					<-allowExit
 				case "truncated":
 					_, _ = peer.Write([]byte{0, 0, 0, 3, 'a'})
 				case `"stall"`:
@@ -227,6 +231,31 @@ func TestDirectMethodsAuthenticatedTCP(t *testing.T) {
 	}
 	if got, err := readStream(stream.Kind, metadata, "truncated"); err == nil || len(got) != 0 {
 		t.Fatalf("truncated item=%x err=%v", got, err)
+	}
+	waiting, err := client.OpenStream(ctx, stream.Kind, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(waiting, "wait-for-reset"); err != nil {
+		t.Fatal(err)
+	}
+	if err := waiting.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-streamWaiting:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := waiting.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(host.services.slots) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("reset did not release the upstream method slot before its deadline")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	callError(100, "invalid", 502)
 	callError(100, "large", 502)

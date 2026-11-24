@@ -739,10 +739,7 @@ func (s *encryptedStream) readNextRecordLocked() error {
 	}
 	switch typ {
 	case protocolv3.InnerData:
-		s.readOwnerMu.Lock()
-		s.readBuf = append(s.readBuf, data...)
-		s.notifyReadOwnerChangedLocked()
-		s.readOwnerMu.Unlock()
+		s.bufferReceivedData(data)
 	case protocolv3.InnerFIN:
 		if err := s.verifyCarrierEOF(); err != nil {
 			return err
@@ -785,6 +782,17 @@ func (s *encryptedStream) drainBufferedLocked(payload []byte) int {
 		s.notifyReadOwnerChangedLocked()
 	}
 	return count
+}
+
+func (s *encryptedStream) bufferReceivedData(data []byte) {
+	s.readOwnerMu.Lock()
+	defer s.readOwnerMu.Unlock()
+	if len(s.readBuf) == 0 {
+		s.readBuf = data
+	} else {
+		s.readBuf = append(s.readBuf, data...)
+	}
+	s.notifyReadOwnerChangedLocked()
 }
 
 func (s *encryptedStream) drainOrAcquireReader(payload []byte) (int, error) {

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/sessionv3"
 )
 
 // DuplexStream supports independent read and write completion. ByteStream,
@@ -42,6 +44,16 @@ func RelayStreams(ctx context.Context, left, right DuplexStream) error {
 		}
 		workers.Wait()
 	})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for _, endpoint := range []DuplexStream{left, right} {
+		if conn, ok := endpoint.(*ByteStreamConn); ok {
+			endpoint = conn.stream
+		}
+		if stream, ok := endpoint.(*opaqueByteStreamV3); ok {
+			defer sessionv3.OnStreamReset(stream.inner, cancel)()
+		}
+	}
 	stop := context.AfterFunc(ctx, abortBoth)
 	results := make(chan error, 2)
 	copyOne := func(dst, src DuplexStream) {

@@ -33,7 +33,7 @@ describe("HTTP forwarding over a real WebSocket Session with bounded policy and 
         ...(request.headers.authorization === undefined ? {} : { authorization: request.headers.authorization }),
         ...(request.headers.host === undefined ? {} : { host: request.headers.host }),
       });
-      response.writeHead(201, { "content-type": "text/plain" });
+      response.writeHead(201, { "content-type": "text/plain", "x-frame-options": "DENY" });
       response.end("proxied");
     });
     await new Promise<void>((resolve, reject) => {
@@ -102,7 +102,7 @@ describe("HTTP forwarding over a real WebSocket Session with bounded policy and 
       "flowersec-proxy:response_chunk",
       "flowersec-proxy:response_end",
     ]);
-    expect(success[0]).toMatchObject({ status: 201 });
+    expect(success[0]).toMatchObject({ status: 201, headers: expect.arrayContaining([{ name: "x-frame-options", value: "DENY" }]) });
     expect(new TextDecoder().decode(new Uint8Array(success[1]!.data as ArrayBuffer))).toBe("proxied");
     expect(observed).toEqual([{ body: "request", host: `127.0.0.1:${address.port}` }]);
 

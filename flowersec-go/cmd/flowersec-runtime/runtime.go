@@ -562,6 +562,9 @@ func (runtime *runtimeServer) releaseDirectAuthorization(parent context.Context,
 }
 
 func (runtime *runtimeServer) bridgeDirectStream(ctx context.Context, stream session.ByteStream, target upstreamTarget) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer session.OnStreamReset(stream, cancel)()
 	upstream, err := (&net.Dialer{}).DialContext(ctx, target.Network, target.Address)
 	if err != nil {
 		_ = stream.Reset()

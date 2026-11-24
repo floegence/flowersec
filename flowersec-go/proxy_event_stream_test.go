@@ -93,10 +93,7 @@ func TestProxyEventCapacityPreservesFiniteRequestsAndReleasesCanceledObservers(t
 		t.Helper()
 		client, peer := net.Pipe()
 		t.Cleanup(func() { client.Close(); peer.Close() })
-		go proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
-			proxy.serveHTTP(ctx, incoming)
-			return nil
-		})(context.Background(), IncomingStream{Stream: &resetEventTestStream{proxyServerTestStream{Conn: peer, kind: proxyHTTPStreamKind}}})
+		go proxy.limit(proxy.serveHTTP)(context.Background(), IncomingStream{Stream: &resetEventTestStream{proxyServerTestStream{Conn: peer, kind: proxyHTTPStreamKind}}})
 		var headers []proxyHeader
 		if path == "/events" {
 			headers = []proxyHeader{{Name: "accept", Value: "text/event-stream"}}

@@ -15,10 +15,9 @@ import (
 	"time"
 )
 
-func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStream) {
+func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStream) proxyResult {
 	if incoming.Stream == nil {
-		server.report(ErrInvalidProxyServer)
-		return
+		return proxyResult{diagnostic: ErrInvalidProxyServer}
 	}
 	stream := incoming.Stream
 	handlerContext := ctx
@@ -53,22 +52,19 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	requestMeta := proxyHTTPRequest{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &requestMeta); err != nil {
 		server.writeHTTPError(stream, "unknown", "invalid_request_meta")
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	requestMeta.RequestID = strings.TrimSpace(requestMeta.RequestID)
 	requestMeta.Method = strings.ToUpper(strings.TrimSpace(requestMeta.Method))
 	path, err := parseProxyPath(requestMeta.Path)
 	if requestMeta.Version != proxyWireVersion || requestMeta.RequestID == "" || requestMeta.Method == "" || err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
-		server.report(ErrInvalidProxyServer)
-		return
+		return proxyResult{diagnostic: ErrInvalidProxyServer}
 	}
 	timeout, err := server.proxyTimeout(requestMeta.TimeoutMS)
 	if err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	requestContext := handlerContext
 	remaining := time.Until(started.Add(timeout))
@@ -86,7 +82,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		if server.drainProxyBody(stream) == nil {
 			server.writeHTTPError(stream, requestMeta.RequestID, "resource_exhausted")
 		}
-		return
+		return proxyResult{}
 	}
 	requestHeaders := proxyRequestHeaders(requestMeta.Headers, server.config)
 	eventRequested := acceptsProxyEventStream(requestHeaders.Get("Accept"))
@@ -105,7 +101,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			if server.drainProxyBody(stream) == nil {
 				server.writeHTTPError(stream, requestMeta.RequestID, "resource_exhausted")
 			}
-			return
+			return proxyResult{}
 		}
 	}
 	defer releaseEvent()
@@ -148,8 +144,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	if requestMeta.Method == http.MethodGet || requestMeta.Method == http.MethodHead {
 		if err := server.drainProxyBody(stream); err != nil {
 			server.writeHTTPError(stream, requestMeta.RequestID, "request_body_invalid")
-			server.report(err)
-			return
+			return proxyResult{diagnostic: err}
 		}
 		startWatcher(nil)
 	} else {
@@ -170,14 +165,12 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	request, err := http.NewRequestWithContext(requestContext, requestMeta.Method, target.String(), body)
 	if err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	request.Header = requestHeaders
 	if err := applyProxyExternalOrigin(request, requestMeta.ExternalOrigin, server.config.allowedOrigins); err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	response, err := server.httpClient.Do(request)
 	if err != nil {
@@ -194,8 +187,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			err = cause
 		}
 		server.writeHTTPError(stream, requestMeta.RequestID, classifyProxyHTTPError(err))
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	defer response.Body.Close()
 	persistent := eventRequested && proxyEventStreamType(response.Header.Get("Content-Type"))
@@ -208,15 +200,13 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	}
 	if request.Method != http.MethodHead && response.StatusCode != http.StatusNotModified && !persistent && response.ContentLength > server.config.maxBody {
 		server.writeHTTPError(stream, requestMeta.RequestID, "response_body_too_large")
-		server.report(ErrInvalidProxyServer)
-		return
+		return proxyResult{diagnostic: ErrInvalidProxyServer}
 	}
 	if err := writeProxyJSON(stream, proxyHTTPResponse{
 		Version: proxyWireVersion, RequestID: requestMeta.RequestID, OK: true,
 		Status: response.StatusCode, Headers: proxyResponseHeaders(response.Header, server.config),
 	}); err != nil {
-		server.report(err)
-		return
+		return proxyResult{diagnostic: err}
 	}
 	bufferSize := 64 << 10
 	if server.config.maxChunk < bufferSize {
@@ -238,22 +228,19 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			}
 			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, maximum); err != nil {
 				resetStream()
-				server.report(err)
-				return
+				return proxyResult{diagnostic: err}
 			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				if err := writeProxyTerminator(stream); err != nil {
-					server.report(err)
-				} else {
-					responseComplete = true
+					return proxyResult{diagnostic: err}
 				}
-				return
+				responseComplete = true
+				return proxyResult{}
 			}
 			resetStream()
-			server.report(readErr)
-			return
+			return proxyResult{diagnostic: readErr}
 		}
 	}
 }

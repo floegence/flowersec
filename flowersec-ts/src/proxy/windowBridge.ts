@@ -1,6 +1,7 @@
 import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
 import { BodyIntake } from "./bodyIntake.js";
+import { FORBIDDEN_HEADERS } from "./policy.js";
 import { raceWithSignal } from "../utils/abort.js";
 import { writeAll } from "./stream.js";
 import { SDK_DEFAULTS } from "../defaults.js";
@@ -272,7 +273,8 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
       port.close();
       return;
     }
-    controller.postMessage({ type: FETCH_MESSAGE, version: 2, request, responseFlowControl: usesServiceWorkerResponseFlowControl(request) ? "chunk_credit_v2" : undefined, ...(nonce === undefined ? {} : { capabilityNonce: nonce }) }, origin, [port]);
+    const headers = request.headers.filter(({ name }) => !FORBIDDEN_HEADERS.has(name.trim().toLowerCase()));
+    controller.postMessage({ type: FETCH_MESSAGE, version: 2, request: { ...request, headers }, responseFlowControl: usesServiceWorkerResponseFlowControl(request) ? "chunk_credit_v2" : undefined, ...(nonce === undefined ? {} : { capabilityNonce: nonce }) }, origin, [port]);
   };
 
   const lifetime = new AbortController();

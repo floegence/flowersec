@@ -142,7 +142,7 @@ function normalizeToken(input: string | undefined): string | undefined {
 }
 
 const BASE_REQUEST_HEADERS = new Set(["accept", "accept-language", "content-type", "if-match", "if-none-match", "range"]);
-const BASE_RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-language", "content-range", "content-security-policy", "content-type", "etag", "expires", "last-modified", "location", "x-content-type-options"]);
+const BASE_RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-language", "content-range", "content-security-policy", "content-type", "etag", "expires", "last-modified", "location", "x-content-type-options", "x-frame-options"]);
 function filterHeaders(
   input: readonly ProxyHeader[],
   base: ReadonlySet<string>,

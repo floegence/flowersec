@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { BodyIntake } from "./bodyIntake.js";
+import { FORBIDDEN_HEADERS } from "./policy.js";
 
 export type ProxyServiceWorkerPassthroughOptions = Readonly<{
   paths?: readonly string[];
@@ -36,6 +37,7 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
 }>;
 
 type ServiceWorkerConfig = Readonly<{
+  forbiddenHeaders: readonly string[];
   sameOriginOnly: boolean;
   maxRequestBodyBytes: number;
   maxInjectHTMLBytes: number;
@@ -101,6 +103,7 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
     }
   }
   return Object.freeze({
+    forbiddenHeaders: [...FORBIDDEN_HEADERS],
     sameOriginOnly: options.sameOriginOnly ?? true,
     maxRequestBodyBytes: bounded("maxRequestBodyBytes", options.maxRequestBodyBytes, 64 * 1024 * 1024, 256 * 1024 * 1024),
     maxInjectHTMLBytes: bounded("maxInjectHTMLBytes", options.maxInjectHTMLBytes, 8 * 1024 * 1024, 32 * 1024 * 1024),
@@ -126,6 +129,7 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
 
 function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntake): void {
   const worker = self as any;
+  const forbiddenHeaders = new Set(config.forbiddenHeaders);
   let runtimeClientId = "";
   const registrations = new Set<string>();
   const watches = new Map<string, { lost: Set<() => void>; timer: ReturnType<typeof setInterval> }>();
@@ -480,7 +484,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
           try { handleMessage(message); } catch { finishError(502, "invalid proxy response", true); }
         };
         channel.port1.onmessageerror = () => finishError(502, "proxy request failed", true);
-        const headers = Array.from(request.headers.entries() as Iterable<[string, string]>).map(([name, value]) => ({ name, value }));
+        const headers = Array.from(request.headers.entries() as Iterable<[string, string]>).filter(([name]) => !forbiddenHeaders.has(name.toLowerCase())).map(([name, value]) => ({ name, value }));
         try {
           target.postMessage({
             type: config.windowClientMessageType,

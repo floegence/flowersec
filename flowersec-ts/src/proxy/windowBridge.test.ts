@@ -189,9 +189,9 @@ describe("proxy controller/app window bridge", () => {
         if (event.data?.type === "flowersec-proxy:response_end") resolve();
       };
     });
-    app.runtime.dispatchFetch({ id: "request", method: "GET", path: "/api", headers: [] }, fetchChannel.port1);
+    app.runtime.dispatchFetch({ id: "request", method: "GET", path: "/api", headers: [{ name: "Authorization", value: "private" }, { name: "Cookie", value: "private" }, { name: "x-allowed", value: "kept" }] }, fetchChannel.port1);
     await fetchDone;
-    expect(fetchRequest).toEqual({ id: "request", method: "GET", path: "/api", headers: [] });
+    expect(fetchRequest).toEqual({ id: "request", method: "GET", path: "/api", headers: [{ name: "x-allowed", value: "kept" }] });
 
     const opened = await app.runtime.openWebSocketStream("/socket", { protocols: ["chat"] });
     expect(opened.protocol).toBe("chat");

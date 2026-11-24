@@ -103,6 +103,38 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 }
 
+func TestProxyErrorCallbackCanCloseServer(t *testing.T) {
+	var server *ProxyServer
+	var err error
+	reported := make(chan error, 1)
+	server, err = NewProxyServer(ProxyServerOptions{
+		Upstream: "http://127.0.0.1:8000", UpstreamOrigin: "https://app.example",
+		OnError: func(cause error) {
+			_ = server.Close()
+			reported <- cause
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.limit(server.serveHTTP)(t.Context(), IncomingStream{})
+	select {
+	case cause := <-reported:
+		if !errors.Is(cause, ErrInvalidProxyServer) {
+			t.Fatal(cause)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked inside OnError")
+	}
+}
+
+func TestProxyPreservesFramePolicyByDefault(t *testing.T) {
+	headers := proxyResponseHeaders(http.Header{"X-Frame-Options": {"DENY"}}, proxyServerConfig{})
+	if len(headers) != 1 || headers[0] != (proxyHeader{Name: "x-frame-options", Value: "DENY"}) {
+		t.Fatalf("frame policy lost: %v", headers)
+	}
+}
+
 func TestProxySuccessfulResponseSendsFINBeforePeerCloses(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(writer, "complete")
@@ -480,10 +512,7 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
 	go func() { _, _ = io.Copy(io.Discard, client) }()
 	stream := &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind}
-	handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
-		proxy.serveHTTP(ctx, incoming)
-		return nil
-	})
+	handler := proxy.limit(proxy.serveHTTP)
 	done := make(chan error, 1)
 	go func() {
 		done <- handler(context.Background(), IncomingStream{
@@ -688,13 +717,12 @@ func TestProxyServerCloseInterruptsPartialFrames(t *testing.T) {
 			defer client.Close()
 			defer server.Close()
 			started := make(chan struct{})
-			handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
+			handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) proxyResult {
 				close(started)
 				if testCase.websocket {
 					return proxy.serveWebSocket(ctx, incoming)
 				}
-				proxy.serveHTTP(ctx, incoming)
-				return nil
+				return proxy.serveHTTP(ctx, incoming)
 			})
 			go func() {
 				_ = handler(context.Background(), IncomingStream{

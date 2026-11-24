@@ -143,13 +143,8 @@ func (server *ProxyServer) register(handlers StreamHandlerRegistrar) error {
 		return ErrInvalidProxyServer
 	}
 	err := handlers.registerStreams(map[string]StreamHandler{
-		proxyHTTPStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
-			server.serveHTTP(ctx, incoming)
-			return nil
-		}),
-		proxyWSStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
-			return server.serveWebSocket(ctx, incoming)
-		}),
+		proxyHTTPStreamKind: server.limit(server.serveHTTP),
+		proxyWSStreamKind:   server.limit(server.serveWebSocket),
 	})
 	if err != nil {
 		return fmt.Errorf("%w: handler registration rejected", ErrInvalidProxyServer)
@@ -176,7 +171,12 @@ func (server *ProxyServer) Close() error {
 	return nil
 }
 
-func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
+type proxyResult struct {
+	diagnostic error
+	streamErr  error
+}
+
+func (server *ProxyServer) limit(handler func(context.Context, IncomingStream) proxyResult) StreamHandler {
 	return func(ctx context.Context, incoming IncomingStream) error {
 		server.stateMu.Lock()
 		if server.closed {
@@ -189,6 +189,8 @@ func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 		}
 		server.active.Add(1)
 		server.stateMu.Unlock()
+		var result proxyResult
+		defer func() { server.report(result.diagnostic) }()
 		defer server.active.Done()
 
 		select {
@@ -204,12 +206,13 @@ func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 				stop()
 				cancel()
 			}()
-			return handler(operationCtx, incoming)
+			result = handler(operationCtx, incoming)
+			return result.streamErr
 		default:
 			if incoming.Stream != nil {
 				_ = incoming.Stream.Reset()
 			}
-			server.report(ErrInvalidProxyServer)
+			result.diagnostic = ErrInvalidProxyServer
 			return nil
 		}
 	}

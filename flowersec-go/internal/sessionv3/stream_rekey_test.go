@@ -29,6 +29,21 @@ func TestRekeyReadSpaceAllowsApplicationDrain(t *testing.T) {
 	}
 }
 
+func TestReceivedDataOwnsPlaintextAndPreservesUnreadBytes(t *testing.T) {
+	stream := &encryptedStream{readOwnerChanged: make(chan struct{})}
+	first := []byte("first")
+	stream.bufferReceivedData(first)
+	if &stream.readBuf[0] != &first[0] {
+		t.Fatal("empty buffer copied the decrypted record")
+	}
+	stream.drainBufferedLocked(make([]byte, 2))
+	stream.bufferReceivedData([]byte("second"))
+	buffer := make([]byte, 9)
+	if count := stream.drainBufferedLocked(buffer); count != len(buffer) || string(buffer) != "rstsecond" || stream.readBuf != nil {
+		t.Fatal("unread plaintext lost or retained after drain")
+	}
+}
+
 func BenchmarkStreamRecordInitialization(b *testing.B) {
 	session := &engineSession{config: Config{Suite: protocolv3.SuiteChaCha20Poly1305}}
 	for _, size := range []int{64, protocolv3.MaxDataBytes} {

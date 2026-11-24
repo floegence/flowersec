@@ -101,7 +101,8 @@ same port and the exact `/flowersec/webtransport/v5/direct` or
 `/flowersec/webtransport/v5/tunnel` path. Node speaks draft02. Configure an
 explicit raw QUIC route for a Go client dialing a Node listener.
 
-CA candidates use platform or configured private roots. Pin candidates verify
+CA candidates use platform or configured private roots. Node native transports use
+the current Node default CA set when no explicit roots are supplied. Pin candidates verify
 only the complete artifact-bound active pin set and never fall back to CA.
 Public errors remain closed and redacted.
 

@@ -35,13 +35,14 @@ describe("proxy service worker generator", () => {
   });
 
   it("routes interleaved requests only to the initiating client by default", async () => {
-    const worker = generatedWorker(async id => ({ id, postMessage(_value: unknown, [port]: MessagePort[]) {
+    const worker = generatedWorker(async id => ({ id, postMessage(value: { req: { headers: unknown } }, [port]: MessagePort[]) {
+      expect(value.req.headers).toEqual([{ name: "accept", value: "text/plain" }]);
       port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204, headers: [{ name: "x-runtime", value: id }] });
       port!.postMessage({ type: "flowersec-proxy:response_end" });
       port!.close();
     } }), {});
     const owners = ["first", "second", "first"];
-    const responses = await Promise.all(owners.map(id => worker.fetch(new Request("https://app.example/api"), id)));
+    const responses = await Promise.all(owners.map(id => worker.fetch(new Request("https://app.example/api", { headers: { authorization: "private", accept: "text/plain" } }), id)));
     expect(responses.map(response => response.headers.get("x-runtime"))).toEqual(owners);
   });
 

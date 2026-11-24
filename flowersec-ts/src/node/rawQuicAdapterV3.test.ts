@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { rootCertificates } from "node:tls";
+import { getCACertificates, rootCertificates, setDefaultCACertificates } from "node:tls";
+import { X509Certificate } from "node:crypto";
 
 import type { ArtifactV3, CanonicalArtifactCandidateV3 } from "../v3/artifact.js";
 import type { NativeCarrierSessionV3 } from "../v3/carrier.js";
@@ -13,6 +14,22 @@ const artifact = {
 } as ArtifactV3;
 
 describe("Node raw QUIC v5 adapter", () => {
+  test("uses the current process trust set for each CA attempt unless roots are explicit", async () => {
+    const original = getCACertificates("default");
+    const calls: NativeRawQuicConnectOptions[] = [];
+    try {
+      for (const cert of rootCertificates.slice(0, 2)) {
+        setDefaultCACertificates([cert]);
+        await createNodeRawQuicClientV3(driver(calls), candidate({ mode: "ca" }), artifact, now());
+        expect(calls.at(-1)?.trustRootsDer).toEqual([new Uint8Array(new X509Certificate(cert).raw)]);
+      }
+      setDefaultCACertificates([]);
+      const cert = rootCertificates[0]!;
+      await createNodeRawQuicClientV3(driver(calls), candidate({ mode: "ca" }), artifact, now(), { roots: cert });
+      expect(calls.at(-1)?.trustRootsDer).toEqual([new Uint8Array(new X509Certificate(cert).raw)]);
+    } finally { setDefaultCACertificates(original); }
+  });
+
   test("passes CA roots without any pin field", async () => {
     const calls: NativeRawQuicConnectOptions[] = [];
     const roots = rootCertificates[0]!;
