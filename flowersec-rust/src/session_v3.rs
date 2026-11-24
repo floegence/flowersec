@@ -5073,6 +5073,12 @@ async fn rpc_notify_v3(
     }
 }
 
+fn rpc_inbound_byte_budget(limit: RpcFrameLimit, queue_capacity: usize) -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(
+        limit.0.max(RpcFrameLimit::default().0 * queue_capacity),
+    ))
+}
+
 async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> io::Result<()> {
     let limit = session.rpc_frame_limit;
     let read_buffer = Mutex::new(VecDeque::new());
@@ -5081,11 +5087,8 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
     let concurrency = usize::from(session.rpc_concurrency.get());
     let permits = Arc::new(Semaphore::new(concurrency));
     let mut workers = tokio::task::JoinSet::new();
-    let notification_bytes = Arc::new(Semaphore::new(
-        limit
-            .0
-            .max(RpcFrameLimit::default().0 * MAX_QUEUED_RPC_NOTIFICATIONS),
-    ));
+    let request_bytes = rpc_inbound_byte_budget(limit, MAX_QUEUED_RPC_REQUESTS);
+    let notification_bytes = rpc_inbound_byte_budget(limit, MAX_QUEUED_RPC_NOTIFICATIONS);
     let (notifications, mut notification_rx) = mpsc::channel::<(
         RpcEnvelopeWireV3,
         tokio::sync::OwnedSemaphorePermit,
@@ -5132,7 +5135,15 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
                     .map_err(|_| invalid("RPC notification queue exhausted"))?;
                 continue;
             }
-            if workers.len() > concurrency + MAX_QUEUED_RPC_REQUESTS {
+            let bytes = if workers.len() > concurrency + MAX_QUEUED_RPC_REQUESTS {
+                None
+            } else {
+                request_bytes
+                    .clone()
+                    .try_acquire_many_owned(frame_bytes)
+                    .ok()
+            };
+            let Some(bytes) = bytes else {
                 let _write = write_lock.lock().await;
                 write_rpc_frame_v3(
                     stream.as_ref(),
@@ -5150,12 +5161,13 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
                 )
                 .await?;
                 continue;
-            }
+            };
             let handler = session.config.rpc_handler.clone();
             let stream = stream.clone();
             let write_lock = write_lock.clone();
             let permits = permits.clone();
             workers.spawn(async move {
+                let _bytes = bytes;
                 let _permit = permits.acquire_owned().await.map_err(|_| closed())?;
                 let (payload, error) = match handler {
                     Some(handler) => {
@@ -5743,6 +5755,24 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
+
+    #[test]
+    fn inbound_rpc_byte_budget_bounds_large_frames_and_recovers_capacity() {
+        for frame in [16u32 << 20, 256u32 << 20] {
+            let budget = rpc_inbound_byte_budget(
+                RpcFrameLimit::new(frame as usize).unwrap(),
+                MAX_QUEUED_RPC_REQUESTS,
+            );
+            let count = budget.available_permits() / frame as usize;
+            assert_eq!(count, if frame == 16 << 20 { 8 } else { 1 });
+            let permits: Vec<_> = (0..count)
+                .map(|_| budget.clone().try_acquire_many_owned(frame).unwrap())
+                .collect();
+            assert!(budget.clone().try_acquire_owned().is_err());
+            drop(permits);
+            assert!(budget.try_acquire_many_owned(frame).is_ok());
+        }
+    }
 
     #[test]
     fn notification_resources_are_destroyed_outside_the_registry_lock() {

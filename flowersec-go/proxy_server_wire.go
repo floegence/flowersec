@@ -27,6 +27,7 @@ var proxyBaseRequestHeaders = map[string]struct{}{
 var proxyBaseResponseHeaders = map[string]struct{}{
 	"accept-ranges": {}, "cache-control": {}, "content-disposition": {}, "content-language": {},
 	"content-range": {}, "content-type": {}, "etag": {}, "expires": {}, "last-modified": {}, "location": {},
+	"content-security-policy": {}, "x-content-type-options": {},
 }
 
 type proxyHeader struct {

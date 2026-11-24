@@ -63,3 +63,33 @@ func TestDynamicNotificationsShareInboundRouter(t *testing.T) {
 	default:
 	}
 }
+
+func TestNotificationCanCloseOwnSession(t *testing.T) {
+	serverTLS, roots := controllerNetworkTLS(t)
+	source := &webSocketHandlerRestartSource{serverTLS: serverTLS}
+	defer source.stopAll()
+	lease, sourceErr := source.Acquire(context.Background())
+	if sourceErr != nil {
+		t.Fatal(sourceErr)
+	}
+	client, err := Connect(context.Background(), lease, ConnectorOptions{Origin: "https://client.example", TrustRoots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server := source.takeGeneration(t, 0).waitSession(t)
+	closed := make(chan error, 1)
+	unsubscribe := client.RPC().OnNotify(902, func(context.Context, json.RawMessage) { closed <- client.Close() })
+	defer unsubscribe()
+	if err := server.RPC().Notify(context.Background(), 902, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("notification did not finish closing its session")
+	}
+}

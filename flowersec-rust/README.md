@@ -50,6 +50,10 @@ For direct listeners behind a port forward or using a multi-name certificate, `A
 
 Buffered HTTP uploads share a per-`ProxyServer` memory budget of 64 MiB or the configured `max_body_bytes`, whichever is greater. Requests that exceed the available budget receive `resource_exhausted` without contacting the upstream.
 
+Each `ProxyServer` can keep one idle HTTP connection to its configured upstream for up to 30 seconds. A connection becomes eligible for reuse after a complete response. Closing the proxy releases the idle connection. HTTP requests are sent once.
+
+Inbound RPC calls share a per-session budget of 128 MiB of encoded requests or one configured maximum frame, whichever is larger. A call holds its reservation while queued and while its handler runs. Calls exceeding the available capacity receive the existing overload response (429).
+
 Rust exposes the direct `Acceptor`, opaque `TunnelRuntime`, and carrier-neutral
 `ProxyServer`. The proxy implements the bounded HTTP and WebSocket application
 wire shared with the TypeScript browser runtime.

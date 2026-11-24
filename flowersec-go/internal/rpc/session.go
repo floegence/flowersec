@@ -378,7 +378,19 @@ func (s *Server) serveNotifications(ctx context.Context, notifications <-chan *r
 		case <-ctx.Done():
 			return
 		case env := <-notifications:
-			s.router.dispatchNotification(ctx, *env)
+			if ctx.Err() != nil {
+				return
+			}
+			finished := make(chan struct{})
+			go func() {
+				defer close(finished)
+				s.router.dispatchNotification(ctx, *env)
+			}()
+			select {
+			case <-finished:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }

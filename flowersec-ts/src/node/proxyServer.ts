@@ -28,7 +28,7 @@ const DEFAULT_TIMEOUT = 30_000;
 const MAX_TIMEOUT = 300_000;
 const FORBIDDEN_HEADERS = new Set(["authorization", "connection", "host", "keep-alive", "proxy-authorization", "set-cookie", "transfer-encoding", "upgrade"]);
 const REQUEST_HEADERS = new Set(["accept", "accept-language", "content-type", "if-match", "if-none-match", "range"]);
-const RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-language", "content-range", "content-type", "etag", "expires", "last-modified", "location"]);
+const RESPONSE_HEADERS = new Set(["accept-ranges", "cache-control", "content-disposition", "content-language", "content-range", "content-security-policy", "content-type", "etag", "expires", "last-modified", "location", "x-content-type-options"]);
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 
 export type ProxyServerOptions = Readonly<{

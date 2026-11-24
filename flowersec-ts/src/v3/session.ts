@@ -413,8 +413,9 @@ export class SessionV3 implements SessionV3Contract {
     this.pings.set(nonce, pending);
     const started = this.runtime.monotonicMilliseconds();
     try {
-      await this.sendControl(InnerTypeV3.Ping, u64(nonce), options.signal);
-      await raceAbort(pending.promise, options.signal);
+      await raceAbort(Promise.all([
+        this.sendControl(InnerTypeV3.Ping, u64(nonce), options.signal), pending.promise,
+      ]), options.signal);
       return Math.max(0, this.runtime.monotonicMilliseconds() - started);
     } finally {
       this.pings.delete(nonce);
@@ -594,8 +595,11 @@ export class SessionV3 implements SessionV3Contract {
     const pending = deferred<void>();
     this.pings.set(nonce, pending);
     try {
-      await this.sendControl(InnerTypeV3.Ping, u64(nonce));
-      return await resolveWithin(pending.promise, DEFAULT_CONTROL_CONFIRM_TIMEOUT_MS);
+      const [, confirmed] = await Promise.all([
+        this.sendControl(InnerTypeV3.Ping, u64(nonce)),
+        resolveWithin(pending.promise, DEFAULT_CONTROL_CONFIRM_TIMEOUT_MS),
+      ]);
+      return confirmed;
     } finally {
       this.pings.delete(nonce);
     }
@@ -868,7 +872,13 @@ export class SessionV3 implements SessionV3Contract {
     }
     const task = this.controlWriteTail.then(async () => {
       if (this.lifecycle === "closed") throw this.terminalError ?? new SessionV3Error("closed", "Flowersec v5 session closed");
-      await this.writeControl(type, payload, signal);
+      throwIfAborted(signal);
+      try {
+        await this.writeControl(type, payload);
+      } catch (error) {
+        this.fail(asError(error));
+        throw error;
+      }
     });
     this.controlWriteTail = task.catch(() => undefined);
     if (signal === undefined) await task;
@@ -927,7 +937,7 @@ export class SessionV3 implements SessionV3Contract {
     return task;
   }
 
-  private async writeControl(type: InnerTypeV3, payload: Uint8Array, signal?: AbortSignal): Promise<void> {
+  private async writeControl(type: InnerTypeV3, payload: Uint8Array): Promise<void> {
     const material = this.controlSendKey ??= deriveControlRecordKey(
       this.rootForSend(this.controlSendEpoch),
       this.h3,
@@ -938,7 +948,7 @@ export class SessionV3 implements SessionV3Contract {
       this.suite, material, this.h3, 0n, this.sendDirection, this.controlSendEpoch, this.controlSendSequence, type, payload,
     );
     this.controlSendSequence += 1n;
-    await writeAll(this.control, wire, signal);
+    await writeAll(this.control, wire);
     this.markAuthenticatedActivity();
   }
 
@@ -1689,6 +1699,7 @@ class EncryptedStreamV3 implements ByteStreamV3 {
   }
 
   async close(): Promise<void> {
+    if (this.localFIN && this.remoteFIN) return;
     await this.reset();
   }
 

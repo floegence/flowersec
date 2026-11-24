@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { BodyIntake } from "./bodyIntake.js";
 
 export type ProxyServiceWorkerPassthroughOptions = Readonly<{
@@ -47,7 +49,7 @@ type ServiceWorkerConfig = Readonly<{
   forwardFetchMessageTypes: readonly string[];
   windowTarget: "registered_runtime" | "request_client";
   windowClientMessageType: string;
-  runtimeRegistrationToken: string;
+  runtimeRegistrationDigest: string;
   runtimeClientPathPrefix: string;
   conflictHints: readonly string[];
 }>;
@@ -83,6 +85,7 @@ function token(name: string, value: string | undefined, fallback = ""): string {
 }
 
 function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWorkerConfig {
+  const registrationToken = token("runtimeRegistrationToken", options.runtimeRegistrationToken);
   const proxyPathPrefix = token("proxyPathPrefix", options.proxyPathPrefix, "");
   if (proxyPathPrefix !== "" && (!proxyPathPrefix.startsWith("/") || proxyPathPrefix.startsWith("//"))) {
     throw new TypeError("proxyPathPrefix must be an origin-relative prefix");
@@ -115,7 +118,7 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
     forwardFetchMessageTypes: strings("forwardFetchMessageTypes", options.forwardFetchMessageTypes),
     windowTarget: options.windowTarget ?? "request_client",
     windowClientMessageType: token("windowClientMessageType", options.windowClientMessageType, "flowersec-proxy:fetch"),
-    runtimeRegistrationToken: token("runtimeRegistrationToken", options.runtimeRegistrationToken),
+    runtimeRegistrationDigest: registrationToken && bytesToHex(sha256(new TextEncoder().encode(registrationToken))),
     runtimeClientPathPrefix: token("runtimeClientPathPrefix", options.runtimeClientPathPrefix),
     conflictHints: strings("conflictHints.keepScriptPathSuffixes", options.conflictHints?.keepScriptPathSuffixes),
   });
@@ -125,7 +128,13 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
   const worker = self as any;
   let runtimeClientId = "";
   const registrations = new Set<string>();
-  const restricted = !!(config.runtimeRegistrationToken || config.runtimeClientPathPrefix);
+  const restricted = !!(config.runtimeRegistrationDigest || config.runtimeClientPathPrefix);
+  const matchesToken = async (value: unknown): Promise<boolean> => {
+    if (!config.runtimeRegistrationDigest) return true;
+    if (typeof value !== "string" || !value.length || value.length > 512) return false;
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") === config.runtimeRegistrationDigest;
+  };
   const intake = new Intake(24, Math.max(config.maxRequestBodyBytes, 64 * 1024 * 1024));
   const shared = config.windowTarget === "registered_runtime";
   const cacheName = `flowersec-proxy-owner-v2:${worker.registration?.scope ?? worker.location.href}`;
@@ -149,7 +158,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
       const channel = new MessageChannel();
       const finish = (ok: boolean) => { clearTimeout(timer); channel.port1.close(); resolve(ok); };
       const timer = setTimeout(() => finish(false), 2_000);
-      channel.port1.onmessage = event => finish(event.data?.registered === true && (!config.runtimeRegistrationToken || event.data.token === config.runtimeRegistrationToken));
+      channel.port1.onmessage = event => {
+        if (event.data?.registered !== true) return finish(false);
+        void matchesToken(event.data.token).then(finish, () => finish(false));
+      };
       channel.port1.onmessageerror = () => finish(false);
       try { client.postMessage({ type: "flowersec-proxy:confirm-registration" }, [channel.port2]); }
       catch { finish(false); }
@@ -231,7 +243,6 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
       const port = event.ports[0];
       const source = event.source as any;
       let ok = data.version === 2 && typeof source?.id === "string" && source.id !== "";
-      if (config.runtimeRegistrationToken !== "") ok = ok && data.token === config.runtimeRegistrationToken;
       if (ok && config.runtimeClientPathPrefix !== "") {
         try {
           ok = new URL(source!.url).pathname.startsWith(config.runtimeClientPathPrefix);
@@ -240,6 +251,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
         }
       }
       event.waitUntil(serialize(async () => {
+        ok = ok && await matchesToken(data.token);
         if (ok && restricted && config.windowTarget === "request_client") {
           if (registrations.size >= 256 && !registrations.has(source.id)) {
             await Promise.all(Array.from(registrations, async id => {

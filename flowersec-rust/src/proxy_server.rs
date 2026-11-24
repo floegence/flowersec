@@ -72,11 +72,13 @@ const RESPONSE_HEADERS: &[&str] = &[
     "content-disposition",
     "content-language",
     "content-range",
+    "content-security-policy",
     "content-type",
     "etag",
     "expires",
     "last-modified",
     "location",
+    "x-content-type-options",
 ];
 
 pub type ProxyErrorReporter = Arc<dyn Fn(ProxyServerError) + Send + Sync + 'static>;
@@ -155,7 +157,7 @@ pub enum ProxyServerError {
 struct Config {
     upstream: Url,
     upstream_origin: String,
-    upstream_trust_roots_der: Vec<Vec<u8>>,
+    upstream_tls: Option<Arc<rustls::ClientConfig>>,
     allowed_origins: HashSet<String>,
     max_json: usize,
     max_chunk: usize,
@@ -174,6 +176,7 @@ struct Config {
 
 struct Inner {
     config: Config,
+    idle_http: std::sync::Mutex<Option<IdleHttpConnection>>,
     upload_bytes: Arc<AtomicUsize>,
     permits: Arc<Semaphore>,
     closed: CancellationToken,
@@ -197,13 +200,10 @@ pub struct ProxyServer {
 impl ProxyServer {
     pub fn new(options: ProxyServerOptions) -> Result<Self, ProxyServerError> {
         let (config, max_concurrent, on_error) = compile_options(options)?;
-        if config.upstream.scheme() == "https" {
-            websocket_transport::client_tls(config.upstream_trust_roots_der.clone())
-                .map_err(|_| ProxyServerError::InvalidOptions)?;
-        }
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
+                idle_http: std::sync::Mutex::new(None),
                 upload_bytes: Arc::new(AtomicUsize::new(0)),
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
@@ -253,6 +253,7 @@ impl ProxyServer {
     /// Cancels active operations, waits for their cleanup, and rejects future dispatch.
     pub async fn close(&self) {
         self.inner.closed.cancel();
+        self.inner.idle_http.lock().unwrap().take();
         loop {
             let completion = self.inner.completion.notified();
             tokio::pin!(completion);
@@ -417,9 +418,16 @@ fn compile_options(
     };
     Ok((
         Config {
+            upstream_tls: if options.upstream.scheme() == "https" {
+                Some(
+                    websocket_transport::client_tls(options.upstream_trust_roots_der)
+                        .map_err(|_| ProxyServerError::InvalidOptions)?,
+                )
+            } else {
+                None
+            },
             upstream: options.upstream,
             upstream_origin: options.upstream_origin.origin().ascii_serialization(),
-            upstream_trust_roots_der: options.upstream_trust_roots_der,
             allowed_origins,
             max_json,
             max_chunk,
@@ -765,7 +773,7 @@ async fn write_chunk(
 }
 
 async fn serve_http(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
@@ -779,7 +787,7 @@ async fn serve_http(
 }
 
 async fn serve_http_request(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
     started: Instant,
@@ -892,7 +900,7 @@ async fn serve_http_request(
                     .map_err(|_| ProxyServerError::OperationFailed)?,
             );
         }
-        let (response, connection_task) =
+        let (response, connection) =
             match send_http_request(inner, request, connect_host, port, deadline, &cancellation)
                 .await
             {
@@ -923,7 +931,7 @@ async fn serve_http_request(
                 .and_then(|value| value.parse::<u64>().ok())
                 .is_some_and(|length| length > inner.config.max_body as u64)
         {
-            connection_task.abort();
+            drop(connection);
             write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
             return Ok(());
         }
@@ -966,7 +974,9 @@ async fn serve_http_request(
             write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
         }
         .await;
-        connection_task.abort();
+        if result.is_ok() && status != 101 && !cancellation.is_cancelled() {
+            park_http_connection(inner, connection);
+        }
         result
     })
     .await
@@ -1039,6 +1049,43 @@ fn connect_host(url: &url::Url) -> Option<String> {
     })
 }
 
+struct HttpConnection {
+    sender: http1::SendRequest<Full<Bytes>>,
+    _driver: tokio_util::task::AbortOnDropHandle<()>,
+}
+
+struct IdleHttpConnection {
+    connection: HttpConnection,
+    deadline: Instant,
+    _expiry: tokio_util::task::AbortOnDropHandle<()>,
+}
+
+fn park_http_connection(inner: &Arc<Inner>, connection: HttpConnection) {
+    let mut idle = inner.idle_http.lock().unwrap();
+    if inner.closed.is_cancelled() || connection.sender.is_closed() {
+        return;
+    }
+    let owner = Arc::downgrade(inner);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let expiry = tokio::spawn(async move {
+        tokio::time::sleep_until(deadline).await;
+        if let Some(owner) = owner.upgrade() {
+            let mut idle = owner.idle_http.lock().unwrap();
+            if idle
+                .as_ref()
+                .is_some_and(|entry| entry.deadline <= Instant::now())
+            {
+                idle.take();
+            }
+        }
+    });
+    *idle = Some(IdleHttpConnection {
+        connection,
+        deadline,
+        _expiry: tokio_util::task::AbortOnDropHandle::new(expiry),
+    });
+}
+
 async fn send_http_request(
     inner: &Inner,
     request: Request<Full<Bytes>>,
@@ -1046,13 +1093,30 @@ async fn send_http_request(
     port: u16,
     deadline: Instant,
     cancellation: &CancellationToken,
-) -> Result<
-    (
-        hyper::Response<Incoming>,
-        tokio_util::task::AbortOnDropHandle<()>,
-    ),
-    HttpRequestFailure,
-> {
+) -> Result<(hyper::Response<Incoming>, HttpConnection), HttpRequestFailure> {
+    let idle = inner.idle_http.lock().unwrap().take();
+    let mut connection = match idle {
+        Some(entry) if entry.deadline > Instant::now() && entry.connection.sender.is_ready() => {
+            entry.connection
+        }
+        _ => open_http_connection(inner, host, port, deadline, cancellation).await?,
+    };
+    let response = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
+        result = tokio::time::timeout_at(deadline, connection.sender.send_request(request)) =>
+            result.map_err(|_| HttpRequestFailure::Timeout)?.map_err(|_| HttpRequestFailure::Request)?,
+    };
+    Ok((response, connection))
+}
+
+async fn open_http_connection(
+    inner: &Inner,
+    host: String,
+    port: u16,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<HttpConnection, HttpRequestFailure> {
     let tcp = tokio::select! {
         _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
         result = tokio::time::timeout_at(deadline, TcpStream::connect((host.as_str(), port))) => match result {
@@ -1061,12 +1125,9 @@ async fn send_http_request(
             Ok(Ok(tcp)) => tcp,
         },
     };
-    let io = if inner.config.upstream.scheme() == "https" {
+    let io = if let Some(config) = &inner.config.upstream_tls {
         let server_name = ServerName::try_from(host).map_err(|_| HttpRequestFailure::Dial)?;
-        let tls = TlsConnector::from(
-            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
-                .map_err(|_| HttpRequestFailure::Dial)?,
-        );
+        let tls = TlsConnector::from(config.clone());
         let connected = tokio::select! {
             _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
             result = tokio::time::timeout_at(deadline, tls.connect(server_name, tcp)) => match result {
@@ -1079,7 +1140,7 @@ async fn send_http_request(
     } else {
         HttpIo::Plain(tcp)
     };
-    let (mut sender, connection) = tokio::select! {
+    let (sender, connection) = tokio::select! {
         _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
         result = tokio::time::timeout_at(deadline, http1::handshake(TokioIo::new(io))) => match result {
             Err(_) => return Err(HttpRequestFailure::Timeout),
@@ -1090,24 +1151,10 @@ async fn send_http_request(
     let connection_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let _ = connection.await;
     }));
-    let response = tokio::select! {
-        _ = cancellation.cancelled() => {
-            connection_task.abort();
-            return Err(HttpRequestFailure::Closed);
-        },
-        result = tokio::time::timeout_at(deadline, sender.send_request(request)) => match result {
-            Err(_) => {
-                connection_task.abort();
-                return Err(HttpRequestFailure::Timeout);
-            },
-            Ok(Err(_)) => {
-                connection_task.abort();
-                return Err(HttpRequestFailure::Request);
-            },
-            Ok(Ok(response)) => response,
-        },
-    };
-    Ok((response, connection_task))
+    Ok(HttpConnection {
+        sender,
+        _driver: connection_task,
+    })
 }
 
 async fn write_http_error(
@@ -1243,8 +1290,11 @@ async fn establish_proxy_websocket(
         let server_name =
             ServerName::try_from(host).map_err(|_| ProxyServerError::OperationFailed)?;
         let tls = TlsConnector::from(
-            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
-                .map_err(|_| ProxyServerError::OperationFailed)?,
+            inner
+                .config
+                .upstream_tls
+                .clone()
+                .ok_or(ProxyServerError::OperationFailed)?,
         );
         let connected = tls
             .connect(server_name, tcp)
@@ -1915,6 +1965,50 @@ mod tests {
         ] {
             assert!(normalize_path(raw).is_none(), "accepted unsafe path {raw}");
         }
+    }
+
+    #[tokio::test]
+    async fn sequential_http_requests_share_an_upstream_connection_until_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server =
+            ProxyServer::new(test_options(format!("http://{address}").parse().unwrap())).unwrap();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            for _ in 0..2 {
+                let mut headers = Vec::new();
+                while !headers.ends_with(b"\r\n\r\n") {
+                    headers.push(socket.read_u8().await.unwrap());
+                }
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Security-Policy: default-src 'none'\r\nX-Content-Type-Options: nosniff\r\n\r\nok").await.unwrap();
+            }
+            let mut byte = [0];
+            assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
+        });
+        for _ in 0..2 {
+            let mut input = frame_json(
+                serde_json::json!({"v":1,"request_id":"page","method":"GET","path":"/","headers":[]}),
+            );
+            input.extend_from_slice(&0u32.to_be_bytes());
+            let stream = Arc::new(TestStream::new(input));
+            serve_http(&server.inner, &stream, CancellationToken::new())
+                .await
+                .unwrap();
+            let meta = response_meta(&stream.output());
+            assert_eq!(meta["status"], 200, "{meta}");
+            assert_eq!(
+                meta["headers"],
+                serde_json::json!([
+                    {"name":"content-security-policy","value":"default-src 'none'"},
+                    {"name":"x-content-type-options","value":"nosniff"}
+                ])
+            );
+        }
+        server.close().await;
+        tokio::time::timeout(Duration::from_secs(2), upstream)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

@@ -1,4 +1,6 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { once } from "node:events";
+import { createByteStreamDuplex } from "../node/byteStreamDuplex.js";
 import { describe, expect, test, vi } from "vitest";
 
 import { RpcRouter } from "../rpc/server.js";
@@ -30,6 +32,56 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test("a normally finished Node duplex preserves the peer's unread response", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    try {
+      const [request, { stream }] = await Promise.all([client.openStream("reply"), projectSessionV3(server).acceptStream()]);
+      await request.closeWrite();
+      const duplex = createByteStreamDuplex(stream);
+      const ended = once(duplex, "end");
+      duplex.resume();
+      await ended;
+      const closed = once(duplex, "close");
+      duplex.end("reply");
+      await closed;
+      expect(await request.read()).toEqual(new TextEncoder().encode("reply"));
+      expect(await request.read()).toBeNull();
+    } finally { await Promise.allSettled([client.close(), server.close()]); }
+  });
+
+  test("canceling queued and in-flight probes preserves the next control record", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const carrier = new TerminalOrderingCarrier(left);
+    const [client, server] = await Promise.all([establishSessionV3(carrier, config("client")), establishSessionV3(right, config("server"))]);
+    try {
+      carrier.blockNextControlWrite();
+      const committed = new AbortController();
+      const first = client.probeLiveness({ signal: committed.signal });
+      await carrier.blockedWriteEntered.promise;
+      const queued = new AbortController();
+      const second = client.probeLiveness({ signal: queued.signal });
+      queued.abort();
+      committed.abort();
+      await Promise.all([expect(first).rejects.toThrow(), expect(second).rejects.toThrow()]);
+      carrier.releaseBlockedWrite();
+      await expect(client.probeLiveness()).resolves.toBeGreaterThanOrEqual(0);
+    } finally { carrier.releaseBlockedWrite(); await Promise.allSettled([client.close(), server.close()]); }
+  });
+
+  test("a probe owns both write and reply failures during disconnect", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const carrier = new TerminalOrderingCarrier(left);
+    const [client, server] = await Promise.all([establishSessionV3(carrier, config("client")), establishSessionV3(right, config("server"))]);
+    try {
+      carrier.blockNextControlWrite();
+      const outcome = expect(client.probeLiveness()).rejects.toThrow();
+      await carrier.blockedWriteEntered.promise;
+      carrier.abort();
+      await outcome;
+    } finally { carrier.releaseBlockedWrite(); await Promise.allSettled([client.close(), server.close()]); }
+  });
+
   test("peer FIN defers rekey until the response finishes", async () => {
     const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
     const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);

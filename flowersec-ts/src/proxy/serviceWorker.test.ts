@@ -91,9 +91,15 @@ describe("proxy service worker generator", () => {
     expect(script).toContain("@floegence/flowersec-core/proxy v2");
     expect(script).toContain("chunk_credit_v2");
     expect(script).toContain("flowersec-proxy:register-runtime");
-    expect(script).toContain("runtime-token");
+    expect(script).not.toContain("runtime-token");
     expect(script).not.toContain("proxy.runtime@1");
     expect(script).not.toContain("Yamux");
+  });
+
+  it("verifies the registration token before accepting a shared owner", async () => {
+    const worker = generatedWorker(async id => ({ id }), { windowTarget: "registered_runtime", runtimeRegistrationToken: "registered-owner" });
+    expect(await worker.register("wrong", "different")).toBe(false);
+    expect(await worker.register("owner", "registered-owner")).toBe(true);
   });
 
   it("rejects unsafe or unbounded generator inputs", () => {
@@ -219,7 +225,7 @@ function generatedWorker(
   getClient: (id: string) => Promise<unknown>,
   options: Parameters<typeof createProxyServiceWorkerScript>[0],
   cache = new Map<string, string>(),
-): Readonly<{ fetch(request: Request, clientId?: string): Promise<Response>; register(id: string): Promise<boolean>; release(id: string): void }> {
+): Readonly<{ fetch(request: Request, clientId?: string): Promise<Response>; register(id: string, token?: string): Promise<boolean>; release(id: string): void }> {
   let fetchHandler: ((event: any) => void) | undefined;
   let messageHandler: ((event: any) => void) | undefined;
   const worker = {
@@ -239,9 +245,9 @@ function generatedWorker(
   const install = new Function("self", createProxyServiceWorkerScript(options));
   install(worker);
   return {
-    register(id) {
+    register(id, token) {
       return new Promise<boolean>((resolve, reject) => messageHandler!({
-        source: { id, url: "https://app.example/boot/" }, data: { type: "flowersec-proxy:register-runtime", version: 2 },
+        source: { id, url: "https://app.example/boot/" }, data: { type: "flowersec-proxy:register-runtime", version: 2, token },
         ports: [{ postMessage: (reply: { ok: boolean }) => resolve(reply.ok), close() {} }],
         waitUntil: (work: Promise<void>) => work.catch(reject),
       }));
