@@ -171,6 +171,12 @@ The callback can only restrict admission: TLS policy, configured Origin policy,
 and session authorization remain independently required. It does not change
 the transport protocol or the carrier-neutral Acceptor interface.
 
+For TLS pass-through with port translation, `WebSocketHTTPServerOptions.DirectIngressAliases`
+can supply additional exact public WSS URLs from trusted configuration for that
+server only. Other servers sharing the Acceptor retain their own ingress policy
+and share its admission limit. Aliases cannot override a fixed Acceptor ingress;
+they do not replace request authority, TLS certificate, or candidate validation.
+
 `AcceptorOptions.CheckOrigin` optionally evaluates the current application
 Origin policy for each direct TLS WebSocket upgrade. It is mutually exclusive
 with static `AllowedOrigins` and must be safe for concurrent calls. Rejected

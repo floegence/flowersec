@@ -299,6 +299,7 @@ func (acceptor *Acceptor) PrivateLoopbackHandler(options PrivateLoopbackHandlerO
 			validatePrivateLoopbackUpgradeRequest,
 			options.AuthorizeRequest,
 			webSocketAdmissionPrivate,
+			nil,
 		)
 	})
 	return mux, nil
@@ -333,7 +334,7 @@ func (acceptor *Acceptor) HTTPDirectHandler(options HTTPDirectHandlerOptions) (h
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acceptor.handleDirectWithAdmission(w, r, func(candidate *http.Request) bool {
 			return httpdirectv1.RequestAllowed(candidate) && validateDirectUpgradeHeaders(candidate)
-		}, options.AuthorizeRequest, webSocketAdmissionHTTP)
+		}, options.AuthorizeRequest, webSocketAdmissionHTTP, nil)
 	})
 	return &httpDirectBoundary{handler: handler}, nil
 }
@@ -382,15 +383,15 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 }
 
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
-	acceptor.handleDirectWithPolicy(writer, request, nil)
+	acceptor.handleDirectWithPolicy(writer, request, nil, nil)
 }
 
-func (acceptor *Acceptor) handleDirectWithPolicy(writer http.ResponseWriter, request *http.Request, policy func(*http.Request) bool) {
+func (acceptor *Acceptor) handleDirectWithPolicy(writer http.ResponseWriter, request *http.Request, policy func(*http.Request) bool, aliases func() []string) {
 	acceptor.handleDirectWithAdmission(writer, request, func(candidate *http.Request) bool {
 		return candidate != nil && candidate.Method == http.MethodGet && gorillaws.IsWebSocketUpgrade(candidate) && carrierws.ValidateServerRequest(candidate) == nil
 	}, func(candidate *http.Request) bool {
 		return acceptor.allowedOrigin(candidate) && (policy == nil || policy(candidate))
-	}, webSocketAdmissionTLS)
+	}, webSocketAdmissionTLS, aliases)
 }
 
 func (acceptor *Acceptor) handleDirectWithAdmission(
@@ -399,6 +400,7 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	validateRequest func(*http.Request) bool,
 	authorizeRequest func(*http.Request) bool,
 	mode webSocketAdmissionMode,
+	aliases func() []string,
 ) {
 	deadline := time.Now().Add(inboundAdmissionTimeout)
 	if request == nil || validateRequest == nil || authorizeRequest == nil ||
@@ -442,6 +444,7 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	ingress := directIngress{local: connection.LocalAddr(), state: request.TLS, authority: request.Host, mode: mode}
 	if mode == webSocketAdmissionTLS {
 		ingress.configured = acceptor.ingresses[carrier.KindWebSocket]
+		ingress.aliases = aliases
 	}
 	decoded, err := serveAdmission(ctx, connection, acceptor.reasons(), direct.authorize("websocket", request.RemoteAddr, ingress))
 	if err != nil {
@@ -517,6 +520,7 @@ type directIngress struct {
 	local                 net.Addr
 	state                 *tls.ConnectionState
 	authority, configured string
+	aliases               func() []string
 	mode                  webSocketAdmissionMode
 }
 
@@ -528,7 +532,7 @@ func (ingress directIngress) match(decoded *artifactv3.DecodedRequest, kind arti
 		if candidate.ID != decoded.Request.ChosenCandidateID || candidate.Carrier != kind {
 			continue
 		}
-		if !transportsecurity.MatchesLocalDirectEndpoint(candidate.NormalizedURL, ingress.configured, ingress.local, ingress.state) {
+		if !transportsecurity.MatchesLocalDirectEndpoint(candidate.NormalizedURL, ingress.configured, ingress.local, ingress.state) && !ingress.matchesAlias(kind, candidate.NormalizedURL) {
 			return "", false
 		}
 		if ingress.mode != webSocketAdmissionTLS {
@@ -552,6 +556,19 @@ func (ingress directIngress) match(decoded *artifactv3.DecodedRequest, kind arti
 		return "", transportsecurity.MatchesDirectIngress(decoded, kind, candidate.NormalizedURL, ingress.state, time.Now())
 	}
 	return "", false
+}
+
+func (ingress directIngress) matchesAlias(kind artifactv3.Carrier, endpoint string) bool {
+	if ingress.aliases == nil || ingress.authority == "" || ingress.mode != webSocketAdmissionTLS || ingress.configured != "" || kind != artifactv3.CarrierWebSocket {
+		return false
+	}
+	for _, alias := range ingress.aliases() {
+		normalized, err := artifactv3.NormalizeDirectEndpoint(kind, alias)
+		if err == nil && normalized == endpoint {
+			return true
+		}
+	}
+	return false
 }
 
 func (direct *acceptedDirect) authorize(observedCarrier, remoteAddress string, ingress directIngress) admissionv3.Authorize {

@@ -1,6 +1,7 @@
 package flowersec
 
 import (
+	"crypto/tls"
 	"net"
 	"slices"
 	"testing"
@@ -26,6 +27,37 @@ func TestDirectIngressChecksProfileAndLocalEndpoint(t *testing.T) {
 	if _, ok := ingress.match(decoded, candidate.Carrier); ok {
 		t.Fatal("accepted a mismatched local listener")
 	}
+}
+
+func TestDirectIngressForwardedPort(t *testing.T) {
+	config, _ := internalWebSocketServerTLS(t)
+	const endpoint = "wss://localhost:9443" + WebSocketDirectPath
+	local := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 7443}
+	state := &tls.ConnectionState{Version: tls.VersionTLS13, LocalCertificate: config.Certificates[0].Certificate}
+	candidate := artifactv3.CanonicalCandidate{ID: "public", Carrier: artifactv3.CarrierWebSocket, NormalizedURL: endpoint, TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}}
+	decoded := &artifactv3.DecodedRequest{Request: artifactv3.Request{PathKind: artifactv3.PathDirect, ChosenCandidateID: candidate.ID, Candidates: []artifactv3.CanonicalCandidate{candidate}}}
+	aliases := []string{endpoint}
+	ingress := directIngress{local: local, state: state, authority: "localhost:9443", aliases: func() []string { return aliases }}
+	check := func(want bool) {
+		t.Helper()
+		if _, ok := ingress.match(decoded, candidate.Carrier); ok != want {
+			t.Fatalf("authority %q aliases %v: matched=%v, want %v", ingress.authority, aliases, ok, want)
+		}
+	}
+	check(true)
+	ingress.authority = "localhost:7443"
+	check(false)
+	ingress.authority = "localhost:9443"
+	state.DidResume = true
+	check(false)
+	state.DidResume = false
+	aliases = []string{"wss://localhost:9444" + WebSocketDirectPath}
+	check(false)
+	aliases = nil
+	check(false)
+	ingress.authority = "localhost:7443"
+	decoded.Request.Candidates[0].NormalizedURL = "wss://localhost:7443" + WebSocketDirectPath
+	check(true)
 }
 
 func TestAcceptorAdmissionReasonsAreDirectOnly(t *testing.T) {

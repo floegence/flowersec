@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v7/internal/carrier"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -26,6 +27,11 @@ const defaultWebSocketReadHeaderTimeout = 10 * time.Second
 // of TLSConfig and never exposes it for post-construction mutation.
 type WebSocketHTTPServerOptions struct {
 	Handler http.Handler
+	// DirectIngressAliases returns additional public WSS endpoints forwarded to
+	// this TLS listener. Supply a concurrency-safe snapshot of trusted listener
+	// configuration, never request-derived values. It cannot override a fixed
+	// Acceptor ingress or be used on a tunnel server.
+	DirectIngressAliases func() []string
 	// AuthorizeWebSocketRequest optionally restricts requests to the direct and
 	// tunnel protocol paths before upgrade or session authorization. Returning
 	// false rejects the request with 403. It does not replace TLS, Origin, or
@@ -69,6 +75,12 @@ func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPS
 	if !ok || boundary == nil || boundary.secureHandler() == nil {
 		return nil, ErrInvalidWebSocketServer
 	}
+	if options.DirectIngressAliases != nil {
+		direct, ok := boundary.(*webSocketBoundary)
+		if !ok || direct.direct == nil || direct.direct.ingresses[carrier.KindWebSocket] != "" {
+			return nil, ErrInvalidWebSocketServer
+		}
+	}
 	tlsConfig, err := prepareWebSocketServerTLS(options.TLSConfig)
 	if err != nil {
 		return nil, ErrInvalidWebSocketServer
@@ -103,14 +115,14 @@ func NewHTTPDirectServer(options HTTPDirectServerOptions) (*WebSocketHTTPServer,
 
 func newWebSocketHTTPServer(options WebSocketHTTPServerOptions, transport http.Handler, tlsConfig *tls.Config, plaintext bool) *WebSocketHTTPServer {
 	handler := transport
-	if options.ApplicationHandler != nil || options.AuthorizeWebSocketRequest != nil {
+	if options.ApplicationHandler != nil || options.AuthorizeWebSocketRequest != nil || options.DirectIngressAliases != nil {
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == WebSocketDirectPath || r.URL.Path == WebSocketTunnelPath {
-				if policy := options.AuthorizeWebSocketRequest; policy != nil {
+				if policy := options.AuthorizeWebSocketRequest; policy != nil || options.DirectIngressAliases != nil {
 					boundary, _ := options.Handler.(*webSocketBoundary)
 					switch {
 					case boundary != nil && boundary.direct != nil && r.URL.Path == WebSocketDirectPath:
-						boundary.direct.handleDirectWithPolicy(w, r, policy)
+						boundary.direct.handleDirectWithPolicy(w, r, policy, options.DirectIngressAliases)
 					case boundary != nil && boundary.tunnel != nil && r.URL.Path == WebSocketTunnelPath:
 						boundary.tunnel(w, r, policy)
 					default:
