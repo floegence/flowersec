@@ -1526,7 +1526,9 @@ export class SessionV3 implements SessionV3Contract {
 
   private fail(error: Error, abortCarrier = true): void {
     if (this.lifecycle === "closed") return;
-    if (this.path === "tunnel" && ((error instanceof CarrierError && error.code === "closed") ||
+    if (error instanceof CarrierError && error.code === "interrupted" && this.lifecycle === "open" && !this.peerCloseReceived) {
+      error = new SessionV3Error("closed", "session transport interrupted");
+    } else if (this.path === "tunnel" && ((error instanceof CarrierError && error.code === "closed") ||
         (error instanceof SessionV3Error && error.code === "closed" && abortCarrier))) {
       error = protocolError("tunnel closed before the terminal exchange completed");
     }

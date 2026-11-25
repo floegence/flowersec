@@ -243,6 +243,7 @@ export class WebSocketBinaryTransport {
   };
 
   private readonly onError = (): void => {
+    if (this.ws.readyState === 2 || this.ws.readyState === 3) return;
     this.fail(new Error("websocket error"));
   };
 

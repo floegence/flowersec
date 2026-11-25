@@ -206,6 +206,16 @@ describe("WebSocketBinaryTransport", () => {
     await expect(read).rejects.toMatchObject({ code: 1008, reason: "invalid_token" });
   });
 
+  test("a closing socket preserves the close code after an opaque error event", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+    const read = transport.readBinary();
+    ws.readyState = 3;
+    ws.emit("error", {});
+    ws.emit("close", { code: 1006, reason: "" });
+    await expect(read).rejects.toMatchObject({ name: "WsCloseError", code: 1006 });
+  });
+
   test("close rejects pending readers", async () => {
     const ws = new FakeWebSocket();
     const transport = new WebSocketBinaryTransport(ws);

@@ -5,6 +5,7 @@ import { createByteStreamDuplex } from "../node/byteStreamDuplex.js";
 import { ProxyServer } from "../node/proxyServer.js";
 import { freezeStreamHandlers, StreamHandlers } from "../public/streamHandlers.js";
 import { describe, expect, test, vi } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 
 import { RpcRouter } from "../rpc/server.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
@@ -18,6 +19,8 @@ import { CipherSuiteV3, InnerTypeV3 } from "./protocol.js";
 import { projectSessionV3 } from "./publicSession.js";
 import { establishSessionV3, SessionV3Error, type SessionConfigV3, type SessionV3 } from "./session.js";
 import { nodeSessionRuntimeV3 } from "./nodeSessionRuntime.js";
+import { WebSocketBinaryTransport } from "../ws-client/binaryTransport.js";
+import { createWebSocketCarrierSessionV3 } from "./webSocketCarrier.js";
 
 function config(role: "client" | "server"): SessionConfigV3 {
   return {
@@ -39,6 +42,38 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test.each([
+    [1012, "service restart", "closed"], [1006, "", "closed"],
+    [4000, "tunnel control forwarding failed", "closed"],
+    [4000, "session closed", "operation_failed"], [1008, "policy", "operation_failed"],
+  ] as const)("classifies an established tunnel WebSocket close (%i, %s)", async (code, reason, expected) => {
+    const listener = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    try {
+      await once(listener, "listening");
+      const address = listener.address();
+      if (!address || typeof address === "string") throw new Error("missing listener port");
+      const connected = once(listener, "connection");
+      const dialer = new WebSocket(`ws://127.0.0.1:${address.port}`);
+      const [[peer]] = await Promise.all([connected, once(dialer, "open")]);
+      const establish = (socket: WebSocket, role: "client" | "server") => {
+        const carrier = createWebSocketCarrierSessionV3(new WebSocketBinaryTransport(socket), {
+          client: role === "client", path: "tunnel", inboundBidirectionalStreamCapacity: 3,
+        });
+        return establishSessionV3(carrier, { ...config(role), path: "tunnel", localEndpointInstanceID: role,
+          expectedPeerEndpointInstanceID: role === "client" ? "server" : "client" }).then(projectSessionV3);
+      };
+      const [client, server] = await Promise.all([establish(dialer, "client"), establish(peer, "server")]);
+      if (code === 1006) peer.terminate(); else peer.close(code, reason);
+      const end = await client.waitTermination();
+      expect(end.error.code).toBe(expected);
+      expect(end.peerCloseReceived).toBeUndefined();
+      await Promise.all([client.close(), server.close()]);
+    } finally {
+      for (const socket of listener.clients) socket.terminate();
+      await new Promise<void>(resolve => listener.close(() => resolve()));
+    }
+  });
+
   test("pre-canceled consumers leave queued streams and data for the next reader", async () => {
     const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
     const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);

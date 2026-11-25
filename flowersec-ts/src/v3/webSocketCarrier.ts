@@ -1,5 +1,6 @@
 import { YamuxSession, type ByteDuplex } from "../yamux/session.js";
 import type { YamuxStream } from "../yamux/stream.js";
+import { WsCloseError } from "../ws-client/binaryTransport.js";
 import { CarrierError, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3, PathKind } from "./contract.js";
 
@@ -206,8 +207,8 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV3 {
     this.path = options.path;
     this.inboundBidirectionalStreamCapacity = options.inboundBidirectionalStreamCapacity;
     const duplex: ByteDuplex = {
-      read: async () => await transport.readBinary(),
-      write: async (chunk) => await transport.writeBinary(chunk),
+      read: () => transport.readBinary().catch(error => { throw classifyWebSocketClose(error, this.path); }),
+      write: chunk => transport.writeBinary(chunk).catch(error => { throw classifyWebSocketClose(error, this.path); }),
       close: () => transport.close(),
     };
     const policy = options.resourcePolicy ?? {};
@@ -290,6 +291,15 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV3 {
     this.yamux.close();
     this.termination.resolve();
   }
+}
+
+function classifyWebSocketClose(error: unknown, path: PathKind): unknown {
+  if (!(error instanceof WsCloseError)) return error;
+  const interrupted = error.code === 1001 || error.code === 1006 || error.code === 1012 || error.code === 1013 ||
+    (path === "tunnel" && error.code === 4000 && error.reason === "tunnel control forwarding failed");
+  if (interrupted) return new CarrierError("interrupted", "WebSocket carrier interrupted", error);
+  if (error.code === 1000 || (error.code === 4000 && error.reason === "session closed")) return error;
+  return new CarrierError("protocol", "Unexpected WebSocket carrier close", error);
 }
 
 class YamuxCarrierStreamAdapter implements CarrierStreamV3 {

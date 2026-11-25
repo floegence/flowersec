@@ -49,6 +49,7 @@ pub const TUNNEL: &str = "/flowersec/webtransport/v5/tunnel";
 const DRAFT: u64 = 0x2b603742;
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_SETTINGS: usize = 512;
+const CLOSE_DELIVERY_TIMEOUT: Duration = Duration::from_millis(500);
 const RESET: u64 = 0x52e4a40fa8db + 0xf502 + 0xf502 / 0x1e;
 fn invalid() -> io::Error {
     io::Error::new(
@@ -701,6 +702,7 @@ pub struct Carrier {
     capacity: u32,
     tasks: TaskTracker,
     peer_close: Arc<OnceLock<ApplicationClose>>,
+    peer_closed: CancellationToken,
     datagram_send: std::sync::Mutex<()>,
 }
 struct CloseSend {
@@ -726,6 +728,8 @@ impl Carrier {
         let monitor = conn.clone();
         let peer_close = Arc::new(OnceLock::new());
         let reported = peer_close.clone();
+        let peer_closed = CancellationToken::new();
+        let stopped = peer_closed.clone();
         tasks.spawn(async move {
             let Controls {outgoing, mut incoming, mut qpack, ..} = controls;
             let _held = outgoing;
@@ -738,7 +742,14 @@ impl Carrier {
             };
             tokio::select! {
                 biased;
-                result = read_capsules(&mut recv) => { if let Ok(close) = result { let _ = reported.set(close); } },
+                result = read_capsules(&mut recv) => {
+                    if let Ok(close) = result {
+                        let _ = reported.set(close);
+                        stopped.cancel();
+                        // The sender retires QUIC after its CONNECT FIN is acknowledged.
+                        let _ = tokio::time::timeout(CLOSE_DELIVERY_TIMEOUT, monitor.closed()).await;
+                    }
+                },
                 _ = monitor.closed() => {}, _ = monitor_control(&mut incoming) => {}, _ = monitor_uni => {}
             }
             monitor.close(0x100u32.into(),b"");
@@ -755,6 +766,7 @@ impl Carrier {
             capacity,
             tasks,
             peer_close,
+            peer_closed,
             datagram_send: std::sync::Mutex::new(()),
         })
     }
@@ -777,12 +789,22 @@ impl Carrier {
             .map_err(io_error)
     }
     pub async fn open_stream(&self) -> io::Result<Arc<Stream>> {
-        let (mut send, recv) = self.conn.open_bi().await.map_err(io_error)?;
-        let prefix = &[0x40, 0x41, 0];
-        send.write_all(prefix).await.map_err(io_error)?;
-        Ok(Stream::new(send, recv))
+        self.peer_closed
+            .run_until_cancelled(async {
+                let (mut send, recv) = self.conn.open_bi().await.map_err(io_error)?;
+                send.write_all(&[0x40, 0x41, 0]).await.map_err(io_error)?;
+                Ok(Stream::new(send, recv, &self.peer_closed))
+            })
+            .await
+            .ok_or(io::ErrorKind::NotConnected)?
     }
     pub async fn accept_stream(&self) -> io::Result<Arc<Stream>> {
+        self.peer_closed
+            .run_until_cancelled(self.accept_until_closed())
+            .await
+            .ok_or(io::ErrorKind::NotConnected)?
+    }
+    async fn accept_until_closed(&self) -> io::Result<Arc<Stream>> {
         loop {
             let (mut send, mut recv) = self.conn.accept_bi().await.map_err(io_error)?;
             let prefix = async {
@@ -790,7 +812,7 @@ impl Carrier {
             }
             .await;
             match prefix {
-                Ok(true) => return Ok(Stream::new(send, recv)),
+                Ok(true) => return Ok(Stream::new(send, recv, &self.peer_closed)),
                 Ok(false) => {
                     self.abort();
                     return Err(invalid());
@@ -806,6 +828,9 @@ impl Carrier {
         self.conn.max_datagram_size()?.checked_sub(1)
     }
     pub async fn send_unreliable_message(&self, payload: Bytes) -> Result<(), MessageError> {
+        if self.peer_closed.is_cancelled() {
+            return Err(MessageError::Closed);
+        }
         if payload.len()
             > self
                 .unreliable_message_max_size()
@@ -831,9 +856,10 @@ impl Carrier {
     pub async fn receive_unreliable_message(&self) -> Result<Bytes, MessageError> {
         loop {
             let mut bytes = self
-                .conn
-                .read_datagram()
+                .peer_closed
+                .run_until_cancelled(self.conn.read_datagram())
                 .await
+                .ok_or(MessageError::Closed)?
                 .map_err(|_| MessageError::Closed)?;
             if VarInt::decode(&mut bytes).is_ok_and(|id| id.into_inner() == 0)
                 && bytes.has_remaining()
@@ -867,7 +893,7 @@ impl Carrier {
             let mut frame = vec![0];
             put(&mut frame, capsule.len() as u64);
             frame.extend_from_slice(&capsule);
-            let result = tokio::time::timeout(Duration::from_millis(500), async {
+            let result = tokio::time::timeout(CLOSE_DELIVERY_TIMEOUT, async {
                 connect.write_all(&frame).await.map_err(io_error)?;
                 connect.finish().map_err(io_error)?;
                 match connect.stopped().await.map_err(io_error)? {
@@ -910,12 +936,12 @@ pub struct Stream {
     reset: CancellationToken,
 }
 impl Stream {
-    fn new(send: SendStream, recv: RecvStream) -> Arc<Self> {
+    fn new(send: SendStream, recv: RecvStream, peer_closed: &CancellationToken) -> Arc<Self> {
         Arc::new(Self {
             send: Mutex::new(send),
             recv: Mutex::new(recv),
-            stop: CancellationToken::new(),
-            reset: CancellationToken::new(),
+            stop: peer_closed.child_token(),
+            reset: peer_closed.child_token(),
         })
     }
 }
@@ -1097,7 +1123,7 @@ mod tests {
                 .write_all(&frames)
                 .await
                 .unwrap();
-            let _ = client.close_with_reason(17, "done").await;
+            client.close_with_reason(17, "done").await.unwrap();
             server.wait_termination().await;
             let close = server.peer_application_close().unwrap();
             assert_eq!((close.code, close.reason.as_str()), (17, "done"));
@@ -1105,6 +1131,52 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn peer_close_capsule_allows_connect_fin_delivery() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (listener, client, server) = draft02_pair().await;
+            let mut sender = client.connect_send.lock().await;
+            sender
+                .stream
+                .write_all(&[0, 7, 0x68, 0x43, 4, 0, 0, 0, 1])
+                .await
+                .unwrap();
+            server.peer_closed.cancelled().await;
+            assert_eq!(server.peer_application_close().unwrap().code, 1);
+            assert!(server.open_stream().await.is_err());
+            assert!(server.accept_stream().await.is_err());
+            assert_eq!(
+                server.receive_unreliable_message().await,
+                Err(MessageError::Closed)
+            );
+            sender.stream.finish().unwrap();
+            assert!(sender.stream.stopped().await.unwrap().is_none());
+            client.abort();
+            server.wait_termination().await;
+            listener.close().await;
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn peer_close_without_transport_shutdown_is_bounded() {
+        let (listener, client, server) = draft02_pair().await;
+        client
+            .connect_send
+            .lock()
+            .await
+            .stream
+            .write_all(&[0, 7, 0x68, 0x43, 4, 0, 0, 0, 1])
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server.wait_termination())
+            .await
+            .unwrap();
+        assert_eq!(server.peer_application_close().unwrap().code, 1);
+        listener.close().await;
     }
 
     #[tokio::test]

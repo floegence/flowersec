@@ -218,13 +218,13 @@ export class YamuxSession {
 
   // close terminates the session and resets all streams.
   close(): void {
-    this.closeInternal();
+    this.closeInternal(new Error("session closed"));
   }
 
   private fail(error: unknown): void {
     if (this.closed) return;
     const terminalError = error instanceof Error ? error : new Error(String(error));
-    this.closeInternal();
+    this.closeInternal(terminalError);
     try {
       this.onTerminal?.(terminalError);
     } catch {
@@ -232,7 +232,7 @@ export class YamuxSession {
     }
   }
 
-  private closeInternal(): void {
+  private closeInternal(error: Error): void {
     if (this.closed) return;
     this.closed = true;
     this.conn.close();
@@ -240,7 +240,7 @@ export class YamuxSession {
     const streams = Array.from(this.streams.values());
     this.streams.clear();
     for (const s of streams) {
-      s.abort(new Error("session closed"));
+      s.abort(error);
     }
   }
 

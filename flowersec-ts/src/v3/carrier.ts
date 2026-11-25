@@ -3,6 +3,8 @@ import type { CarrierKind, OperationOptionsV3, PathKind } from "./contract.js";
 export type CarrierErrorCode =
   | "aborted"
   | "closed"
+  | "interrupted"
+  | "protocol"
   | "reset"
   | "stop_sending"
   | "stop_sending_unavailable"
