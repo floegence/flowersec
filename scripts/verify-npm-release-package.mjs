@@ -9,8 +9,8 @@ const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 const MAX_METADATA_BYTES = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 // npm may finish its asynchronous publication scan several minutes after upload.
-// Bound metadata visibility separately from archive download retries.
-const MAX_METADATA_ATTEMPTS = 61;
+// Metadata and the advertised tarball can become visible at different times.
+const MAX_VISIBILITY_ATTEMPTS = 61;
 const MAX_ATTEMPTS = 6;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
@@ -22,7 +22,7 @@ const requestHeaders = Object.freeze({
 const metadataURL = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
 
 let metadata;
-for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt++) {
+for (let attempt = 1; attempt <= MAX_VISIBILITY_ATTEMPTS; attempt++) {
   try {
     const { response, body } = await fetchResponseBody(
       metadataURL,
@@ -45,9 +45,9 @@ for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt++) {
       throw error;
     }
   } catch (error) {
-    if (attempt === MAX_METADATA_ATTEMPTS || !isRetryableRegistryError(error)) throw error;
+    if (attempt === MAX_VISIBILITY_ATTEMPTS || !isRetryableRegistryError(error)) throw error;
   }
-  if (attempt === MAX_METADATA_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
+  if (attempt === MAX_VISIBILITY_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 assert.equal(metadata.name, packageName);
@@ -57,7 +57,8 @@ assert.match(metadata.dist?.integrity ?? "", /^sha512-/);
 assertRegistryURL(metadata.dist.tarball, new Set(["registry.npmjs.org"]));
 
 let archive;
-for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+let downloadFailures = 0;
+for (let attempt = 1; attempt <= MAX_VISIBILITY_ATTEMPTS; attempt++) {
   try {
     archive = await fetchResponseBody(
       metadata.dist.tarball,
@@ -67,13 +68,17 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       (candidate) => assertRegistryURL(candidate.url, new Set(["registry.npmjs.org"]), candidate.redirectedFrom),
     );
     if (!archive.response.ok) {
+      if (archive.response.status === 404 && attempt < MAX_VISIBILITY_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        continue;
+      }
       const error = new Error(`${packageName}@${version} download status ${archive.response.status}`);
       error.retryable = archive.response.status === 408 || archive.response.status === 429 || archive.response.status >= 500;
       throw error;
     }
     break;
   } catch (error) {
-    if (!isRetryableRegistryError(error) || attempt === MAX_ATTEMPTS) throw error;
+    if (!isRetryableRegistryError(error) || ++downloadFailures >= MAX_ATTEMPTS || attempt === MAX_VISIBILITY_ATTEMPTS) throw error;
     await new Promise((resolve) => setTimeout(resolve, 10_000));
   }
 }

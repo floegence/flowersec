@@ -962,6 +962,16 @@ test("npm registry readback enforces retries, status classes, JSON, and redirect
   assert.notEqual(downloadForbidden.result.status, 0);
   assert.equal(downloadForbidden.fetchCount, 2);
 
+  for (const available of [true, false]) {
+    const misses = available ? 12 : 61;
+    const delayed = createRegistryReadbackHarness(t, {
+      kind: "npm",
+      fetchResponses: [...Array.from({ length: misses }, () => ({ status: 404, url: tarballURL })), ...(available ? success : [])],
+    });
+    assert.equal(delayed.result.status === 0, available, delayed.result.stderr);
+    assert.equal(delayed.fetchCount, 1 + misses + Number(available));
+  }
+
   const trustedRedirect = createRegistryReadbackHarness(t, {
     kind: "npm",
     fetchResponses: [
