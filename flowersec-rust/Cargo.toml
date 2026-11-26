@@ -43,7 +43,7 @@ tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-m
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 tokio-util = { version = "0.7", features = ["compat", "rt"] }
-unicode-normalization = "=0.1.25"
+unicode-normalization = "=0.1.26"
 url = { version = "2", features = ["serde"] }
 x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 x509-parser = "0.18"
