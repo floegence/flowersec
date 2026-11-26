@@ -23,7 +23,7 @@ let package = Package(
     .library(name: "Flowersec", targets: ["Flowersec"])
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
+    .package(url: "https://github.com/apple/swift-crypto.git", from: "5.1.2"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.82.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
   ],
